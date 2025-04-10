@@ -1,0 +1,49 @@
+---
+import Header from '../components/Header';
+import Footer from '../components/Footer';
+
+interface Props {
+	title: string;
+	hideHeader?: boolean;
+	hideFooter?: boolean;
+}
+
+const { title, hideHeader = false, hideFooter = false } = Astro.props;
+
+// Script to set the theme before page renders to avoid flashing
+const themeScript = `
+  // Get theme from localStorage or default to system
+  const theme = localStorage.getItem('theme') || 'system';
+  const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  
+  // Apply the right theme class
+  if (theme === 'dark' || (theme === 'system' && systemTheme === 'dark')) {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.add('light');
+  }
+`;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="description" content="Pastebin - A simple paste sharing service" />
+		<meta name="viewport" content="width=device-width" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="generator" content={Astro.generator} />
+		<title>{title}</title>
+		<script set:html={themeScript} />
+	</head>
+	<body class="min-h-screen flex flex-col bg-background text-foreground">
+		{!hideHeader && <Header client:load />}
+		<main class="flex-grow">
+			<slot />
+		</main>
+		{!hideFooter && <Footer />}
+	</body>
+</html>
+<style is:global>
+	@import '../styles/globals.css';
+</style>

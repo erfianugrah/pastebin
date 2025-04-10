@@ -1,0 +1,242 @@
+---
+import Layout from '../../layouts/Layout.astro';
+
+// Since we're using Cloudflare to handle the dynamic routing,
+// we'll change our approach for Astro static build
+export function getStaticPaths() {
+  // This is a workaround for static builds
+  // In production, our Cloudflare Worker will handle the actual routing
+  return [
+    { params: { id: 'index' } }
+  ];
+}
+
+const { id } = Astro.params;
+const pasteId = id || 'placeholder';
+---
+
+<Layout title={`Pastebin - View Paste ${pasteId}`}>
+	<div class="container mx-auto px-4 py-8">
+		<div id="paste-error" class="hidden text-center py-8">
+			<div class="bg-destructive/10 border border-destructive/30 rounded-md p-6 max-w-md mx-auto">
+				<h2 class="text-xl font-semibold text-destructive mb-2">Paste Not Found</h2>
+				<p class="mb-4">The paste you are looking for may have expired or been deleted.</p>
+				<a href="/" class="inline-block bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors">
+					Create a new paste
+				</a>
+			</div>
+		</div>
+		
+		<div id="loading-container" class="text-center py-8">
+			<div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+			<p class="mt-4">Loading paste...</p>
+		</div>
+		
+		<div id="paste-container" class="hidden">
+			<!-- The paste content will be inserted here by JavaScript -->
+		</div>
+	</div>
+</Layout>
+
+<script>
+// Get actual paste ID from URL
+const realPasteId = window.location.pathname.split('/').pop();
+
+// Fetch paste data when the page loads
+document.addEventListener('DOMContentLoaded', async () => {
+	// Password handling elements
+	const passwordContainer = document.createElement('div');
+	passwordContainer.innerHTML = `
+		<div class="bg-card border rounded-md p-6 max-w-md mx-auto">
+			<h2 class="text-xl font-semibold mb-2">Password Protected</h2>
+			<p class="mb-4">This paste is protected by a password.</p>
+			<form id="password-form" class="space-y-4">
+				<div>
+					<label for="password" class="block text-sm font-medium mb-1">Password</label>
+					<input type="password" id="password" name="password" required
+						class="w-full px-3 py-2 border rounded-md" />
+				</div>
+				<div id="password-error" class="text-destructive text-sm hidden">
+					Incorrect password. Please try again.
+				</div>
+				<button type="submit" 
+					class="inline-block bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors">
+					Submit
+				</button>
+			</form>
+		</div>
+	`;
+	
+	async function fetchPaste(password = null) {
+		try {
+			// Create fetch options
+			const options = {
+				headers: {
+					'Accept': 'application/json'
+				}
+			};
+			
+			// If we have a password, send it as POST with JSON body
+			if (password) {
+				options.method = 'POST';
+				options.headers['Content-Type'] = 'application/json';
+				options.body = JSON.stringify({ password });
+			}
+			
+			const response = await fetch(`/pastes/${realPasteId}`, options);
+			
+			// Handle password protected pastes
+			if (response.status === 403) {
+				const data = await response.json();
+				
+				// Check if it's a password required response
+				if (data.requiresPassword) {
+					// Show password form
+					document.getElementById('loading-container')?.classList.add('hidden');
+					document.querySelector('.container')?.appendChild(passwordContainer);
+					
+					// Set up password form submission
+					document.getElementById('password-form')?.addEventListener('submit', async (e) => {
+						e.preventDefault();
+						const passwordInput = document.getElementById('password') as HTMLInputElement;
+						const password = passwordInput?.value || '';
+						
+						// Hide error message
+						document.getElementById('password-error')?.classList.add('hidden');
+						
+						// Try fetching paste with password
+						await fetchPaste(password);
+					});
+					return;
+				} else if (data.error?.code === 'invalid_password') {
+					// Show password error
+					document.getElementById('password-error')?.classList.remove('hidden');
+					return;
+				}
+				
+				throw new Error('Paste not found');
+			}
+			
+			if (!response.ok) {
+				throw new Error('Paste not found');
+			}
+			
+			const paste = await response.json();
+			
+			// Update document title with paste title if available
+			if (paste.title) {
+				document.title = `${paste.title} - Pastebin`;
+			}
+			
+			// Remove password container if it exists
+			if (passwordContainer.parentNode) {
+				passwordContainer.parentNode.removeChild(passwordContainer);
+			}
+			
+			// Hide loading container, show paste container
+			const loadingContainer = document.getElementById('loading-container');
+			if (loadingContainer) {
+				loadingContainer.classList.add('hidden');
+			}
+			
+			const pasteContainer = document.getElementById('paste-container');
+			if (pasteContainer) {
+				pasteContainer.classList.remove('hidden');
+				pasteContainer.innerHTML = '';
+				
+				// Create a dynamic view for the paste
+				const pasteDisplay = document.createElement('div');
+				pasteDisplay.innerHTML = `
+					<div style="max-width: 900px; margin: 0 auto; font-family: sans-serif; border: 1px solid #e2e8f0; border-radius: 0.5rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1); overflow: hidden; background-color: #fff;">
+						<div style="padding: 1rem; border-bottom: 1px solid #e2e8f0;">
+							<div style="font-size: 1.25rem; font-weight: bold; margin-bottom: 0.5rem;">${paste.title || 'Untitled Paste'}</div>
+							<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem; font-size: 0.875rem; color: #64748b;">
+								<div>Created: ${new Date(paste.createdAt).toLocaleString()}</div>
+								<div>Expires: ${new Date(paste.expiresAt).toLocaleString()}</div>
+								${paste.language ? `<div>Language: ${paste.language}</div>` : ''}
+								<div>Visibility: ${paste.visibility === 'public' ? 'Public' : 'Private'}</div>
+								${paste.isPasswordProtected ? '<div>Password protected</div>' : ''}
+								${paste.burnAfterReading ? '<div>Burn after reading</div>' : ''}
+							</div>
+						</div>
+						
+						<div style="padding: 1rem;">
+							${paste.burnAfterReading ? `
+								<div style="background-color: #ffedd5; border: 1px solid #fed7aa; padding: 0.75rem; border-radius: 0.25rem; margin-bottom: 1rem; color: #9a3412;">
+									Warning: This paste will be permanently deleted after viewing.
+								</div>
+							` : ''}
+							
+							<pre style="background-color: #f8fafc; padding: 1rem; overflow: auto; border: 1px solid #e2e8f0; border-radius: 0.25rem; font-size: 0.875rem; font-family: monospace; line-height: 1.5; white-space: pre-wrap;">
+								<code>${paste.content || ' '}</code>
+							</pre>
+						</div>
+						
+						<div style="padding: 1rem; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between;">
+							<div>
+								<button id="create-new-paste-btn" style="padding: 0.5rem 1rem; background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 0.25rem; cursor: pointer; margin-right: 0.5rem; font-size: 0.875rem;">
+									Create New Paste
+								</button>
+								<button id="view-raw-btn" style="padding: 0.5rem 1rem; background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 0.25rem; cursor: pointer; margin-right: 0.5rem; font-size: 0.875rem;">
+									View Raw
+								</button>
+								<button id="delete-paste-btn" style="padding: 0.5rem 1rem; background-color: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 0.25rem; cursor: pointer; margin-right: 0.5rem; font-size: 0.875rem;">
+									Delete
+								</button>
+							</div>
+							<div>
+								<button id="copy-clipboard-btn" style="padding: 0.5rem 1rem; background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 0.25rem; cursor: pointer; font-size: 0.875rem;">
+									Copy to Clipboard
+								</button>
+							</div>
+						</div>
+					</div>
+				`;
+				
+				pasteContainer.appendChild(pasteDisplay);
+				
+				// Add event listeners
+				document.getElementById('create-new-paste-btn')?.addEventListener('click', () => {
+					window.location.href = '/';
+				});
+				
+				document.getElementById('view-raw-btn')?.addEventListener('click', () => {
+					window.open(`/pastes/raw/${paste.id}`, '_blank');
+				});
+				
+				document.getElementById('delete-paste-btn')?.addEventListener('click', () => {
+					if (confirm('Are you sure you want to delete this paste? This action cannot be undone.')) {
+						window.location.href = `/pastes/${paste.id}/delete`;
+					}
+				});
+				
+				document.getElementById('copy-clipboard-btn')?.addEventListener('click', () => {
+					if (navigator.clipboard) {
+						navigator.clipboard.writeText(paste.content || '')
+							.then(() => alert('Copied to clipboard'))
+							.catch(() => alert('Failed to copy'));
+					} else {
+						alert('Clipboard access not available');
+					}
+				});
+			}
+		} catch (error) {
+			console.error('Error fetching paste:', error);
+			
+			// Show error message, hide loading
+			const loadingContainer = document.getElementById('loading-container');
+			if (loadingContainer) {
+				loadingContainer.classList.add('hidden');
+			}
+			
+			const errorContainer = document.getElementById('paste-error');
+			if (errorContainer) {
+				errorContainer.classList.remove('hidden');
+			}
+		}
+	}
+	
+	// Initial fetch attempt
+	await fetchPaste();
+});
+</script>

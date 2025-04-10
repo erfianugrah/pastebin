@@ -1,0 +1,95 @@
+---
+import Layout from '../../../layouts/Layout.astro';
+
+// Since we're using Cloudflare to handle the dynamic routing,
+// we'll change our approach for Astro static build
+export function getStaticPaths() {
+  // This is a workaround for static builds
+  // In production, our Cloudflare Worker will handle the actual routing
+  return [
+    { params: { id: 'index' } }
+  ];
+}
+
+const { id } = Astro.params;
+const pasteId = id || 'placeholder';
+---
+
+<Layout title={`Pastebin - Delete Paste ${pasteId}`}>
+  <div class="container mx-auto px-4 py-8">
+    <div id="delete-loading" class="text-center py-8">
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <p class="mt-4">Processing delete request...</p>
+    </div>
+    
+    <div id="delete-error" class="hidden text-center py-8">
+      <div class="bg-destructive/10 border border-destructive/30 rounded-md p-6 max-w-md mx-auto">
+        <h2 class="text-xl font-semibold text-destructive mb-2">Error Deleting Paste</h2>
+        <p id="error-message" class="mb-4">The paste could not be deleted. It may not exist or you may not have permission to delete it.</p>
+        <div class="space-x-2">
+          <a href="/" class="inline-block bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors">
+            Home
+          </a>
+          <button id="go-back" class="inline-block bg-muted text-muted-foreground px-4 py-2 rounded-md hover:bg-muted/90 transition-colors">
+            Go Back
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <div id="delete-success" class="hidden text-center py-8">
+      <div class="bg-primary/10 border border-primary/30 rounded-md p-6 max-w-md mx-auto">
+        <h2 class="text-xl font-semibold text-primary mb-2">Paste Deleted</h2>
+        <p class="mb-4">The paste has been successfully deleted.</p>
+        <a href="/" class="inline-block bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors">
+          Create a new paste
+        </a>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<script define:vars={{ pasteId }}>
+// Get actual paste ID from URL
+const pathParts = window.location.pathname.split('/');
+const realPasteId = pathParts[pathParts.length - 2]; // Get the ID part from /pastes/{id}/delete
+
+// Handle delete request when the page loads
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const response = await fetch(`/pastes/${realPasteId}/delete`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    
+    const result = await response.json();
+    
+    if (response.ok) {
+      // Show success message
+      document.getElementById('delete-loading').classList.add('hidden');
+      document.getElementById('delete-success').classList.remove('hidden');
+    } else {
+      // Show error message
+      document.getElementById('delete-loading').classList.add('hidden');
+      document.getElementById('delete-error').classList.remove('hidden');
+      
+      // Update error message
+      const errorMessage = document.getElementById('error-message');
+      errorMessage.textContent = result.error?.message || 'The paste could not be deleted.';
+    }
+  } catch (error) {
+    console.error('Error deleting paste:', error);
+    
+    // Show generic error message
+    document.getElementById('delete-loading').classList.add('hidden');
+    document.getElementById('delete-error').classList.remove('hidden');
+  }
+  
+  // Add event listener for go back button
+  document.getElementById('go-back').addEventListener('click', () => {
+    window.history.back();
+  });
+});
+</script>

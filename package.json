@@ -1,0 +1,36 @@
+{
+	"name": "pastebin",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "npm run build:ui && wrangler deploy",
+		"deploy:prod": "npm run build:ui && wrangler deploy --env production",
+		"deploy:staging": "npm run build:ui && wrangler deploy --env staging",
+		"dev": "wrangler dev",
+		"dev:ui": "cd astro && npm run dev -- --port 3000",
+		"dev:all": "concurrently \"npm run dev:ui\" \"npm run dev\"",
+		"start": "npm run dev:all",
+		"build:ui": "cd astro && npm run build",
+		"build": "npm run build:ui && wrangler build",
+		"publish": "npm run build && npm run deploy",
+		"cf-typegen": "wrangler types",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"lint": "eslint --ext .ts ./src",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"pino": "^8.21.0",
+		"zod": "^3.22.4"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20250410.0",
+		"@typescript-eslint/eslint-plugin": "^7.5.0",
+		"@typescript-eslint/parser": "^7.5.0",
+		"concurrently": "^9.1.2",
+		"eslint": "^8.56.0",
+		"typescript": "^5.5.2",
+		"vitest": "^3.1.1",
+		"wrangler": "^4.9.1"
+	}
+}
