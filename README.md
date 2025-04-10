@@ -1,33 +1,58 @@
-# Pastebin Service
+# Pasteriser
 
-A modern, secure pastebin service built on Cloudflare Workers with Domain-Driven Design principles. Create and share code snippets or text with customizable expiration, privacy settings, and syntax highlighting.
+A modern, secure code sharing service built on Cloudflare Workers with Domain-Driven Design principles. Create and share code snippets with syntax highlighting, password protection, and burn-after-reading functionality.
 
 ## Features
 
-- **Basic Paste Functionality**
-  - Create and view text pastes with customizable content
-  - Syntax highlighting for 20+ programming languages
+- **Advanced Code Sharing**
+  - Create and view text/code pastes with rich formatting
+  - Syntax highlighting for 40+ programming languages with Prism.js
   - Custom expiration times (1 hour to 1 year)
   - Public and private visibility options
   
 - **Security & Privacy**
   - Password protection for sensitive pastes
   - "Burn after reading" self-destructing pastes
-  - Rate limiting to prevent abuse
+  - Rate limiting and content validation
+  - Private pastes hidden from listings
   
-- **Usability**
-  - Raw view for easy copying/embedding
+- **Enhanced User Experience**
+  - Modern UI with dark mode support
+  - Toast notifications for user feedback
+  - Improved modal confirmations
   - Line numbers for code readability
-  - Responsive UI that works on mobile and desktop
-  - Copy to clipboard functionality
+  - One-click copy to clipboard
+  - Raw view for easy embedding
+  - Mobile-responsive design
+
+- **Progressive Web App**
+  - Installable on desktop and mobile devices
+  - Offline support with custom offline page
+  - Optimized for mobile experience
+  - Service worker for improved performance
 
 - **Infrastructure**
   - Comprehensive logging system
-  - Error handling and monitoring
-  - Analytics tracking for usage insights
-  - Caching for performance optimization
+  - Robust error handling
+  - Analytics tracking
+  - Performance-optimized caching
 
 ## Technology Stack
+
+```mermaid
+graph TD
+    Backend[Backend] --> Workers[Cloudflare Workers]
+    Backend --> TypeScript[TypeScript]
+    Backend --> Zod[Zod Schema Validation]
+    Backend --> Pino[Pino Logger]
+    Backend --> KV[Cloudflare KV Storage]
+    
+    Frontend[Frontend] --> Astro[Astro Framework]
+    Frontend --> React[React Components]
+    Frontend --> Tailwind[Tailwind CSS]
+    Frontend --> Prism[Prism.js]
+    Frontend --> ShadcnUI[shadcn/ui]
+```
 
 - **Backend**
   - Cloudflare Workers: Serverless edge computing
@@ -37,19 +62,52 @@ A modern, secure pastebin service built on Cloudflare Workers with Domain-Driven
   - Cloudflare KV: Key-value storage
 
 - **Frontend**
-  - Astro: Static site generator
-  - React: UI components
+  - Astro: Static site generation
+  - React: Interactive UI components
   - Tailwind CSS: Utility-first styling
-  - shadcn/ui: Accessible UI components
+  - Prism.js: Advanced syntax highlighting
+  - shadcn/ui: Accessible component library
 
 ## Architecture
 
-This project follows Domain-Driven Design principles with a clear separation of concerns:
+This project follows Domain-Driven Design principles with a clean architecture approach:
 
-- **Domain Layer**: Core business logic and entities
-- **Application Layer**: Use cases and application logic
-- **Infrastructure Layer**: External concerns (storage, logging)
-- **Interface Layer**: User interfaces (API, UI)
+```mermaid
+graph TD
+    User[User/Client] --> UI[Interface Layer]
+    UI --> Application[Application Layer]
+    Application --> Domain[Domain Layer]
+    Application --> Infrastructure[Infrastructure Layer]
+    Domain --> Infrastructure
+    
+    subgraph "Interface Layer"
+      WebUI[Web UI/Astro]
+      API[API Endpoints]
+    end
+    
+    subgraph "Application Layer"
+      Commands[Command Handlers]
+      Queries[Query Handlers]
+    end
+    
+    subgraph "Domain Layer"
+      Models[Domain Models]
+      Services[Domain Services]
+      Repositories[Repository Interfaces]
+    end
+    
+    subgraph "Infrastructure Layer"
+      Storage[KV Storage]
+      Logging[Logging Services]
+      Config[Configuration]
+      Security[Security Controls]
+    end
+```
+
+- **Domain Layer**: Core business logic and entities (Paste model, repositories)
+- **Application Layer**: Use cases and application orchestration (commands/queries)
+- **Infrastructure Layer**: Technical capabilities (storage, logging, caching)
+- **Interface Layer**: User interfaces (API endpoints, Astro pages, React components)
 
 ## Getting Started
 
@@ -124,6 +182,18 @@ npm run deploy:prod
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Documentation
+
+For comprehensive documentation, please see the following resources:
+
+- [Comprehensive Documentation](./docs/DOCUMENTATION.md) - Complete guide to the application
+- [API Reference](./docs/API.md) - API endpoints and usage details
+- [Development Guide](./docs/DEVELOPMENT.md) - Getting started with development
+- [Architecture](./docs/ARCHITECTURE.md) - Detailed architecture overview
+- [Frontend Architecture](./docs/FRONTEND_ARCHITECTURE.md) - Component design and UI patterns
+- [Features](./docs/FEATURES.md) - Detailed feature specifications
+- [PWA Implementation](./docs/PWA_SETUP.md) - Progressive Web App setup instructions
+
 ## License
 
-MIT
+[MIT License](./LICENSE) © 2025 Erfi Anugrah

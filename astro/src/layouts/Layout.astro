@@ -1,6 +1,7 @@
 ---
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import { ToastContainer } from '../components/ui/toast';
 
 interface Props {
 	title: string;
@@ -8,7 +9,12 @@ interface Props {
 	hideFooter?: boolean;
 }
 
-const { title, hideHeader = false, hideFooter = false } = Astro.props;
+// Replace "Pastebin" with "Erfi's Pastebin" in title if not already set
+let { title, hideHeader = false, hideFooter = false } = Astro.props;
+
+if (title && title.includes('Pastebin')) {
+  title = title.replace('Pastebin', 'Pasteriser');
+}
 
 // Script to set the theme before page renders to avoid flashing
 const themeScript = `
@@ -29,12 +35,64 @@ const themeScript = `
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-		<meta name="description" content="Pastebin - A simple paste sharing service" />
-		<meta name="viewport" content="width=device-width" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="generator" content={Astro.generator} />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		
+		<!-- Primary Meta Tags -->
 		<title>{title}</title>
+		<meta name="title" content={title} />
+		<meta name="description" content="A modern, secure code sharing service with syntax highlighting, password protection, and burn-after-reading functionality" />
+		<meta name="keywords" content="pastebin, code sharing, syntax highlighting, secure paste, burn after reading, password protection, erfi anugrah" />
+		<meta name="author" content="Erfi Anugrah" />
+		
+		<!-- Open Graph / Facebook -->
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content={Astro.url.href} />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content="A modern, secure code sharing service with syntax highlighting, password protection, and burn-after-reading functionality" />
+		<meta property="og:image" content={new URL('/og-image.png', Astro.url)} />
+		
+		<!-- Twitter -->
+		<meta property="twitter:card" content="summary_large_image" />
+		<meta property="twitter:url" content={Astro.url.href} />
+		<meta property="twitter:title" content={title} />
+		<meta property="twitter:description" content="A modern, secure code sharing service with syntax highlighting, password protection, and burn-after-reading functionality" />
+		<meta property="twitter:image" content={new URL('/og-image.png', Astro.url)} />
+		
+		<!-- Favicon -->
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+		<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+		<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+		<link rel="manifest" href="/site.webmanifest" />
+		<meta name="theme-color" content="#4F46E5" />
+		
+		<!-- Generator Info -->
+		<meta name="generator" content={Astro.generator} />
+		
+		<!-- Theme Script -->
 		<script set:html={themeScript} />
+		
+		<!-- Prism.js for Syntax Highlighting - Using installed npm package -->
+		<style is:global>
+			@import 'prismjs/themes/prism.css';
+			@import 'prismjs/plugins/line-numbers/prism-line-numbers.css';
+			@import 'prismjs/plugins/toolbar/prism-toolbar.css';
+		</style>
+		
+		<!-- Service Worker Registration -->
+		<script>
+			if ('serviceWorker' in navigator) {
+				window.addEventListener('load', () => {
+					navigator.serviceWorker.register('/service-worker.js')
+						.then(registration => {
+							console.log('Service Worker registered with scope:', registration.scope);
+						})
+						.catch(error => {
+							console.error('Service Worker registration failed:', error);
+						});
+				});
+			}
+		</script>
 	</head>
 	<body class="min-h-screen flex flex-col bg-background text-foreground">
 		{!hideHeader && <Header client:load />}
@@ -42,8 +100,62 @@ const themeScript = `
 			<slot />
 		</main>
 		{!hideFooter && <Footer />}
+		
+		<ToastContainer client:load />
+		
+		<!-- Prism.js Scripts - Using NPM package -->
+		<script>
+			// Import Prism and plugins
+			import Prism from 'prismjs';
+			
+			// Import language components
+			import 'prismjs/components/prism-typescript';
+			import 'prismjs/components/prism-jsx';
+			import 'prismjs/components/prism-tsx';
+			import 'prismjs/components/prism-yaml';
+			import 'prismjs/components/prism-json';
+			import 'prismjs/components/prism-bash';
+			import 'prismjs/components/prism-hcl';
+			import 'prismjs/components/prism-toml';
+			import 'prismjs/components/prism-docker';
+			
+			// Import plugins
+			import 'prismjs/plugins/line-numbers/prism-line-numbers';
+			import 'prismjs/plugins/toolbar/prism-toolbar';
+			import 'prismjs/plugins/copy-to-clipboard/prism-copy-to-clipboard';
+			
+			// Make Prism available globally for our components
+			window.Prism = Prism;
+			
+			// Highlight all code blocks when page loads
+			document.addEventListener('DOMContentLoaded', () => {
+				Prism.highlightAll();
+			});
+		</script>
 	</body>
 </html>
 <style is:global>
 	@import '../styles/globals.css';
+
+	/* Custom UI and theme enhancements */
+	.dark [data-theme="dark"] {
+		display: block;
+	}
+	
+	.light [data-theme="dark"] {
+		display: none;
+	}
+	
+	.dark [data-theme="light"] {
+		display: none;
+	}
+	
+	.light [data-theme="light"] {
+		display: block;
+	}
+	
+	/* Additional Prism.js customizations */
+	pre[class*="language-"].line-numbers {
+		padding-left: 3.5em;
+	}
 </style>

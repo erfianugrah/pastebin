@@ -21,18 +21,14 @@ export class GetPasteQuery {
     
     // Handle burn after reading
     if (paste.isBurnAfterReading()) {
-      // Increment read count
-      const updatedPaste = paste.incrementReadCount();
+      // Make a copy of the paste for return before deletion
+      const pasteCopy = paste;
       
-      // If this is the first read, save the updated paste with incremented count
-      if (paste.getReadCount() === 0) {
-        await this.repository.save(updatedPaste);
-        return updatedPaste;
-      } else {
-        // If it's already been read, delete it
-        await this.repository.delete(paste.getId());
-        return null;
-      }
+      // Delete the paste immediately after reading
+      await this.repository.delete(paste.getId());
+      
+      // Return the paste for this single view
+      return pasteCopy;
     }
     
     return paste;

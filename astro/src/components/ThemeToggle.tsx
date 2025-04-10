@@ -59,35 +59,53 @@ export default function ThemeToggle() {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, [theme, mounted]);
 
-  // Toggle between light and dark mode
-  function toggleTheme() {
-    setTheme(prevTheme => {
-      if (prevTheme === 'light') return 'dark';
-      if (prevTheme === 'dark') return 'system';
-      return 'light';
-    });
-  }
+  // We've simplified the approach with direct setTheme calls on each button
+  // No need for the toggleTheme function anymore
+
+  // Get label for current theme
+  const getThemeLabel = () => {
+    switch(theme) {
+      case 'light': return 'Light';
+      case 'dark': return 'Dark';
+      default: return 'System';
+    }
+  };
 
   if (!mounted) return null;
 
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={toggleTheme}
-      title={`Current theme: ${theme}`}
-      aria-label="Toggle theme"
-    >
-      {theme === 'dark' ? (
-        <Moon className="h-5 w-5" />
-      ) : theme === 'light' ? (
-        <Sun className="h-5 w-5" />
-      ) : (
-        <span className="flex items-center justify-center">
-          <Moon className="h-5 w-5 scale-100 dark:scale-0 rotate-0 transition-all" />
-          <Sun className="absolute h-5 w-5 scale-0 dark:scale-100 rotate-90 dark:rotate-0 transition-all" />
-        </span>
-      )}
-    </Button>
+    <div className="flex items-center gap-2">
+      <Button
+        variant={theme === 'light' ? "default" : "outline"}
+        size="sm"
+        onClick={() => setTheme('light')}
+        className={`px-2 ${theme === 'light' ? 'ring-2 ring-primary/50' : ''}`}
+        aria-label="Light theme"
+      >
+        <Sun className="h-4 w-4 mr-1" />
+        <span className="sr-only sm:not-sr-only sm:text-xs">Light</span>
+      </Button>
+      
+      <Button
+        variant={theme === 'dark' ? "default" : "outline"}
+        size="sm"
+        onClick={() => setTheme('dark')}
+        className={`px-2 ${theme === 'dark' ? 'ring-2 ring-primary/50' : ''}`}
+        aria-label="Dark theme"
+      >
+        <Moon className="h-4 w-4 mr-1" />
+        <span className="sr-only sm:not-sr-only sm:text-xs">Dark</span>
+      </Button>
+      
+      <Button
+        variant={theme === 'system' ? "default" : "outline"}
+        size="sm"
+        onClick={() => setTheme('system')}
+        className={`px-2 hidden sm:flex ${theme === 'system' ? 'ring-2 ring-primary/50' : ''}`}
+        aria-label="System theme"
+      >
+        <span className="text-xs">System</span>
+      </Button>
+    </div>
   );
 }

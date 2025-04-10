@@ -112,7 +112,7 @@ export default function PasteForm() {
                 name="title"
                 type="text"
                 placeholder="Untitled Paste"
-                className={`w-full rounded-md border ${formErrors.title ? 'border-destructive' : 'border-input'} px-3 py-2`}
+                className={`w-full rounded-md border ${formErrors.title ? 'border-destructive' : 'border-input'} bg-background px-3 py-2`}
               />
               {formErrors.title && (
                 <p className="text-destructive text-sm mt-1">{formErrors.title}</p>
@@ -129,7 +129,7 @@ export default function PasteForm() {
                 placeholder="Paste your content here..."
                 rows={12}
                 required
-                className={`font-mono ${formErrors.content ? 'border-destructive' : ''}`}
+                className={`font-mono bg-background ${formErrors.content ? 'border-destructive' : ''}`}
               />
               {formErrors.content && (
                 <p className="text-destructive text-sm mt-1">{formErrors.content}</p>
@@ -144,28 +144,78 @@ export default function PasteForm() {
                 <select
                   id="language"
                   name="language"
-                  className="w-full rounded-md border border-input px-3 py-2"
+                  className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
                 >
                   <option value="">Plain Text</option>
-                  <option value="javascript">JavaScript</option>
-                  <option value="typescript">TypeScript</option>
-                  <option value="python">Python</option>
-                  <option value="html">HTML</option>
-                  <option value="css">CSS</option>
-                  <option value="json">JSON</option>
-                  <option value="markdown">Markdown</option>
-                  <option value="ruby">Ruby</option>
-                  <option value="go">Go</option>
-                  <option value="rust">Rust</option>
-                  <option value="java">Java</option>
-                  <option value="c">C</option>
-                  <option value="cpp">C++</option>
-                  <option value="csharp">C#</option>
-                  <option value="php">PHP</option>
-                  <option value="shell">Shell</option>
-                  <option value="sql">SQL</option>
-                  <option value="yaml">YAML</option>
-                  <option value="xml">XML</option>
+                  
+                  {/* Web Development */}
+                  <optgroup label="Web Development">
+                    <option value="html">HTML</option>
+                    <option value="css">CSS</option>
+                    <option value="javascript">JavaScript</option>
+                    <option value="typescript">TypeScript</option>
+                    <option value="jsx">JSX</option>
+                    <option value="tsx">TSX</option>
+                    <option value="php">PHP</option>
+                  </optgroup>
+                  
+                  {/* Data Formats */}
+                  <optgroup label="Data Formats">
+                    <option value="json">JSON</option>
+                    <option value="xml">XML</option>
+                    <option value="yaml">YAML</option>
+                    <option value="toml">TOML</option>
+                    <option value="ini">INI</option>
+                    <option value="csv">CSV</option>
+                  </optgroup>
+                  
+                  {/* Infrastructure & DevOps */}
+                  <optgroup label="Infrastructure & DevOps">
+                    <option value="hcl">HCL (Terraform)</option>
+                    <option value="dockerfile">Dockerfile</option>
+                    <option value="bash">Bash</option>
+                    <option value="shell">Shell</option>
+                    <option value="powershell">PowerShell</option>
+                    <option value="nginx">Nginx</option>
+                  </optgroup>
+                  
+                  {/* Programming Languages */}
+                  <optgroup label="Programming Languages">
+                    <option value="python">Python</option>
+                    <option value="java">Java</option>
+                    <option value="csharp">C#</option>
+                    <option value="c">C</option>
+                    <option value="cpp">C++</option>
+                    <option value="go">Go</option>
+                    <option value="rust">Rust</option>
+                    <option value="ruby">Ruby</option>
+                    <option value="kotlin">Kotlin</option>
+                    <option value="swift">Swift</option>
+                    <option value="scala">Scala</option>
+                    <option value="perl">Perl</option>
+                    <option value="r">R</option>
+                  </optgroup>
+                  
+                  {/* Database */}
+                  <optgroup label="Database">
+                    <option value="sql">SQL</option>
+                    <option value="mongodb">MongoDB</option>
+                    <option value="graphql">GraphQL</option>
+                  </optgroup>
+                  
+                  {/* Markup & Style */}
+                  <optgroup label="Markup & Style">
+                    <option value="markdown">Markdown</option>
+                    <option value="latex">LaTeX</option>
+                    <option value="scss">SCSS</option>
+                    <option value="less">LESS</option>
+                  </optgroup>
+                  
+                  {/* Configuration */}
+                  <optgroup label="Configuration">
+                    <option value="apache">Apache</option>
+                    <option value="properties">Properties</option>
+                  </optgroup>
                 </select>
               </div>
               
@@ -176,7 +226,7 @@ export default function PasteForm() {
                 <select
                   id="expiration"
                   name="expiration"
-                  className="w-full rounded-md border border-input px-3 py-2"
+                  className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
                 >
                   <option value="3600">1 hour</option>
                   <option value="86400" selected>1 day</option>
@@ -195,7 +245,7 @@ export default function PasteForm() {
                 <select
                   id="visibility"
                   name="visibility"
-                  className="w-full rounded-md border border-input px-3 py-2"
+                  className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
                 >
                   <option value="public">Public</option>
                   <option value="private">Private</option>
@@ -211,7 +261,7 @@ export default function PasteForm() {
                   id="password"
                   name="password"
                   placeholder="Leave empty for no password"
-                  className="w-full rounded-md border border-input px-3 py-2"
+                  className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
                 />
               </div>
             </div>
@@ -221,7 +271,7 @@ export default function PasteForm() {
                 type="checkbox"
                 id="burnAfterReading"
                 name="burnAfterReading"
-                className="rounded border-input h-4 w-4"
+                className="rounded border-input h-4 w-4 accent-primary"
               />
               <label htmlFor="burnAfterReading" className="text-sm font-medium">
                 Burn after reading (paste will be deleted after first view)

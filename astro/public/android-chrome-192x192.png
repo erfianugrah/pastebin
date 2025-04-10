@@ -1,0 +1,11 @@
+
+This is a placeholder file.
+
+To generate proper icons, you need to:
+1. Use the favicon.svg as the source
+2. Use tools like:
+   - Inkscape: inkscape -z -w 192 -h 192 favicon.svg -o output.png
+   - ImageMagick: convert -background none -resize 192x192 favicon.svg output.png
+   - Online tools: https://realfavicongenerator.net/
+
+Replace this file with the actual icon image.

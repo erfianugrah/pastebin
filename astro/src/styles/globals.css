@@ -73,4 +73,118 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Prism.js custom styling */
+  pre[class*="language-"] {
+    @apply bg-muted/50 dark:bg-muted border border-border rounded-md;
+    margin: 0;
+  }
+  
+  /* Dark mode overrides */
+  .dark pre[class*="language-"] {
+    background-color: hsl(var(--muted)) !important;
+  }
+  
+  /* Dark theme token colors */
+  .dark code[class*="language-"],
+  .dark pre[class*="language-"] {
+    color: #f8f8f2;
+    text-shadow: none;
+  }
+  
+  .dark .token.comment,
+  .dark .token.prolog,
+  .dark .token.doctype,
+  .dark .token.cdata {
+    color: #8292a2;
+  }
+  
+  .dark .token.punctuation {
+    color: #f8f8f2;
+  }
+  
+  .dark .token.namespace {
+    opacity: .7;
+  }
+  
+  .dark .token.property,
+  .dark .token.tag,
+  .dark .token.constant,
+  .dark .token.symbol,
+  .dark .token.deleted {
+    color: #f92672;
+  }
+  
+  .dark .token.boolean,
+  .dark .token.number {
+    color: #ae81ff;
+  }
+  
+  .dark .token.selector,
+  .dark .token.attr-name,
+  .dark .token.string,
+  .dark .token.char,
+  .dark .token.builtin,
+  .dark .token.inserted {
+    color: #a6e22e;
+  }
+  
+  .dark .token.operator,
+  .dark .token.entity,
+  .dark .token.url,
+  .dark .language-css .token.string,
+  .dark .style .token.string,
+  .dark .token.variable {
+    color: #f8f8f2;
+  }
+  
+  .dark .token.atrule,
+  .dark .token.attr-value,
+  .dark .token.function,
+  .dark .token.class-name {
+    color: #e6db74;
+  }
+  
+  .dark .token.keyword {
+    color: #66d9ef;
+  }
+
+  /* Line numbers styling */
+  .line-numbers .line-numbers-rows {
+    @apply border-r border-border;
+  }
+  
+  .dark .line-numbers .line-numbers-rows {
+    @apply border-border;
+  }
+
+  /* Copy button styling */
+  div.code-toolbar > .toolbar button {
+    @apply bg-secondary text-secondary-foreground rounded text-sm border border-border hover:bg-secondary/80 transition-colors;
+    box-shadow: none;
+  }
+  
+  .dark div.code-toolbar > .toolbar button {
+    @apply bg-secondary text-secondary-foreground border-border;
+  }
+  
+  /* Fix for code alignment */
+  pre code {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0;
+    margin: 0;
+  }
+  
+  /* Fix for plaintext display */
+  pre {
+    text-align: left;
+    width: 100%;
+  }
+  
+  /* Fix for short content centering issues */
+  code:not(.hljs) {
+    text-align: left !important;
+  }
 }

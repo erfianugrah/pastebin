@@ -4,7 +4,7 @@ interface HeaderProps {
   title?: string;
 }
 
-export default function Header({ title = 'Pastebin' }: HeaderProps) {
+export default function Header({ title = 'Pasteriser' }: HeaderProps) {
   return (
     <header className="border-b border-border bg-background">
       <div className="container mx-auto px-4 py-4 flex justify-between items-center">
@@ -15,7 +15,7 @@ export default function Header({ title = 'Pastebin' }: HeaderProps) {
             </a>
           </h1>
           <p className="text-sm text-muted-foreground">
-            Share code snippets, notes, and more
+            Share code snippets, notes, and more securely
           </p>
         </div>
         <div className="flex items-center space-x-2">

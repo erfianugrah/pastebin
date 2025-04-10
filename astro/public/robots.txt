@@ -1,0 +1,10 @@
+# robots.txt for Pasteriser
+
+User-agent: *
+Allow: /
+
+# Disallow password-protected or private pastes
+Disallow: /pastes/*/password
+
+# Sitemap
+Sitemap: https://pasteriser.com/sitemap.xml
