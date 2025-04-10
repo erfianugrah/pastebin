@@ -103,43 +103,125 @@ export function Modal({
 }
 
 // Utility function to show a confirmation modal
-let modalRoot: HTMLDivElement | null = null;
-
 export function showConfirmModal(props: Omit<ModalProps, 'isOpen' | 'onClose'>): Promise<boolean> {
   return new Promise((resolve) => {
-    if (!modalRoot) {
-      modalRoot = document.createElement('div');
-      modalRoot.id = 'modal-root';
-      document.body.appendChild(modalRoot);
-    }
+    // Create a new container for the modal
+    const modalRoot = document.createElement('div');
+    modalRoot.id = 'modal-container-' + Date.now();
+    document.body.appendChild(modalRoot);
     
-    const container = document.createElement('div');
-    modalRoot.appendChild(container);
-    
+    // Function to remove the container when done
     const cleanup = () => {
-      if (container.parentElement === modalRoot) {
-        modalRoot.removeChild(container);
+      // Use ReactDOM unmountComponentAtNode in a real application
+      // For now, we'll just remove the node
+      if (modalRoot.parentElement) {
+        document.body.removeChild(modalRoot);
       }
     };
     
+    // Success handler
     const handleConfirm = () => {
       resolve(true);
       cleanup();
     };
     
+    // Cancel handler
     const handleCancel = () => {
       resolve(false);
       cleanup();
     };
     
-    const modalProps: ModalProps = {
-      ...props,
-      isOpen: true,
-      onClose: handleCancel,
-      onConfirm: handleConfirm,
+    // Create a temporary React root and render the modal
+    const root = document.createElement('div');
+    modalRoot.appendChild(root);
+    
+    // Use ReactDOM.render in a compatibility layer
+    const renderModal = () => {
+      const modalElement = React.createElement(Modal, {
+        ...props,
+        isOpen: true,
+        onClose: handleCancel,
+        onConfirm: handleConfirm,
+      });
+      
+      // In a real app with full React support, you'd use:
+      // ReactDOM.render(modalElement, root);
+      // Instead, we'll manually append it
+      const div = document.createElement('div');
+      div.id = 'modal-content-' + Date.now();
+      root.appendChild(div);
+      
+      // We're already inside createPortal in the Modal component,
+      // so we need to mount it directly
+      // This is a workaround - in a real app, use ReactDOM properly
+      const container = document.getElementById(div.id);
+      if (container) {
+        // Create the modal HTML structure manually
+        container.innerHTML = `
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/25 backdrop-blur-sm">
+            <div class="fixed inset-0 z-0"></div>
+            <div class="relative z-10 w-full max-w-md overflow-hidden rounded-lg bg-background shadow-lg border border-border animate-in fade-in zoom-in-95">
+              <div class="p-6">
+                <h3 class="text-lg font-semibold">${props.title}</h3>
+                ${props.description ? `<p class="mt-2 text-sm text-muted-foreground">${props.description}</p>` : ''}
+                <div class="mt-6 flex justify-end gap-3">
+                  <button id="modal-cancel-btn" class="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm border border-border hover:bg-secondary/80 transition-colors">
+                    ${props.cancelText || 'Cancel'}
+                  </button>
+                  <button id="modal-confirm-btn" class="px-4 py-2 rounded-md text-sm ${
+                    props.isDangerous 
+                      ? "bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90"
+                  }">
+                    ${props.confirmText || 'Confirm'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+        
+        // Add event listeners
+        document.getElementById('modal-cancel-btn')?.addEventListener('click', handleCancel);
+        document.getElementById('modal-confirm-btn')?.addEventListener('click', handleConfirm);
+        document.querySelector(`#${div.id} .fixed.inset-0.z-0`)?.addEventListener('click', handleCancel);
+        
+        // Add keyboard event listener
+        const handleKeyDown = (e: KeyboardEvent) => {
+          if (e.key === 'Escape') handleCancel();
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        
+        // Prevent scrolling
+        document.body.style.overflow = 'hidden';
+        
+        // Cleanup function to restore scrolling and remove listeners
+        const cleanupEvents = () => {
+          document.body.style.overflow = '';
+          document.removeEventListener('keydown', handleKeyDown);
+        };
+        
+        // Create new handlers with cleanup
+        const wrappedConfirm = () => {
+          cleanupEvents();
+          handleConfirm();
+        };
+        
+        const wrappedCancel = () => {
+          cleanupEvents();
+          handleCancel();
+        };
+        
+        // Replace the event listeners with wrapped versions
+        document.getElementById('modal-cancel-btn')?.removeEventListener('click', handleCancel);
+        document.getElementById('modal-confirm-btn')?.removeEventListener('click', handleConfirm);
+        
+        document.getElementById('modal-cancel-btn')?.addEventListener('click', wrappedCancel);
+        document.getElementById('modal-confirm-btn')?.addEventListener('click', wrappedConfirm);
+      }
     };
     
-    const modalElement = React.createElement(Modal, modalProps);
-    createPortal(modalElement, container);
+    // Render the modal
+    renderModal();
   });
 }

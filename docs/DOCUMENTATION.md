@@ -34,35 +34,35 @@ The application follows Domain-Driven Design (DDD) principles with a clear separ
 
 ```mermaid
 graph TD
-    User[User/Client] --> UI[Interface Layer]
-    UI --> Application[Application Layer]
-    Application --> Domain[Domain Layer]
-    Application --> Infrastructure[Infrastructure Layer]
-    Domain --> Infrastructure
+    User[User] --> UI[Interface]
+    UI --> App[Application]
+    App --> Domain[Domain]
+    App --> Infra[Infrastructure]
+    Domain --> Infra
     
-    subgraph "Interface Layer"
-      WebUI[Web UI/Astro]
-      API[API Endpoints]
+    subgraph "Interface"
+      WebUI[Web UI]
+      API[API]
     end
     
-    subgraph "Application Layer"
-      Commands[Command Handlers]
-      Queries[Query Handlers]
-      Factories[Object Factories]
+    subgraph "Application"
+      Cmd[Commands]
+      Qry[Queries]
+      Fact[Factories]
     end
     
-    subgraph "Domain Layer"
-      Models[Domain Models]
-      Services[Domain Services]
-      Repositories[Repository Interfaces]
+    subgraph "Domain"
+      Model[Models]
+      Svc[Services]
+      Repo[Repositories]
     end
     
-    subgraph "Infrastructure Layer"
-      Storage[KV Storage]
-      Logging[Logging Services]
-      Config[Configuration]
-      Security[Security Controls]
-      Cache[Caching]
+    subgraph "Infrastructure"
+      Store[Storage]
+      Log[Logging]
+      Conf[Config]
+      Sec[Security]
+      Cache[Cache]
     end
 ```
 
@@ -103,37 +103,37 @@ Handles user interaction with the system.
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant UI as Astro UI
-    participant Worker as Cloudflare Worker
-    participant Handler as API Handler
-    participant Command as Command/Query
-    participant KV as KV Storage
+    participant U as User
+    participant UI as UI
+    participant W as Worker
+    participant H as Handler
+    participant C as Command
+    participant KV as Storage
     
-    User->>UI: Access website
-    UI->>User: Return HTML/JS/CSS
+    U->>UI: Access site
+    UI->>U: HTML/CSS/JS
     
-    User->>UI: Create paste
-    UI->>Worker: POST /pastes
-    Worker->>Handler: Route to API handler
-    Handler->>Command: Execute CreatePasteCommand
-    Command->>KV: Store paste data
-    KV->>Command: Confirm storage
-    Command->>Handler: Return paste ID
-    Handler->>Worker: Return JSON response
-    Worker->>UI: Return paste URL
-    UI->>User: Display success message
+    U->>UI: Create paste
+    UI->>W: POST /pastes
+    W->>H: Route request
+    H->>C: Execute command
+    C->>KV: Store data
+    KV-->>C: Confirm
+    C-->>H: Return ID
+    H-->>W: JSON response
+    W-->>UI: Paste URL
+    UI-->>U: Success message
     
-    User->>UI: View paste
-    UI->>Worker: GET /pastes/:id
-    Worker->>Handler: Route to API handler
-    Handler->>Command: Execute GetPasteQuery
-    Command->>KV: Retrieve paste data
-    KV->>Command: Return paste data
-    Command->>Handler: Return paste object
-    Handler->>Worker: Return HTML/JSON
-    Worker->>UI: Render paste
-    UI->>User: Display paste content
+    U->>UI: View paste
+    UI->>W: GET /pastes/:id
+    W->>H: Route request
+    H->>C: Execute query
+    C->>KV: Fetch data
+    KV-->>C: Return data
+    C-->>H: Paste object
+    H-->>W: Response
+    W-->>UI: Render paste
+    UI-->>U: Display content
 ```
 
 ## Features
@@ -157,28 +157,23 @@ sequenceDiagram
 ### User Experience
 
 ```mermaid
-graph LR
-    Create[Create Paste] --> View[View Paste]
-    View --> Raw[Raw View]
-    View --> Copy[Copy to Clipboard]
-    View --> Delete[Delete Paste]
-    View --> Share[Share URL]
+graph TD
+    Create[Create] --> View[View]
+    View --> Raw[Raw]
+    View --> Copy[Copy]
+    View --> Delete[Delete]
+    View --> Share[Share]
     
-    subgraph "Create Paste Options"
-        Content[Edit Content]
-        Syntax[Select Language]
-        Expire[Set Expiration]
-        Password[Add Password]
-        Burn[Burn After Reading]
-        Visibility[Set Visibility]
+    Create --> Options[Options]
+    
+    subgraph "Options"
+        Content[Content]
+        Syntax[Language]
+        Expire[Expiration]
+        Password[Password]
+        Burn[Burn]
+        Visibility[Visibility]
     end
-    
-    Create --> Content
-    Create --> Syntax
-    Create --> Expire
-    Create --> Password
-    Create --> Burn
-    Create --> Visibility
 ```
 
 - **Dark Mode**: Full dark mode support with system preference detection
@@ -242,14 +237,14 @@ graph TD
 
 ```mermaid
 graph TD
-    User[User Interaction] --> Toggle[Theme Toggle]
-    System[System Preference] --> Detect[Media Query Detection]
-    Toggle --> Store[Local Storage]
-    Store --> Theme[Theme State]
+    User[User] --> Toggle[Toggle]
+    System[System] --> Detect[Media Query]
+    Toggle --> Store[localStorage]
+    Store --> Theme[Theme]
     Detect --> Theme
-    Theme --> Apply[Apply Theme Classes]
-    Apply --> DOM[DOM Update]
-    DOM --> CSS[CSS Variables]
+    Theme --> Apply[Classes]
+    Apply --> DOM[DOM]
+    DOM --> CSS[CSS Vars]
 ```
 
 - **Theme Detection**: Automatic detection of system preferences
@@ -360,13 +355,13 @@ All error responses follow this format:
 
 ```mermaid
 graph TD
-    Clone[Clone Repository] --> BackendDeps[Install Backend Dependencies]
-    BackendDeps --> UIDeps[Install UI Dependencies]
-    UIDeps --> ConfigWrangler[Configure Wrangler]
-    ConfigWrangler --> CreateNamespace[Create KV Namespace]
-    CreateNamespace --> UpdateConfig[Update wrangler.jsonc]
-    UpdateConfig --> CreateEnv[Create .dev.vars]
-    CreateEnv --> Start[Start Development Servers]
+    Clone[Clone] --> BackendDeps[Backend Deps]
+    BackendDeps --> UIDeps[UI Deps]
+    UIDeps --> Wrangler[Wrangler]
+    Wrangler --> KV[KV Namespace]
+    KV --> Config[Config]
+    Config --> Env[Env Vars]
+    Env --> Start[Start Servers]
 ```
 
 1. **Clone and install dependencies:**
@@ -503,19 +498,14 @@ The following icon files are needed:
 
 ```mermaid
 graph TD
-    Build[Build Application] --> Test[Run Tests]
+    Build[Build] --> Test[Test]
     Test --> TypeCheck[Type Check]
-    TypeCheck --> Deploy[Deploy to Cloudflare]
-    Deploy --> Staging[Staging Environment]
-    Deploy --> Production[Production Environment]
+    TypeCheck --> Deploy[Deploy]
+    Deploy --> Staging[Staging]
+    Deploy --> Prod[Production]
     
-    subgraph "Build Process"
-        BuildUI[Build Astro UI]
-        BuildWorker[Compile Worker Code]
-    end
-    
-    Build --> BuildUI
-    Build --> BuildWorker
+    Build --> BuildUI[Astro UI]
+    Build --> BuildWorker[Worker]
 ```
 
 ### Staging Deployment

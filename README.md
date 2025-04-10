@@ -41,17 +41,17 @@ A modern, secure code sharing service built on Cloudflare Workers with Domain-Dr
 
 ```mermaid
 graph TD
-    Backend[Backend] --> Workers[Cloudflare Workers]
-    Backend --> TypeScript[TypeScript]
-    Backend --> Zod[Zod Schema Validation]
-    Backend --> Pino[Pino Logger]
-    Backend --> KV[Cloudflare KV Storage]
+    BE[Backend] --> CF[Workers]
+    BE --> TS[TypeScript]
+    BE --> Zod[Zod]
+    BE --> Pino[Pino]
+    BE --> KV[KV Storage]
     
-    Frontend[Frontend] --> Astro[Astro Framework]
-    Frontend --> React[React Components]
-    Frontend --> Tailwind[Tailwind CSS]
-    Frontend --> Prism[Prism.js]
-    Frontend --> ShadcnUI[shadcn/ui]
+    FE[Frontend] --> Astro[Astro]
+    FE --> React[React]
+    FE --> TW[Tailwind]
+    FE --> Prism[Prism.js]
+    FE --> UI[shadcn/ui]
 ```
 
 - **Backend**
@@ -74,33 +74,32 @@ This project follows Domain-Driven Design principles with a clean architecture a
 
 ```mermaid
 graph TD
-    User[User/Client] --> UI[Interface Layer]
-    UI --> Application[Application Layer]
-    Application --> Domain[Domain Layer]
-    Application --> Infrastructure[Infrastructure Layer]
-    Domain --> Infrastructure
+    User[User] --> UI[Interface]
+    UI --> App[Application]
+    App --> Domain[Domain]
+    App --> Infra[Infrastructure]
     
-    subgraph "Interface Layer"
-      WebUI[Web UI/Astro]
-      API[API Endpoints]
+    subgraph "Interface"
+      Web[Web UI]
+      API[API]
     end
     
-    subgraph "Application Layer"
-      Commands[Command Handlers]
-      Queries[Query Handlers]
+    subgraph "Application"
+      Cmd[Commands]
+      Qry[Queries]
     end
     
-    subgraph "Domain Layer"
-      Models[Domain Models]
-      Services[Domain Services]
-      Repositories[Repository Interfaces]
+    subgraph "Domain"
+      Model[Models]
+      Svc[Services]
+      Repo[Repositories]
     end
     
-    subgraph "Infrastructure Layer"
-      Storage[KV Storage]
-      Logging[Logging Services]
-      Config[Configuration]
-      Security[Security Controls]
+    subgraph "Infrastructure"
+      KV[Storage]
+      Log[Logging]
+      Cfg[Config]
+      Sec[Security]
     end
 ```
 

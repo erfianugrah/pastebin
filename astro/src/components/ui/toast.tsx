@@ -74,43 +74,78 @@ export function Toast({
   ) : null;
 }
 
-// Global toast management
-let toastQueue: { id: number; props: ToastProps }[] = [];
-let lastId = 0;
-let listeners: ((queue: typeof toastQueue) => void)[] = [];
+// Global toast management using custom events for cross-component communication
+// This handles issues with Astro's partial hydration and allows any component to show toasts
 
-function notifyListeners() {
-  listeners.forEach(listener => listener([...toastQueue]));
-}
+// Event name for toast communication
+const TOAST_EVENT = 'pasteriser-toast-event';
 
+// Type for the toast event
+type ToastEvent = {
+  id: number;
+  props: ToastProps;
+};
+
+// Toast counter - stored in localStorage to persist across component hydrations
+const getNextId = (): number => {
+  const currentId = parseInt(localStorage.getItem('pasteriser-toast-id') || '0', 10);
+  const nextId = currentId + 1;
+  localStorage.setItem('pasteriser-toast-id', nextId.toString());
+  return nextId;
+};
+
+// Create a toast
 export function toast(props: Omit<ToastProps, 'onClose'>) {
-  const id = ++lastId;
-  toastQueue.push({ 
-    id, 
-    props: { 
-      ...props, 
-      onClose: () => {
-        toastQueue = toastQueue.filter(toast => toast.id !== id);
-        notifyListeners();
+  const id = getNextId();
+  
+  // Create a custom event with the toast data
+  const event = new CustomEvent<ToastEvent>(TOAST_EVENT, {
+    detail: {
+      id,
+      props: {
+        ...props,
+        onClose: () => {
+          // When a toast is closed, dispatch a close event
+          window.dispatchEvent(
+            new CustomEvent(`${TOAST_EVENT}-close`, {
+              detail: { id }
+            })
+          );
+        }
       }
-    } 
+    }
   });
-  notifyListeners();
+  
+  // Dispatch the event to be caught by the ToastContainer
+  window.dispatchEvent(event);
   return id;
 }
 
+// Toast container component
 export function ToastContainer() {
-  const [toasts, setToasts] = useState<typeof toastQueue>([]);
+  const [toasts, setToasts] = useState<ToastEvent[]>([]);
 
   useEffect(() => {
-    const listener = (queue: typeof toastQueue) => {
-      setToasts(queue);
+    // Handler for adding toasts
+    const handleToastEvent = (event: Event) => {
+      const toastEvent = (event as CustomEvent<ToastEvent>).detail;
+      setToasts(prev => [...prev, toastEvent]);
     };
-    listeners.push(listener);
-    listener([...toastQueue]);
     
+    // Handler for removing toasts
+    const handleToastCloseEvent = (event: Event) => {
+      const { id } = (event as CustomEvent<{ id: number }>).detail;
+      setToasts(prev => prev.filter(toast => toast.id !== id));
+    };
+    
+    // Add event listeners
+    window.addEventListener(TOAST_EVENT, handleToastEvent);
+    window.addEventListener(`${TOAST_EVENT}-close`, handleToastCloseEvent);
+    
+    // Remove event listeners on cleanup
     return () => {
-      listeners = listeners.filter(l => l !== listener);
+      window.removeEventListener(TOAST_EVENT, handleToastEvent);
+      window.removeEventListener(`${TOAST_EVENT}-close`, handleToastCloseEvent);
     };
   }, []);
 

@@ -8,43 +8,43 @@ The frontend is built using a component-based architecture with Astro for static
 
 ```mermaid
 graph TD
-    Layout[Layout.astro] --> PageComponents[Page Components]
-    Layout --> SharedComponents[Shared Components]
+    Layout[Layout] --> Pages[Pages]
+    Layout --> Shared[Shared]
     
-    PageComponents --> IndexPage[index.astro]
-    PageComponents --> PastePage[pastes/[id].astro]
-    PageComponents --> DeletePage[pastes/[id]/delete.astro]
+    Pages --> Index[Index]
+    Pages --> Paste[View Paste]
+    Pages --> Delete[Delete Paste]
     
-    SharedComponents --> Header[Header.tsx]
-    SharedComponents --> Footer[Footer.tsx]
-    SharedComponents --> Toast[Toast.tsx]
-    SharedComponents --> Modal[Modal.tsx]
+    Shared --> Header[Header]
+    Shared --> Footer[Footer]
+    Shared --> Toast[Toast]
+    Shared --> Modal[Modal]
     
-    IndexPage --> PasteForm[PasteForm.tsx]
-    PastePage --> CodeViewer[CodeViewer.tsx]
+    Index --> Form[PasteForm]
+    Paste --> Viewer[CodeViewer]
     
-    PasteForm --> UIComponents[UI Components]
-    CodeViewer --> UIComponents
-    Header --> ThemeToggle[ThemeToggle.tsx]
+    Form --> UI[UI Components]
+    Viewer --> UI
+    Header --> Theme[ThemeToggle]
     
-    subgraph "UI Components"
-        Button[Button.tsx]
-        Card[Card.tsx]
-        Select[Select.tsx]
-        Textarea[Textarea.tsx]
+    subgraph "UI"
+        Button[Button]
+        Card[Card]
+        Select[Select]
+        Textarea[Textarea]
     end
     
-    subgraph "Utility Services"
-        ThemeService[Theme Service]
-        ClipboardService[Clipboard Service]
-        NotificationService[Notification Service]
-        ValidationService[Validation Service]
+    subgraph "Services"
+        TS[Theme]
+        CS[Clipboard]
+        NS[Notification]
+        VS[Validation]
     end
     
-    PasteForm --> ValidationService
-    CodeViewer --> ClipboardService
-    ThemeToggle --> ThemeService
-    Toast --> NotificationService
+    Form --> VS
+    Viewer --> CS
+    Theme --> TS
+    Toast --> NS
 ```
 
 ## Key Components
@@ -117,19 +117,19 @@ The application uses React's built-in state management via:
 ```mermaid
 stateDiagram-v2
     [*] --> Initial
-    Initial --> Loading: Fetch Paste Data
-    Loading --> Error: Fetch Failed
-    Loading --> PasswordPrompt: Password Protected
-    Loading --> ViewingPaste: Load Success
-    PasswordPrompt --> ViewingPaste: Correct Password
-    PasswordPrompt --> PasswordIncorrect: Wrong Password
-    PasswordIncorrect --> PasswordPrompt: Retry
-    ViewingPaste --> [*]: Navigation
-    ViewingPaste --> DeleteConfirm: Delete Button
-    DeleteConfirm --> Deleting: Confirm
-    DeleteConfirm --> ViewingPaste: Cancel
+    Initial --> Loading
+    Loading --> Error: Fail
+    Loading --> PasswordPrompt: Protected
+    Loading --> ViewPaste: Success
+    PasswordPrompt --> ViewPaste: Correct
+    PasswordPrompt --> WrongPwd: Wrong
+    WrongPwd --> PasswordPrompt: Retry
+    ViewPaste --> [*]: Navigate
+    ViewPaste --> ConfirmDel: Delete
+    ConfirmDel --> Deleting: Yes
+    ConfirmDel --> ViewPaste: No
     Deleting --> Deleted: Success
-    Deleted --> [*]: Redirect Home
+    Deleted --> [*]: Home
 ```
 
 ## Styling Approach
@@ -143,27 +143,27 @@ The styling system uses:
 
 ```mermaid
 graph TD
-    TailwindConfig[tailwind.config.mjs] --> BaseStyles[Base Styles]
-    TailwindConfig --> Utilities[Tailwind Utilities]
-    TailwindConfig --> Components[Component Classes]
+    Config[Tailwind] --> Base[Base]
+    Config --> Utils[Utilities]
+    Config --> Comp[Components]
     
-    BaseStyles --> ThemeVariables[Theme Variables]
-    ThemeVariables --> LightTheme[Light Theme Variables]
-    ThemeVariables --> DarkTheme[Dark Theme Variables]
+    Base --> Vars[Variables]
+    Vars --> Light[Light]
+    Vars --> Dark[Dark]
     
-    Components --> ShadcnComponents[shadcn/ui Components]
-    ShadcnComponents --> Button[Button Styles]
-    ShadcnComponents --> Card[Card Styles]
-    ShadcnComponents --> Form[Form Element Styles]
+    Comp --> Shadcn[shadcn/ui]
+    Shadcn --> Btn[Button]
+    Shadcn --> Crd[Card]
+    Shadcn --> Frm[Form]
     
-    Utilities --> Layout[Layout Utilities]
-    Utilities --> Typography[Typography Utilities]
-    Utilities --> Colors[Color Utilities]
+    Utils --> Layout[Layout]
+    Utils --> Type[Typography]
+    Utils --> Clr[Colors]
     
-    LightTheme --> AppStyles[Application Styling]
-    DarkTheme --> AppStyles
-    ShadcnComponents --> AppStyles
-    Utilities --> AppStyles
+    Light --> Styles[App Styles]
+    Dark --> Styles
+    Shadcn --> Styles
+    Utils --> Styles
 ```
 
 ## Client-Side Functionality
