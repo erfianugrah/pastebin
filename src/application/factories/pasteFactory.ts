@@ -29,7 +29,8 @@ export class PasteFactory {
       data.visibility,
       data.passwordHash,
       data.burnAfterReading || false,
-      data.readCount || 0
+      data.readCount || 0,
+      data.isEncrypted || false
     );
   }
 }

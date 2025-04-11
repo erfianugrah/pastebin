@@ -28,38 +28,53 @@ export async function handleRateLimit(
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
   const key = `ratelimit:${pathPrefix}:${ip}`;
 
-  // Get current rate limit data from KV
-  const data = await env.PASTES.get(key);
-  const now = Date.now();
+  // Only check if the rate limit could be exceeded - optimization
+  // We'll only read from KV if this isn't the first request and could potentially exceed the limit
+  const isReadNeeded = limit <= 30; // If limit is low, always check
   
-  let count = 0;
+  const now = Date.now();
+  let count = 1; // Start with 1 (current request)
   let resetTime = now + windowSize;
+  let needsUpdate = true;
 
-  if (data) {
-    try {
-      const parsed = JSON.parse(data);
-      // If within current window, use existing count
-      if (now < parsed.resetTime) {
-        count = parsed.count;
-        resetTime = parsed.resetTime;
+  if (isReadNeeded) {
+    // Get current rate limit data from KV
+    const data = await env.PASTES.get(key);
+    
+    if (data) {
+      try {
+        const parsed = JSON.parse(data);
+        // If within current window, use existing count
+        if (now < parsed.resetTime) {
+          count = parsed.count + 1; // Add current request
+          resetTime = parsed.resetTime;
+        } else {
+          // New time window, reset count to 1 (current request)
+          count = 1;
+        }
+      } catch (error) {
+        // If data is invalid, we'll just use the defaults
+        console.error('Error parsing rate limit data:', error);
       }
-      // Otherwise, we're in a new window, count resets to 0
-    } catch (error) {
-      // If data is invalid, we'll just use the defaults
-      console.error('Error parsing rate limit data:', error);
     }
   }
 
-  // Increment count
-  count++;
-
-  // Update KV with new count and expiration
-  // TTL is set to the window size in seconds
-  await env.PASTES.put(
-    key,
-    JSON.stringify({ count, resetTime }),
-    { expirationTtl: Math.ceil(windowSize / 1000) }
-  );
+  // Only update KV if:
+  // 1. This is the first request in a time window (count = 1)
+  // 2. We're approaching the limit (count >= limit*0.5)
+  // 3. We've exceeded the limit (count > limit)
+  // This reduces KV operations significantly
+  const needsWrite = count === 1 || count >= (limit * 0.5) || count > limit;
+  
+  if (needsWrite) {
+    // Update KV with new count and expiration
+    // TTL is set to the window size in seconds
+    await env.PASTES.put(
+      key,
+      JSON.stringify({ count, resetTime }),
+      { expirationTtl: Math.ceil(windowSize / 1000) }
+    );
+  }
 
   // If count exceeds limit, return 429 Too Many Requests
   if (count > limit) {

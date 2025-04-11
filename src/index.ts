@@ -99,26 +99,31 @@ export default {
         return corsResponse;
       }
       
-      // Handle rate limiting
-      // Import the rate limit handler
-      const { handleRateLimit } = await import('./infrastructure/security/rateLimit');
+      // Check if this is a static asset request that should bypass rate limiting
+      const isStaticAsset = path.match(/\.(js|css|svg|png|jpg|jpeg|gif|webp|ico|ttf|woff|woff2|eot|otf)$/);
       
-      // Apply stricter rate limiting for POST requests (paste creation)
-      if (request.method === 'POST' && path === '/pastes') {
-        const createLimitResponse = await handleRateLimit(request, env, {
-          limit: 10, // 10 creations per minute
-          pathPrefix: '/pastes',
-        });
-        if (createLimitResponse) {
-          return createLimitResponse;
-        }
-      } else {
-        // General rate limiting for all other requests
-        const generalLimitResponse = await handleRateLimit(request, env, {
-          limit: 60, // 60 requests per minute for general usage
-        });
-        if (generalLimitResponse) {
-          return generalLimitResponse;
+      // Only apply rate limiting if not a static asset
+      if (!isStaticAsset) {
+        // Import the rate limit handler
+        const { handleRateLimit } = await import('./infrastructure/security/rateLimit');
+        
+        // Apply stricter rate limiting for POST requests (paste creation)
+        if (request.method === 'POST' && path === '/pastes') {
+          const createLimitResponse = await handleRateLimit(request, env, {
+            limit: 10, // 10 creations per minute
+            pathPrefix: '/pastes',
+          });
+          if (createLimitResponse) {
+            return createLimitResponse;
+          }
+        } else {
+          // General rate limiting for API requests only
+          const generalLimitResponse = await handleRateLimit(request, env, {
+            limit: 60, // 60 requests per minute for general usage
+          });
+          if (generalLimitResponse) {
+            return generalLimitResponse;
+          }
         }
       }
       

@@ -1,23 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState, useEffect } from 'react';
+import { decryptData } from '../lib/crypto';
 import { toast } from './ui/toast';
-import { Modal } from './ui/modal';
-// Note: Typically we'd add these imports, but they'll be handled in Layout.astro instead
-// import Prism from 'prismjs';
-// import 'prismjs/themes/prism.css';
-// import 'prismjs/themes/prism-tomorrow.css';
 
-// Add Prism to the window global type
-declare global {
-  interface Window {
-    Prism: {
-      highlightAll: () => void;
-      highlightElement: (element: HTMLElement) => void;
-    };
-  }
-}
-
-// Define the type for paste properties
-interface PasteProps {
+interface PasteData {
   id: string;
   content: string;
   title?: string;
@@ -25,240 +10,162 @@ interface PasteProps {
   createdAt: string;
   expiresAt: string;
   visibility: 'public' | 'private';
-  isPasswordProtected?: boolean;
-  burnAfterReading?: boolean;
-  readCount?: number;
+  isPasswordProtected: boolean;
+  burnAfterReading: boolean;
+  isEncrypted?: boolean;
 }
 
 interface CodeViewerProps {
-  paste: PasteProps;
+  paste: PasteData;
 }
 
-// CodeViewer component with syntax highlighting
-const CodeViewer = ({ paste }: CodeViewerProps) => {
-  const codeRef = useRef<HTMLElement>(null);
-
-  // Create a second ref for dark mode highlighting
-  const darkCodeRef = useRef<HTMLElement>(null);
-
-  // Apply syntax highlighting when component mounts or language/content changes
+export default function CodeViewer({ paste }: CodeViewerProps) {
+  const [content, setContent] = useState<string>(paste.content);
+  const [isDecrypting, setIsDecrypting] = useState(false);
+  const [decrypted, setDecrypted] = useState(false);
+  
   useEffect(() => {
-    // Prism.js is loaded globally in Layout.astro
-    // This will apply highlighting via the client-side JS 
-    if (paste.language && paste.language !== 'plaintext') {
-      try {
-        // Prism will be available globally via window.Prism
-        if (window.Prism && typeof window.Prism.highlightAll === 'function') {
-          // Prism will automatically highlight elements with class="language-xxx"
-          window.Prism.highlightAll();
-        } else {
-          console.warn('Prism.js not loaded or initialized');
+    // Check for encryption key in URL fragment and attempt decryption
+    async function attemptDecryption() {
+      if (paste.isEncrypted && !decrypted) {
+        try {
+          // Get key from URL fragment
+          const urlHash = window.location.hash.substring(1);
+          console.log('URL fragment:', urlHash);
+          
+          const hashParams = new URLSearchParams(urlHash);
+          const key = hashParams.get('key');
+          
+          console.log('isEncrypted:', paste.isEncrypted);
+          console.log('Encryption key found:', key ? 'Yes' : 'No');
+          console.log('Content length:', paste.content.length);
+          
+          if (key) {
+            setIsDecrypting(true);
+            
+            try {
+              console.log('Attempting to decrypt content with key length:', key.length);
+              // Attempt decryption with the key
+              const decryptedContent = await decryptData(paste.content, key);
+              console.log('Decryption successful, content length:', decryptedContent.length);
+              
+              // Update state with decrypted content
+              setContent(decryptedContent);
+              setDecrypted(true);
+              
+              toast({
+                message: 'Content decrypted successfully',
+                type: 'success',
+              });
+            } catch (error) {
+              console.error('Decryption failed:', error);
+              console.error('Key used:', key);
+              console.error('Content sample:', paste.content.substring(0, 50));
+              
+              toast({
+                message: 'Failed to decrypt content. Invalid key.',
+                type: 'error',
+              });
+            }
+          } else if (paste.isEncrypted) {
+            toast({
+              message: 'This content is encrypted. You need the decryption key to view it.',
+              type: 'info',
+              duration: 5000,
+            });
+          }
+        } catch (error) {
+          console.error('Error during decryption process:', error);
+        } finally {
+          setIsDecrypting(false);
         }
-      } catch (e) {
-        console.error('Failed to apply syntax highlighting:', e);
       }
     }
-  }, [paste.content, paste.language]);
-  // Basic styles as inline styles to avoid any dependency issues
-  const styles = {
-    container: {
-      maxWidth: '900px',
-      margin: '0 auto',
-      fontFamily: 'sans-serif',
-      border: '1px solid #e2e8f0',
-      borderRadius: '0.5rem',
-      boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
-      overflow: 'hidden',
-      backgroundColor: '#fff',
-    },
-    header: {
-      padding: '1rem',
-      borderBottom: '1px solid #e2e8f0',
-    },
-    title: {
-      fontSize: '1.25rem',
-      fontWeight: 'bold',
-      marginBottom: '0.5rem',
-    },
-    metadata: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-      gap: '0.5rem',
-      fontSize: '0.875rem',
-      color: '#64748b',
-    },
-    content: {
-      padding: '1rem',
-    },
-    pre: {
-      backgroundColor: '#f8fafc',
-      padding: '1rem',
-      overflow: 'auto' as const, // Use 'auto' which is valid for both CSS and React props
-      border: '1px solid #e2e8f0',
-      borderRadius: '0.25rem',
-      fontSize: '0.875rem',
-      fontFamily: 'monospace',
-      lineHeight: '1.5',
-      whiteSpace: 'pre-wrap' as const,
-    },
-    footer: {
-      padding: '1rem',
-      borderTop: '1px solid #e2e8f0',
-      display: 'flex',
-      justifyContent: 'space-between',
-    },
-    button: {
-      padding: '0.5rem 1rem',
-      backgroundColor: '#f1f5f9',
-      border: '1px solid #e2e8f0',
-      borderRadius: '0.25rem',
-      cursor: 'pointer',
-      marginRight: '0.5rem',
-      fontSize: '0.875rem',
-    },
-    dangerButton: {
-      backgroundColor: '#fee2e2',
-      color: '#b91c1c',
-      border: '1px solid #fecaca',
-    },
-    line: {
-      margin: 0,
-      padding: 0,
-    },
-    warning: {
-      backgroundColor: '#ffedd5',
-      border: '1px solid #fed7aa',
-      padding: '0.75rem',
-      borderRadius: '0.25rem',
-      marginBottom: '1rem',
-      color: '#9a3412',
-    }
-  };
+    
+    attemptDecryption();
+  }, [paste.content, paste.isEncrypted, decrypted]);
 
-  // Format date helper function
-  const formatDate = (dateString: string): string => {
-    try {
-      return new Date(dateString).toLocaleString();
-    } catch (e) {
-      return dateString || 'Unknown';
-    }
-  };
-
-  // Enhanced copy to clipboard function
-  const copyToClipboard = () => {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(paste.content || '')
-        .then(() => {
-          toast({ 
-            message: 'Copied to clipboard!', 
-            type: 'success',
-            duration: 2000
-          });
-        })
-        .catch(() => {
-          toast({ 
-            message: 'Failed to copy to clipboard', 
-            type: 'error',
-            duration: 3000
-          });
-        });
-    } else {
-      toast({ 
-        message: 'Clipboard access not available in your browser', 
-        type: 'error',
-        duration: 3000
-      });
-    }
-  };
-
-  // State for delete confirmation modal
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  
-  // Handle delete
-  const handleDelete = () => {
-    setIsDeleteModalOpen(true);
-  };
-  
-  // Handle confirmation
-  const confirmDelete = () => {
-    window.location.href = `/pastes/${paste.id}/delete`;
-  };
+  // Format the date
+  function formatDate(dateString: string) {
+    const date = new Date(dateString);
+    return date.toLocaleString();
+  }
 
   return (
-    <div className="bg-card text-card-foreground max-w-[900px] mx-auto font-sans border border-border rounded-lg shadow overflow-hidden">
-      <div className="p-4 border-b border-border">
-        <div className="text-xl font-bold mb-2">{paste.title || 'Untitled Paste'}</div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-sm text-muted-foreground">
-          <div>Created: {formatDate(paste.createdAt)}</div>
-          <div>Expires: {formatDate(paste.expiresAt)}</div>
-          {paste.language && <div>Language: {paste.language}</div>}
-          <div>Visibility: {paste.visibility === 'public' ? 'Public' : 'Private'}</div>
-          {paste.isPasswordProtected && <div>Password protected</div>}
-          {paste.burnAfterReading && <div>Burn after reading</div>}
+    <div className="w-full">
+      {/* Paste metadata */}
+      <div className="mb-4 border-b pb-4">
+        <h2 className="text-2xl font-bold mb-2">
+          {paste.title || `Untitled Paste`}
+        </h2>
+        
+        <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+          <span>Created: {formatDate(paste.createdAt)}</span>
+          <span className="hidden sm:inline">•</span>
+          <span>Expires: {formatDate(paste.expiresAt)}</span>
+          {paste.language && (
+            <>
+              <span className="hidden sm:inline">•</span>
+              <span>Language: {paste.language}</span>
+            </>
+          )}
+          <span className="hidden sm:inline">•</span>
+          <span>Visibility: {paste.visibility}</span>
+          
+          {paste.isEncrypted && (
+            <>
+              <span className="hidden sm:inline">•</span>
+              <span className="text-yellow-600 dark:text-yellow-400 font-medium">
+                {decrypted ? 'Decrypted' : 'Encrypted'}
+              </span>
+            </>
+          )}
+          
+          {paste.burnAfterReading && (
+            <>
+              <span className="hidden sm:inline">•</span>
+              <span className="text-red-600 dark:text-red-400 font-medium">
+                Burn after reading
+              </span>
+            </>
+          )}
         </div>
       </div>
       
-      <div className="p-4">
-        {paste.burnAfterReading && (
-          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 p-3 rounded mb-4 text-amber-800 dark:text-amber-300">
-            Warning: This paste will be permanently deleted after viewing.
-          </div>
-        )}
-        
-        <pre className="bg-muted/50 dark:bg-muted p-4 overflow-auto border border-border rounded text-sm font-mono leading-relaxed w-full text-left line-numbers">
-          <code 
-            ref={codeRef}
-            className={`w-full block text-left ${paste.language ? `language-${paste.language}` : ''}`}
-          >
-            {paste.content || ' '}
-          </code>
+      {/* Encryption notice */}
+      {paste.isEncrypted && !decrypted && !isDecrypting && (
+        <div className="bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 p-4 rounded-md mb-4">
+          <h3 className="font-bold text-yellow-800 dark:text-yellow-300">Encrypted Content</h3>
+          <p className="text-yellow-800 dark:text-yellow-300 mt-1">
+            This paste is encrypted and requires a decryption key. 
+            The key should be in the URL after the # symbol.
+          </p>
+        </div>
+      )}
+      
+      {/* Decryption in progress */}
+      {isDecrypting && (
+        <div className="flex justify-center items-center p-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <span className="ml-2">Decrypting content...</span>
+        </div>
+      )}
+      
+      {/* Code content */}
+      <div className={`${isDecrypting ? 'opacity-50' : ''}`}>
+        <pre className={`p-4 rounded-md overflow-x-auto bg-gray-100 dark:bg-gray-800 font-mono text-sm max-h-[600px] ${paste.isEncrypted && !decrypted ? 'blur-sm' : ''}`}>
+          <code>{content}</code>
         </pre>
       </div>
       
-      <div className="p-4 border-t border-border flex justify-between flex-wrap gap-2">
-        <div className="space-x-2 space-y-2 sm:space-y-0">
-          <button 
-            onClick={() => window.location.href = '/'} 
-            className="px-4 py-2 bg-secondary text-secondary-foreground rounded text-sm border border-border hover:bg-secondary/80 transition-colors"
-          >
-            Create New Paste
-          </button>
-          <button 
-            onClick={() => window.open(`/pastes/raw/${paste.id}`, '_blank')} 
-            className="px-4 py-2 bg-secondary text-secondary-foreground rounded text-sm border border-border hover:bg-secondary/80 transition-colors"
-          >
-            View Raw
-          </button>
-          <button 
-            onClick={handleDelete} 
-            className="px-4 py-2 bg-destructive/10 text-destructive rounded text-sm border border-destructive/20 hover:bg-destructive/20 transition-colors"
-          >
-            Delete
-          </button>
+      {/* Encrypted content message */}
+      {paste.isEncrypted && !decrypted && (
+        <div className="mt-4 text-center">
+          <p className="text-sm text-muted-foreground">
+            To view this content, you need the complete URL with the decryption key (after the # symbol).
+          </p>
         </div>
-        <div>
-          <button 
-            onClick={copyToClipboard} 
-            className="px-4 py-2 bg-secondary text-secondary-foreground rounded text-sm border border-border hover:bg-secondary/80 transition-colors"
-          >
-            Copy to Clipboard
-          </button>
-        </div>
-      </div>
-      
-      {/* Delete confirmation modal */}
-      <Modal
-        title="Delete Paste"
-        description="Are you sure you want to delete this paste? This action cannot be undone."
-        isOpen={isDeleteModalOpen}
-        onClose={() => setIsDeleteModalOpen(false)}
-        onConfirm={confirmDelete}
-        confirmText="Delete"
-        cancelText="Cancel"
-        isDangerous={true}
-      />
+      )}
     </div>
   );
-};
-
-export default CodeViewer;
+}

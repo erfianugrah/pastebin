@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './ui/card';
 import { Textarea } from './ui/textarea';
+import { toast } from './ui/toast';
+import { generateEncryptionKey, encryptData, deriveKeyFromPassword } from '../lib/crypto';
 
 export default function PasteForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<{[key: string]: string}>({});
-  const [result, setResult] = useState<{id: string, url: string} | null>(null);
+  const [result, setResult] = useState<{id: string, url: string, encryptionKey?: string} | null>(null);
+  const [isE2EEncrypted, setIsE2EEncrypted] = useState(false);
   
   const validateForm = (formData: FormData) => {
     const errors: {[key: string]: string} = {};
@@ -45,18 +48,84 @@ export default function PasteForm() {
         return;
       }
       
+      // Get values from form
+      const content = formData.get('content') as string;
+      const title = formData.get('title') as string;
+      const language = formData.get('language') as string;
+      const expiration = parseInt(formData.get('expiration') as string, 10);
+      const visibility = formData.get('visibility') as string;
+      const password = formData.get('password') as string;
+      const burnAfterReading = formData.get('burnAfterReading') === 'on';
+      const e2eEncryption = formData.get('e2eEncryption') === 'on';
+      
+      let encryptedContent = content;
+      let encryptionKey: string | undefined;
+      let passwordHash: string | undefined;
+      
+      // Handle client-side encryption (if private or e2e encryption is selected)
+      if (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) {
+        try {
+          // Generate a random encryption key
+          encryptionKey = generateEncryptionKey();
+          console.log('Generated encryption key');
+          
+          // Encrypt the content with this key
+          encryptedContent = await encryptData(content, encryptionKey);
+          console.log('Content encrypted successfully');
+        } catch (error) {
+          console.error('Encryption error:', error);
+          throw new Error('Failed to encrypt content. Please try again.');
+        }
+      }
+      
+      // Handle password protection with encryption
+      if (password) {
+        if (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) {
+          try {
+            // If we're doing E2E encryption already, we need to protect the encryption key with the password
+            // We don't need to send the password to the server, just encrypt the key with it
+            const { key: derivedKey, salt } = await deriveKeyFromPassword(password);
+            
+            // Encrypt the original encryption key with the password-derived key
+            const encryptedKey = await encryptData(encryptionKey || '', derivedKey);
+            
+            // Store the salt and encrypted key as the "password hash" (overloading the field)
+            // Format: salt:encryptedKey
+            passwordHash = `${salt}:${encryptedKey}`;
+          } catch (error) {
+            console.error('Password encryption error:', error);
+            throw new Error('Failed to process password encryption. Please try again.');
+          }
+        } else {
+          // Use server-side password checking - let the server handle the hashing
+          passwordHash = password;
+        }
+      }
+      
+      // Log encryption status for debugging
+      console.log('Creating paste:', {
+        isEncrypted: !!(e2eEncryption || (visibility === 'private' && isE2EEncrypted)),
+        contentLength: encryptedContent.length,
+        hasPassword: !!passwordHash
+      });
+
+      // Send request to create the paste
       const response = await fetch('/pastes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: formData.get('title'),
-          content: formData.get('content'),
-          language: formData.get('language'),
-          expiration: parseInt(formData.get('expiration') as string, 10),
-          visibility: formData.get('visibility'),
-          password: formData.get('password') || undefined,
-          burnAfterReading: formData.get('burnAfterReading') === 'on',
+          title,
+          content: encryptedContent,
+          language,
+          expiration,
+          visibility,
+          password: passwordHash,
+          burnAfterReading,
+          isEncrypted: !!(e2eEncryption || (visibility === 'private' && isE2EEncrypted)),
         }),
+      }).catch(fetchError => {
+        console.error('Network error:', fetchError);
+        throw new Error('Network error. Please check your connection and try again.');
       });
       
       if (!response.ok) {
@@ -65,10 +134,30 @@ export default function PasteForm() {
       }
       
       const data = await response.json() as { id: string; url: string };
-      setResult(data);
+      
+      // If using client-side encryption, append the key to the URL fragment
+      // The fragment is not sent to the server
+      let resultUrl = data.url;
+      if (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) {
+        resultUrl = `${data.url}#key=${encryptionKey}`;
+      }
+      
+      setResult({
+        id: data.id,
+        url: resultUrl,
+        encryptionKey: e2eEncryption || (visibility === 'private' && isE2EEncrypted) ? encryptionKey : undefined,
+      });
+      
+      toast({
+        message: 'Paste created successfully!',
+        type: 'success',
+      });
     } catch (error) {
       console.error(error);
-      alert(error instanceof Error ? error.message : 'Failed to create paste');
+      toast({
+        message: error instanceof Error ? error.message : 'Failed to create paste',
+        type: 'error',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -84,14 +173,34 @@ export default function PasteForm() {
           <div className="text-center p-4">
             <h2 className="text-xl font-bold mb-2">Paste Created!</h2>
             <p className="mb-4">Your paste is available at:</p>
-            <a 
-              href={result.url} 
-              className="text-primary hover:underline"
-              target="_blank" 
-              rel="noopener noreferrer"
-            >
-              {result.url}
-            </a>
+            <div className="bg-muted p-2 rounded-md mb-4 overflow-x-auto">
+              <a 
+                href={result.url} 
+                className="text-primary font-mono text-sm hover:underline"
+                target="_blank" 
+                rel="noopener noreferrer"
+              >
+                {result.url}
+              </a>
+            </div>
+            
+            {result.encryptionKey && (
+              <div className="mt-4 mb-4">
+                <p className="mb-2 text-yellow-600 dark:text-yellow-400 font-bold">
+                  Important Security Notice
+                </p>
+                <p className="mb-3 text-sm">
+                  This paste is end-to-end encrypted. The decryption key is included in the URL after the # symbol.
+                  <br />The server cannot decrypt this content without this key.
+                </p>
+                <div className="bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 p-3 rounded-md mb-3">
+                  <p className="text-sm text-yellow-800 dark:text-yellow-300">
+                    Share the complete URL including the part after # to allow others to decrypt this paste.
+                  </p>
+                </div>
+              </div>
+            )}
+            
             <div className="mt-6">
               <Button 
                 onClick={() => setResult(null)}
@@ -246,10 +355,21 @@ export default function PasteForm() {
                   id="visibility"
                   name="visibility"
                   className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
+                  onChange={(e) => {
+                    // Enable E2E encryption by default when private is selected
+                    if (e.target.value === 'private') {
+                      setIsE2EEncrypted(true);
+                    }
+                  }}
                 >
                   <option value="public">Public</option>
                   <option value="private">Private</option>
                 </select>
+                {isE2EEncrypted && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Private pastes use end-to-end encryption for maximum security
+                  </p>
+                )}
               </div>
               
               <div>
@@ -266,16 +386,41 @@ export default function PasteForm() {
               </div>
             </div>
             
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="burnAfterReading"
-                name="burnAfterReading"
-                className="rounded border-input h-4 w-4 accent-primary"
-              />
-              <label htmlFor="burnAfterReading" className="text-sm font-medium">
-                Burn after reading (paste will be deleted after first view)
-              </label>
+            <div className="space-y-2">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="burnAfterReading"
+                  name="burnAfterReading"
+                  className="rounded border-input h-4 w-4 accent-primary"
+                />
+                <label htmlFor="burnAfterReading" className="text-sm font-medium">
+                  Burn after reading (paste will be deleted after first view)
+                </label>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="e2eEncryption"
+                  name="e2eEncryption"
+                  className="rounded border-input h-4 w-4 accent-primary"
+                  checked={isE2EEncrypted}
+                  onChange={(e) => setIsE2EEncrypted(e.target.checked)}
+                />
+                <label htmlFor="e2eEncryption" className="text-sm font-medium">
+                  End-to-end encryption (content encrypted in your browser)
+                </label>
+              </div>
+              
+              {isE2EEncrypted && (
+                <div className="bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 p-3 rounded-md mt-2">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    <strong>Enhanced Privacy:</strong> Your content will be encrypted before being sent to the server.
+                    Only people with the complete URL can decrypt it. The server never sees the original content.
+                  </p>
+                </div>
+              )}
             </div>
             
             <CardFooter className="flex justify-between p-0 pt-4">
@@ -289,7 +434,10 @@ export default function PasteForm() {
                 type="reset" 
                 variant="outline"
                 disabled={isSubmitting}
-                onClick={() => setFormErrors({})}
+                onClick={() => {
+                  setFormErrors({});
+                  setIsE2EEncrypted(false);
+                }}
               >
                 Clear
               </Button>

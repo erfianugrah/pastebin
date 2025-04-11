@@ -67,6 +67,7 @@ export class Paste {
     private readonly passwordHash?: string,
     private readonly burnAfterReading: boolean = false,
     private readonly readCount: number = 0,
+    private readonly isEncrypted: boolean = false,
   ) {}
 
   static create(
@@ -78,6 +79,7 @@ export class Paste {
     visibility: Visibility = 'public',
     passwordHash?: string,
     burnAfterReading: boolean = false,
+    isEncrypted: boolean = false,
   ): Paste {
     return new Paste(
       id,
@@ -90,6 +92,7 @@ export class Paste {
       passwordHash,
       burnAfterReading,
       0, // readCount starts at 0
+      isEncrypted,
     );
   }
 
@@ -189,6 +192,10 @@ export class Paste {
     return hashHex;
   }
 
+  getIsEncrypted(): boolean {
+    return this.isEncrypted;
+  }
+
   toJSON(includePasswordHash = false) {
     const json = {
       id: this.id.toString(),
@@ -201,6 +208,7 @@ export class Paste {
       isPasswordProtected: this.hasPassword(),
       burnAfterReading: this.burnAfterReading,
       readCount: this.readCount,
+      isEncrypted: this.isEncrypted,
     };
 
     // Only include password hash for storage, not for API responses
@@ -225,6 +233,7 @@ export class Paste {
       visibility: this.visibility,
       isPasswordProtected: this.hasPassword(),
       burnAfterReading: this.burnAfterReading,
+      isEncrypted: this.isEncrypted,
     };
   }
 }
@@ -241,4 +250,5 @@ export interface PasteData {
   isPasswordProtected?: boolean;
   burnAfterReading?: boolean;
   readCount?: number;
+  isEncrypted?: boolean;
 }

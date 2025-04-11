@@ -2,6 +2,7 @@
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import { ToastContainer } from '../components/ui/toast';
+import DelayedServiceWorker from '../components/DelayedServiceWorker';
 
 interface Props {
 	title: string;
@@ -78,21 +79,6 @@ const themeScript = `
 			@import 'prismjs/plugins/line-numbers/prism-line-numbers.css';
 			@import 'prismjs/plugins/toolbar/prism-toolbar.css';
 		</style>
-		
-		<!-- Service Worker Registration -->
-		<script>
-			if ('serviceWorker' in navigator) {
-				window.addEventListener('load', () => {
-					navigator.serviceWorker.register('/service-worker.js')
-						.then(registration => {
-							console.log('Service Worker registered with scope:', registration.scope);
-						})
-						.catch(error => {
-							console.error('Service Worker registration failed:', error);
-						});
-				});
-			}
-		</script>
 	</head>
 	<body class="min-h-screen flex flex-col bg-background text-foreground">
 		{!hideHeader && <Header client:load />}
@@ -102,6 +88,7 @@ const themeScript = `
 		{!hideFooter && <Footer />}
 		
 		<ToastContainer client:load />
+		<DelayedServiceWorker client:load />
 		
 		<!-- Prism.js Scripts - Using NPM package -->
 		<script>

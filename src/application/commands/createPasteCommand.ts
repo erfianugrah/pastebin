@@ -12,6 +12,7 @@ export const CreatePasteSchema = z.object({
   visibility: VisibilityEnum.default('public'),
   password: z.string().max(100).optional(),
   burnAfterReading: z.boolean().default(false),
+  isEncrypted: z.boolean().default(false), // Whether the content is already encrypted client-side
 });
 
 export type CreatePasteParams = z.infer<typeof CreatePasteSchema>;
@@ -66,6 +67,7 @@ export class CreatePasteCommand {
       validParams.visibility,
       passwordHash,
       validParams.burnAfterReading,
+      validParams.isEncrypted,
     );
     
     // Save to repository
