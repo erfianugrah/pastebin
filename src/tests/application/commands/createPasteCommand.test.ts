@@ -49,6 +49,7 @@ describe('CreatePasteCommand', () => {
       expiration: 86400,
       visibility: 'public',
       burnAfterReading: false,
+      isEncrypted: false,
     };
     
     // Setup mocks
@@ -90,6 +91,7 @@ describe('CreatePasteCommand', () => {
       expiration: 86400,
       visibility: 'public',
       burnAfterReading: false,
+      isEncrypted: false,
     };
     
     // Setup mocks

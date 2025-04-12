@@ -8,13 +8,19 @@ interface Props {
 	title: string;
 	hideHeader?: boolean;
 	hideFooter?: boolean;
+	description?: string;
 }
 
-// Replace "Pastebin" with "Erfi's Pastebin" in title if not already set
-let { title, hideHeader = false, hideFooter = false } = Astro.props;
+// Use consistent title
+let { title, hideHeader = false, hideFooter = false, description } = Astro.props;
 
-if (title && title.includes('Pastebin')) {
-  title = title.replace('Pastebin', 'Pasteriser');
+if (!title.includes('Pasteriser')) {
+  title = `${title} - Pasteriser`;
+}
+
+// Default description
+if (!description) {
+  description = "A modern, secure code sharing service with syntax highlighting, password protection, and burn-after-reading functionality";
 }
 
 // Script to set the theme before page renders to avoid flashing
@@ -41,22 +47,27 @@ const themeScript = `
 		<!-- Primary Meta Tags -->
 		<title>{title}</title>
 		<meta name="title" content={title} />
-		<meta name="description" content="A modern, secure code sharing service with syntax highlighting, password protection, and burn-after-reading functionality" />
-		<meta name="keywords" content="pastebin, code sharing, syntax highlighting, secure paste, burn after reading, password protection, erfi anugrah" />
+		<meta name="description" content={description} />
+		<meta name="keywords" content="pasteriser, code sharing, code snippet, syntax highlighting, secure paste, burn after reading, password protection, encryption, end-to-end encryption, developer tools" />
 		<meta name="author" content="Erfi Anugrah" />
+		<link rel="canonical" href={Astro.url.href} />
 		
 		<!-- Open Graph / Facebook -->
 		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="Pasteriser" />
 		<meta property="og:url" content={Astro.url.href} />
 		<meta property="og:title" content={title} />
-		<meta property="og:description" content="A modern, secure code sharing service with syntax highlighting, password protection, and burn-after-reading functionality" />
+		<meta property="og:description" content={description} />
 		<meta property="og:image" content={new URL('/og-image.png', Astro.url)} />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta property="og:locale" content="en_US" />
 		
 		<!-- Twitter -->
 		<meta property="twitter:card" content="summary_large_image" />
 		<meta property="twitter:url" content={Astro.url.href} />
 		<meta property="twitter:title" content={title} />
-		<meta property="twitter:description" content="A modern, secure code sharing service with syntax highlighting, password protection, and burn-after-reading functionality" />
+		<meta property="twitter:description" content={description} />
 		<meta property="twitter:image" content={new URL('/og-image.png', Astro.url)} />
 		
 		<!-- Favicon -->
@@ -72,6 +83,34 @@ const themeScript = `
 		
 		<!-- Theme Script -->
 		<script set:html={themeScript} />
+
+		<!-- Structured Data -->
+		<script type="application/ld+json">
+			{
+				"@context": "https://schema.org",
+				"@type": "WebApplication",
+				"name": "Pasteriser",
+				"url": "https://pasteriser.com",
+				"description": "A modern, secure code sharing service",
+				"applicationCategory": "DeveloperApplication",
+				"operatingSystem": "All",
+				"offers": {
+					"@type": "Offer",
+					"price": "0",
+					"priceCurrency": "USD"
+				},
+				"featureList": [
+					"Syntax highlighting for 30+ languages",
+					"Password protection",
+					"End-to-end encryption",
+					"Burn after reading",
+					"Expiration options"
+				]
+			}
+		</script>
+		
+		<!-- Accessibility Enhancements -->
+		<meta name="color-scheme" content="dark light">
 		
 		<!-- Prism.js for Syntax Highlighting - Using installed npm package -->
 		<style is:global>
@@ -81,8 +120,13 @@ const themeScript = `
 		</style>
 	</head>
 	<body class="min-h-screen flex flex-col bg-background text-foreground">
+		<!-- Skip to main content link for accessibility -->
+		<a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-0 focus:left-0 bg-primary text-white p-4 m-1 z-50">
+			Skip to main content
+		</a>
+		
 		{!hideHeader && <Header client:load />}
-		<main class="flex-grow">
+		<main id="main-content" class="flex-grow">
 			<slot />
 		</main>
 		{!hideFooter && <Footer />}
@@ -144,5 +188,32 @@ const themeScript = `
 	/* Additional Prism.js customizations */
 	pre[class*="language-"].line-numbers {
 		padding-left: 3.5em;
+	}
+
+	/* Accessibility improvements */
+	:focus {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border-width: 0;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		*, *::before, *::after {
+			animation-duration: 0.01ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.01ms !important;
+			scroll-behavior: auto !important;
+		}
 	}
 </style>

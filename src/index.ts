@@ -7,6 +7,7 @@ import { DefaultExpirationService } from './domain/services/expirationService';
 import { CreatePasteCommand } from './application/commands/createPasteCommand';
 import { DeletePasteCommand } from './application/commands/deletePasteCommand';
 import { GetPasteQuery } from './application/queries/getPasteQuery';
+import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery';
 import { AccessProtectedPasteQuery } from './application/queries/accessProtectedPasteQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
 import { ApiMiddleware } from './interfaces/api/middleware';
@@ -74,6 +75,7 @@ export default {
       );
       
       const getPasteQuery = new GetPasteQuery(pasteRepository);
+      const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository);
       const accessProtectedPasteQuery = new AccessProtectedPasteQuery(pasteRepository);
       
       // Create handlers and middleware
@@ -81,6 +83,7 @@ export default {
         createPasteCommand,
         deletePasteCommand,
         getPasteQuery,
+        getRecentPastesQuery,
         accessProtectedPasteQuery,
         configService,
         logger,
@@ -143,6 +146,14 @@ export default {
         // Create paste (don't cache POST responses)
         response = await apiHandlers.handleCreatePaste(request);
         response = preventCaching(response);
+      } else if (path === '/api/recent' && request.method === 'GET') {
+        // Recent pastes endpoint
+        response = await apiHandlers.handleGetRecentPastes(request);
+        // Cache recent pastes, but not for too long
+        response = addCacheHeaders(response, {
+          maxAge: 60, // Cache for 1 minute
+          staleWhileRevalidate: 300, // Allow stale content for 5 minutes while revalidating
+        });
       } else if (path === '/api/analytics' && request.method === 'GET') {
         // Analytics endpoint (admin only)
         // TODO: Add actual authentication for this endpoint
@@ -153,6 +164,18 @@ export default {
         // TODO: Add actual authentication for this endpoint
         response = await apiHandlers.handleGetLogs(request);
         response = preventCaching(response); // Don't cache log data
+      } else if (path === '/api/webhooks' && (request.method === 'GET' || request.method === 'POST')) {
+        // Webhook management endpoints
+        // TODO: Add actual authentication for this endpoint
+        response = await apiHandlers.handleWebhooks(request);
+        response = preventCaching(response); // Don't cache webhook data
+      } else if (path.match(/^\/api\/webhooks\/([^\/]+)$/) && 
+                (request.method === 'GET' || request.method === 'PUT' || 
+                 request.method === 'PATCH' || request.method === 'DELETE')) {
+        // Webhook operations for specific webhook ID
+        const webhookId = path.split('/')[3];
+        response = await apiHandlers.handleWebhookById(request, webhookId);
+        response = preventCaching(response); // Don't cache webhook data
       } else if (path.match(/^\/pastes\/([^\/]+)\/delete$/) && (request.method === 'DELETE' || request.method === 'POST' || request.method === 'GET')) {
         // Delete paste endpoint - supports both DELETE and POST for broader compatibility
         // Extract paste ID from path - format: /pastes/{id}/delete
@@ -284,6 +307,16 @@ export default {
         
         // Apply caching and set proper content type
         return cacheStaticAsset(assetResponse, extension);
+      } else if (path === '/recent') {
+        // Recent page - serve the Astro-generated UI
+        const recentRequest = new Request(
+          new URL(request.url).origin + '/recent/index.html',
+          request
+        );
+        const recentResponse = await env.ASSETS.fetch(recentRequest);
+        
+        // Set proper content type and caching
+        return cacheStaticAsset(recentResponse, 'html');
       } else if (path === '/') {
         // Home page - serve the Astro-generated UI
         // Explicitly request the index.html file

@@ -67,6 +67,10 @@ describe('KVPasteRepository', () => {
         createdAt: '2023-01-01T12:00:00.000Z',
         expiresAt: '2023-01-01T13:00:00.000Z',
         visibility: 'public',
+        burnAfterReading: false,
+        isEncrypted: false,
+        isPasswordProtected: false,
+        readCount: 0,
       });
       expect(putOptions).toEqual({
         expirationTtl: 3600,

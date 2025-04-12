@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { decryptData } from '../lib/crypto';
 import { toast } from './ui/toast';
 
@@ -23,7 +23,48 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
   const [content, setContent] = useState<string>(paste.content);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [decrypted, setDecrypted] = useState(false);
+  const [isLargeFile, setIsLargeFile] = useState(false);
+  const [visibleContent, setVisibleContent] = useState<string>('');
+  const [fullContentLoaded, setFullContentLoaded] = useState(false);
+  const codeRef = useRef<HTMLElement>(null);
   
+  // Define threshold for large files (5MB)
+  const largeFileThreshold = 5 * 1024 * 1024;
+  
+  // Handle large file progressive loading
+  useEffect(() => {
+    const contentToProcess = decrypted ? content : paste.content;
+    const isLarge = contentToProcess.length > largeFileThreshold;
+    setIsLargeFile(isLarge);
+    
+    if (isLarge) {
+      // Initially show just the first part of the content
+      const initialChunkSize = 100 * 1024; // 100KB
+      setVisibleContent(contentToProcess.slice(0, initialChunkSize));
+      
+      // Load the rest of the content after a short delay
+      const loadFullContent = () => {
+        setVisibleContent(contentToProcess);
+        setFullContentLoaded(true);
+      };
+      
+      const timeoutId = setTimeout(loadFullContent, 100);
+      return () => clearTimeout(timeoutId);
+    } else {
+      // For smaller files, show everything immediately
+      setVisibleContent(contentToProcess);
+      setFullContentLoaded(true);
+    }
+  }, [content, paste.content, decrypted]);
+
+  // Syntax highlighting effect
+  useEffect(() => {
+    if (fullContentLoaded && window.Prism && codeRef.current) {
+      // Apply syntax highlighting
+      window.Prism.highlightElement(codeRef.current);
+    }
+  }, [fullContentLoaded]);
+
   useEffect(() => {
     // Check for encryption key in URL fragment and attempt decryption
     async function attemptDecryption() {
@@ -152,10 +193,22 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
       )}
       
       {/* Code content */}
-      <div className={`${isDecrypting ? 'opacity-50' : ''}`}>
+      <div className={`${isDecrypting ? 'opacity-50' : ''} relative`}>
         <pre className={`p-4 rounded-md overflow-x-auto bg-gray-100 dark:bg-gray-800 font-mono text-sm max-h-[600px] ${paste.isEncrypted && !decrypted ? 'blur-sm' : ''}`}>
-          <code>{content}</code>
+          <code ref={codeRef} className={`language-${paste.language || 'plaintext'}`}>
+            {visibleContent}
+          </code>
         </pre>
+        
+        {/* Loading indicator for large files */}
+        {isLargeFile && !fullContentLoaded && !isDecrypting && (
+          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-gray-100/90 dark:from-gray-800/90 to-transparent py-4 flex justify-center">
+            <div className="bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm flex items-center">
+              <div className="animate-spin mr-2 rounded-full h-4 w-4 border-2 border-primary-foreground border-t-transparent"></div>
+              Loading complete file... ({Math.round(content.length / 1024)}KB)
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Encrypted content message */}

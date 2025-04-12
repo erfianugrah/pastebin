@@ -3,8 +3,12 @@
 User-agent: *
 Allow: /
 
-# Disallow password-protected or private pastes
-Disallow: /pastes/*/password
+# Private pastes should not be indexed
+Disallow: /pastes/*?password=*
+Disallow: /pastes/*/delete
 
-# Sitemap
+# Admin panel
+Disallow: /admin/
+
+# Sitemap location
 Sitemap: https://pasteriser.com/sitemap.xml

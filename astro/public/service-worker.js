@@ -1,5 +1,5 @@
 // Enhanced service worker for Pasteriser with better error handling
-const CACHE_NAME = 'pastebin-v1';
+const CACHE_NAME = 'pasteriser-v1';
 
 // Files to cache - only include stable files that don't change often
 const CACHE_FILES = [

@@ -10,7 +10,7 @@
   <path d="M380 160L320 460" stroke="white" stroke-width="24" stroke-linecap="round" />
   
   <!-- Text -->
-  <text x="600" y="270" font-size="80" font-weight="700" font-family="Inter, system-ui, sans-serif" fill="white">Erfi's Pastebin</text>
+  <text x="600" y="270" font-size="80" font-weight="700" font-family="Inter, system-ui, sans-serif" fill="white">Erfi's Pasteriser</text>
   <text x="600" y="350" font-size="36" font-weight="400" font-family="Inter, system-ui, sans-serif" fill="white">A modern, secure code sharing service</text>
   
   <!-- Feature badges -->

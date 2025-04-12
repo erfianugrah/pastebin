@@ -18,8 +18,10 @@ export default function PasteForm() {
     const content = formData.get('content') as string;
     if (!content || content.trim().length === 0) {
       errors.content = 'Content is required';
-    } else if (content.length > 1024 * 1024) { // 1MB
-      errors.content = 'Content is too large (max 1MB)';
+    } else if (content.length > 25 * 1024 * 1024) { // 25MB
+      errors.content = 'Content is too large (max 25MB)';
+    } else if (content.length > 5 * 1024 * 1024) { // 5MB warning
+      console.warn('Large paste detected:', Math.floor(content.length / (1024 * 1024)), 'MB');
     }
     
     // Validate title

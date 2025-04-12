@@ -5,7 +5,7 @@ import { ExpirationService } from '../../domain/services/expirationService';
 import { UniqueIdService } from '../../domain/services/uniqueIdService';
 
 export const CreatePasteSchema = z.object({
-  content: z.string().min(1).max(1024 * 1024), // Max 1MB
+  content: z.string().min(1).max(25 * 1024 * 1024), // Max 25MB
   title: z.string().max(100).optional(),
   language: z.string().optional(),
   expiration: z.number().positive().default(86400), // Default 1 day

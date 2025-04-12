@@ -1,0 +1,138 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Recent Pastes - Pasteriser">
+  <div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-6">Recent Public Pastes</h1>
+    
+    <!-- Spinner shown while loading -->
+    <div id="loading" class="py-12 text-center">
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <p class="mt-4">Loading recent pastes...</p>
+    </div>
+    
+    <!-- Will be populated with paste data -->
+    <div id="pastes-container" class="grid gap-4 hidden">
+      <!-- Template for paste items will be inserted here by JavaScript -->
+    </div>
+    
+    <!-- Empty state (hidden by default) -->
+    <div id="empty-state" class="hidden py-12 text-center">
+      <div class="mx-auto rounded-full w-16 h-16 bg-muted flex items-center justify-center mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-50">
+          <path d="M12 7v10"/>
+          <path d="M7 12h10"/>
+        </svg>
+      </div>
+      <h2 class="text-xl font-semibold mb-2">No Public Pastes Found</h2>
+      <p class="text-muted-foreground max-w-md mx-auto mb-6">There are no public pastes available to view. Create a new paste with public visibility to have it appear here.</p>
+      <a href="/" class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-4 py-2">
+        Create New Paste
+      </a>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  // HTML template for a paste item
+  const pasteTemplate = (paste) => `
+    <div class="rounded-lg border bg-card text-card-foreground shadow-sm overflow-hidden">
+      <div class="p-4 flex flex-col md:flex-row justify-between gap-2">
+        <div>
+          <h3 class="font-medium text-lg truncate">${paste.title}</h3>
+          <div class="text-muted-foreground text-sm flex flex-wrap gap-x-4 gap-y-1 mt-1">
+            <span>Created: ${formatDate(new Date(paste.createdAt))}</span>
+            ${paste.language ? `<span>Language: ${paste.language}</span>` : ''}
+            <span>Views: ${paste.readCount}</span>
+          </div>
+        </div>
+        <div class="flex items-start gap-2">
+          <a 
+            href="/pastes/${paste.id}" 
+            class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-4 py-2">
+            View
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Helper function to format dates nicely
+  function formatDate(date) {
+    // Use toLocaleDateString for a shorter date format
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  }
+
+  // Fetch and display recent pastes
+  async function loadRecentPastes() {
+    try {
+      const response = await fetch('/api/recent');
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch recent pastes');
+      }
+      
+      const data = await response.json();
+      const pastes = data.pastes || [];
+      
+      const pastesContainer = document.getElementById('pastes-container');
+      const loadingElement = document.getElementById('loading');
+      const emptyState = document.getElementById('empty-state');
+      
+      // Hide loading
+      if (loadingElement) {
+        loadingElement.classList.add('hidden');
+      }
+      
+      if (pastes.length > 0) {
+        // Show pastes container
+        if (pastesContainer) {
+          pastesContainer.classList.remove('hidden');
+          
+          // Generate HTML for each paste
+          const pastesHtml = pastes.map(paste => pasteTemplate(paste)).join('');
+          
+          // Insert into container
+          pastesContainer.innerHTML = pastesHtml;
+        }
+      } else {
+        // Show empty state
+        if (emptyState) {
+          emptyState.classList.remove('hidden');
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching recent pastes:', error);
+      
+      // Show empty state in case of error
+      const loadingElement = document.getElementById('loading');
+      const emptyState = document.getElementById('empty-state');
+      
+      if (loadingElement) {
+        loadingElement.classList.add('hidden');
+      }
+      
+      if (emptyState) {
+        emptyState.classList.remove('hidden');
+        // Update message to indicate error
+        const title = emptyState.querySelector('h2');
+        if (title) {
+          title.textContent = 'Error Loading Pastes';
+        }
+        
+        const description = emptyState.querySelector('p');
+        if (description) {
+          description.textContent = 'There was an error loading recent pastes. Please try again later.';
+        }
+      }
+    }
+  }
+
+  // Load pastes when document is ready
+  document.addEventListener('DOMContentLoaded', loadRecentPastes);
+</script>
