@@ -296,6 +296,16 @@ export default {
         
         // Apply caching and set proper content type
         return cacheStaticAsset(assetResponse, extension);
+      } else if (path === '/recent') {
+        // Recent page - serve the Astro-generated UI
+        const recentRequest = new Request(
+          new URL(request.url).origin + '/recent/index.html',
+          request
+        );
+        const recentResponse = await env.ASSETS.fetch(recentRequest);
+        
+        // Set proper content type and caching
+        return cacheStaticAsset(recentResponse, 'html');
       } else if (path === '/') {
         // Home page - serve the Astro-generated UI
         // Explicitly request the index.html file
