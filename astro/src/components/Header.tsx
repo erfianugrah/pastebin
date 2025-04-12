@@ -50,18 +50,6 @@ export default function Header({ title = 'Pasteriser' }: HeaderProps) {
           >
             Recent
           </a>
-          <a 
-            href="/docs/api" 
-            className="text-sm font-medium text-muted-foreground transition-colors hover:text-primary"
-          >
-            API
-          </a>
-          <a 
-            href="/admin" 
-            className="text-sm font-medium text-muted-foreground transition-colors hover:text-primary"
-          >
-            Admin
-          </a>
         </nav>
         
         <div className="flex items-center space-x-4">
@@ -124,20 +112,6 @@ export default function Header({ title = 'Pasteriser' }: HeaderProps) {
             onClick={() => setIsMenuOpen(false)}
           >
             Recent
-          </a>
-          <a 
-            href="/docs/api" 
-            className="block py-2 px-2 rounded-lg hover:bg-muted"
-            onClick={() => setIsMenuOpen(false)}
-          >
-            API
-          </a>
-          <a 
-            href="/admin" 
-            className="block py-2 px-2 rounded-lg hover:bg-muted"
-            onClick={() => setIsMenuOpen(false)}
-          >
-            Admin
           </a>
         </nav>
       </div>
