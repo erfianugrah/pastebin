@@ -7,6 +7,7 @@ import { DefaultExpirationService } from './domain/services/expirationService';
 import { CreatePasteCommand } from './application/commands/createPasteCommand';
 import { DeletePasteCommand } from './application/commands/deletePasteCommand';
 import { GetPasteQuery } from './application/queries/getPasteQuery';
+import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery';
 import { AccessProtectedPasteQuery } from './application/queries/accessProtectedPasteQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
 import { ApiMiddleware } from './interfaces/api/middleware';
@@ -74,6 +75,7 @@ export default {
       );
       
       const getPasteQuery = new GetPasteQuery(pasteRepository);
+      const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository);
       const accessProtectedPasteQuery = new AccessProtectedPasteQuery(pasteRepository);
       
       // Create handlers and middleware
@@ -81,6 +83,7 @@ export default {
         createPasteCommand,
         deletePasteCommand,
         getPasteQuery,
+        getRecentPastesQuery,
         accessProtectedPasteQuery,
         configService,
         logger,
@@ -143,6 +146,14 @@ export default {
         // Create paste (don't cache POST responses)
         response = await apiHandlers.handleCreatePaste(request);
         response = preventCaching(response);
+      } else if (path === '/api/recent' && request.method === 'GET') {
+        // Recent pastes endpoint
+        response = await apiHandlers.handleGetRecentPastes(request);
+        // Cache recent pastes, but not for too long
+        response = addCacheHeaders(response, {
+          maxAge: 60, // Cache for 1 minute
+          staleWhileRevalidate: 300, // Allow stale content for 5 minutes while revalidating
+        });
       } else if (path === '/api/analytics' && request.method === 'GET') {
         // Analytics endpoint (admin only)
         // TODO: Add actual authentication for this endpoint

@@ -1,6 +1,7 @@
 import { CreatePasteCommand, CreatePasteParams } from '../../application/commands/createPasteCommand';
 import { DeletePasteCommand, DeletePasteParams } from '../../application/commands/deletePasteCommand';
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
+import { GetRecentPastesQuery } from '../../application/queries/getRecentPastesQuery';
 import { AccessProtectedPasteQuery } from '../../application/queries/accessProtectedPasteQuery';
 import { ConfigurationService } from '../../infrastructure/config/config';
 import { Logger } from '../../infrastructure/logging/logger';
@@ -16,6 +17,7 @@ export class ApiHandlers {
     private readonly createPasteCommand: CreatePasteCommand,
     private readonly deletePasteCommand: DeletePasteCommand,
     private readonly getPasteQuery: GetPasteQuery,
+    private readonly getRecentPastesQuery: GetRecentPastesQuery,
     private readonly accessProtectedPasteQuery: AccessProtectedPasteQuery,
     private readonly configService: ConfigurationService,
     private readonly logger: Logger,
@@ -469,6 +471,40 @@ export class ApiHandlers {
       }
       
       // Generic error
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'internal_error',
+            message: 'An internal error occurred',
+          },
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+  }
+  
+  /**
+   * Get recent public pastes
+   */
+  async handleGetRecentPastes(request: Request): Promise<Response> {
+    try {
+      this.logger.debug('Handling get recent pastes request');
+      
+      // Get query params
+      const url = new URL(request.url);
+      const limit = parseInt(url.searchParams.get('limit') || '10', 10);
+      
+      // Execute query
+      const results = await this.getRecentPastesQuery.execute(limit);
+      
+      // Return response
+      return new Response(
+        JSON.stringify({ pastes: results }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    } catch (error) {
+      this.logger.error('Error getting recent pastes', { error });
+      
       return new Response(
         JSON.stringify({
           error: {
