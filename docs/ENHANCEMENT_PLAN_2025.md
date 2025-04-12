@@ -1,6 +1,6 @@
-# Pastebin Enhancement Plan 2025
+# Pasteriser Enhancement Plan 2025
 
-This document outlines a comprehensive plan for implementing several key improvements to the Pastebin application.
+This document outlines a comprehensive plan for implementing several key improvements to the Pasteriser application.
 
 ## 1. Increase Content Size Limit
 

@@ -14,8 +14,8 @@ interface Props {
 // Use consistent title
 let { title, hideHeader = false, hideFooter = false, description } = Astro.props;
 
-if (!title.includes('Pastebin')) {
-  title = `${title} - Pastebin`;
+if (!title.includes('Pasteriser')) {
+  title = `${title} - Pasteriser`;
 }
 
 // Default description
@@ -48,13 +48,13 @@ const themeScript = `
 		<title>{title}</title>
 		<meta name="title" content={title} />
 		<meta name="description" content={description} />
-		<meta name="keywords" content="pastebin, code sharing, code snippet, syntax highlighting, secure paste, burn after reading, password protection, encryption, end-to-end encryption, developer tools" />
+		<meta name="keywords" content="pasteriser, code sharing, code snippet, syntax highlighting, secure paste, burn after reading, password protection, encryption, end-to-end encryption, developer tools" />
 		<meta name="author" content="Erfi Anugrah" />
 		<link rel="canonical" href={Astro.url.href} />
 		
 		<!-- Open Graph / Facebook -->
 		<meta property="og:type" content="website" />
-		<meta property="og:site_name" content="Pastebin" />
+		<meta property="og:site_name" content="Pasteriser" />
 		<meta property="og:url" content={Astro.url.href} />
 		<meta property="og:title" content={title} />
 		<meta property="og:description" content={description} />
@@ -89,8 +89,8 @@ const themeScript = `
 			{
 				"@context": "https://schema.org",
 				"@type": "WebApplication",
-				"name": "Pastebin",
-				"url": "https://pastebin.example.com",
+				"name": "Pasteriser",
+				"url": "https://pasteriser.com",
 				"description": "A modern, secure code sharing service",
 				"applicationCategory": "DeveloperApplication",
 				"operatingSystem": "All",

@@ -1,4 +1,4 @@
-# robots.txt for Pastebin
+# robots.txt for Pasteriser
 
 User-agent: *
 Allow: /
@@ -11,4 +11,4 @@ Disallow: /pastes/*/delete
 Disallow: /admin/
 
 # Sitemap location
-Sitemap: https://pastebin.example.com/sitemap.xml
+Sitemap: https://pasteriser.com/sitemap.xml
