@@ -5,10 +5,12 @@ import { AccessProtectedPasteQuery } from '../../application/queries/accessProte
 import { ConfigurationService } from '../../infrastructure/config/config';
 import { Logger } from '../../infrastructure/logging/logger';
 import { Analytics } from '../../infrastructure/analytics/analytics';
-import { Env } from '../../types';
+import { WebhookService } from '../../infrastructure/webhooks/webhookService';
+import { Env, AdminLogQuery } from '../../types';
 
 export class ApiHandlers {
   private analytics: Analytics;
+  private webhookService?: WebhookService;
 
   constructor(
     private readonly createPasteCommand: CreatePasteCommand,
@@ -20,6 +22,15 @@ export class ApiHandlers {
     private readonly env: Env,
   ) {
     this.analytics = new Analytics(env, logger);
+    
+    // Initialize webhook service if enabled in config
+    if (env.WEBHOOKS && this.configService.get('enableWebhooks')) {
+      this.webhookService = new WebhookService(logger, env.WEBHOOKS);
+      // Initialize webhooks asynchronously
+      this.webhookService.init().catch(error => {
+        this.logger.error('Failed to initialize webhook service', { error });
+      });
+    }
   }
 
   async handleCreatePaste(request: Request): Promise<Response> {
@@ -31,6 +42,9 @@ export class ApiHandlers {
 
       // Execute command to create paste
       const result = await this.createPasteCommand.execute(body);
+      
+      // Get the paste object for webhook payload
+      const paste = await this.getPasteQuery.execute(result.id);
 
       // Track analytics event
       await this.analytics.trackEvent('paste_created', {
@@ -39,6 +53,13 @@ export class ApiHandlers {
         visibility: body.visibility || 'public',
         hasPassword: !!body.password,
       });
+      
+      // Trigger webhook if enabled
+      if (this.webhookService && paste) {
+        this.webhookService.pasteCreated(paste).catch(error => {
+          this.logger.error('Failed to trigger webhook for paste creation', { error, pasteId: result.id });
+        });
+      }
 
       // Return response
       return new Response(
@@ -142,6 +163,11 @@ export class ApiHandlers {
           // Incorrect password
           this.logger.debug('Incorrect password for paste', { pasteId });
           
+          // Track failed password attempt
+          await this.analytics.trackEvent('paste_password_error', {
+            id: pasteId,
+          });
+          
           return new Response(
             JSON.stringify({
               error: {
@@ -161,6 +187,13 @@ export class ApiHandlers {
           passwordProtected: true,
         });
         
+        // Trigger webhook for paste view
+        if (this.webhookService) {
+          this.webhookService.pasteViewed(paste).catch(error => {
+            this.logger.error('Failed to trigger webhook for paste view', { error, pasteId });
+          });
+        }
+        
         return new Response(JSON.stringify(paste.toJSON()), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -174,6 +207,13 @@ export class ApiHandlers {
         visibility: summary.paste.getVisibility(),
         passwordProtected: false,
       });
+      
+      // Trigger webhook for paste view
+      if (this.webhookService) {
+        this.webhookService.pasteViewed(summary.paste).catch(error => {
+          this.logger.error('Failed to trigger webhook for paste view', { error, pasteId });
+        });
+      }
       
       return new Response(JSON.stringify(summary.paste.toJSON()), {
         status: 200,
@@ -308,6 +348,13 @@ export class ApiHandlers {
           id: pasteId
         });
         
+        // Trigger webhook for paste deletion
+        if (this.webhookService) {
+          this.webhookService.pasteDeleted(pasteId).catch(error => {
+            this.logger.error('Failed to trigger webhook for paste deletion', { error, pasteId });
+          });
+        }
+        
         // Return success response
         return new Response(
           JSON.stringify(result),
@@ -342,6 +389,179 @@ export class ApiHandlers {
             },
           }),
           { status: 400, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      
+      // Generic error
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'internal_error',
+            message: 'An internal error occurred',
+          },
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+  }
+  
+  /**
+   * Handle webhook management operations
+   */
+  async handleWebhooks(request: Request): Promise<Response> {
+    // Ensure webhooks are enabled
+    if (!this.webhookService) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'webhooks_disabled',
+            message: 'Webhooks are not enabled for this instance',
+          },
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    
+    try {
+      // List webhooks
+      if (request.method === 'GET') {
+        const endpoints = await this.webhookService.getEndpoints();
+        return new Response(
+          JSON.stringify({ endpoints }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      
+      // Create webhook
+      if (request.method === 'POST') {
+        const data = await request.json() as any;
+        const endpoint = await this.webhookService.registerEndpoint(data);
+        return new Response(
+          JSON.stringify(endpoint),
+          { status: 201, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      
+      // Method not allowed
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'method_not_allowed',
+            message: 'Method not allowed',
+          },
+        }),
+        { status: 405, headers: { 'Content-Type': 'application/json' } },
+      );
+    } catch (error) {
+      this.logger.error('Error handling webhooks request', { error });
+      
+      // Check if it's an AppError
+      if (error instanceof Error && 'status' in (error as any)) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: error.message.toLowerCase().replace(/\s+/g, '_'),
+              message: error.message,
+            },
+          }),
+          { status: (error as any).status || 500, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      
+      // Generic error
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'internal_error',
+            message: 'An internal error occurred',
+          },
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+  }
+  
+  /**
+   * Handle webhook operations for a specific webhook ID
+   */
+  async handleWebhookById(request: Request, id: string): Promise<Response> {
+    // Ensure webhooks are enabled
+    if (!this.webhookService) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'webhooks_disabled',
+            message: 'Webhooks are not enabled for this instance',
+          },
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    
+    try {
+      // Get webhook details
+      if (request.method === 'GET') {
+        const endpoint = await this.webhookService.getEndpoint(id);
+        if (!endpoint) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'webhook_not_found',
+                message: 'Webhook endpoint not found',
+              },
+            }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        
+        return new Response(
+          JSON.stringify(endpoint),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      
+      // Update webhook
+      if (request.method === 'PATCH' || request.method === 'PUT') {
+        const data = await request.json() as any;
+        const endpoint = await this.webhookService.updateEndpoint(id, data);
+        return new Response(
+          JSON.stringify(endpoint),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      
+      // Delete webhook
+      if (request.method === 'DELETE') {
+        await this.webhookService.deleteEndpoint(id);
+        return new Response(
+          JSON.stringify({ success: true }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      
+      // Method not allowed
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'method_not_allowed',
+            message: 'Method not allowed',
+          },
+        }),
+        { status: 405, headers: { 'Content-Type': 'application/json' } },
+      );
+    } catch (error) {
+      this.logger.error('Error handling webhook by ID request', { error, webhookId: id });
+      
+      // Check if it's an AppError
+      if (error instanceof Error && 'status' in (error as any)) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: error.message.toLowerCase().replace(/\s+/g, '_'),
+              message: error.message,
+            },
+          }),
+          { status: (error as any).status || 500, headers: { 'Content-Type': 'application/json' } },
         );
       }
       

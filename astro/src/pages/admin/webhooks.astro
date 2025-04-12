@@ -1,0 +1,212 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Button } from '../../components/ui/button';
+
+// This will be replaced with actual admin auth middleware
+const isAuthenticated = true;
+---
+
+<Layout title="Webhooks - Admin Dashboard - Pastebin">
+  <main class="container mx-auto px-4 py-8">
+    {!isAuthenticated ? (
+      <div class="flex justify-center items-center min-h-[60vh]">
+        <p class="text-xl">Please <a href="/admin" class="text-primary hover:underline">login</a> to access this page.</p>
+      </div>
+    ) : (
+      <div>
+        <div class="flex justify-between items-center mb-8">
+          <h1 class="text-3xl font-bold">Webhooks</h1>
+          <Button id="createWebhook">Add Webhook</Button>
+        </div>
+        
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>What are webhooks?</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p class="mb-3">
+              Webhooks allow your application to receive real-time notifications when certain events occur in your Pastebin instance.
+              We'll send a POST request to your URL with a JSON payload containing information about the event.
+            </p>
+            <div class="bg-muted rounded-md p-4 font-mono text-sm overflow-x-auto">
+              <pre>{`{
+  "id": "whk_123456789",
+  "event": "paste.created",
+  "timestamp": "2025-04-12T15:30:45Z",
+  "data": {
+    "id": "abc123",
+    "title": "Example Paste",
+    "language": "javascript",
+    "visibility": "public",
+    "createdAt": "2025-04-12T15:30:45Z",
+    "expiresAt": "2025-04-13T15:30:45Z",
+    "isEncrypted": false,
+    "hasPassword": true,
+    "burnAfterReading": false
+  }
+}`}</pre>
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader>
+            <div class="flex justify-between items-center">
+              <CardTitle>Webhook Endpoints</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div class="relative overflow-x-auto">
+              <table class="w-full text-sm text-left">
+                <thead class="text-xs uppercase bg-muted/40">
+                  <tr>
+                    <th scope="col" class="px-4 py-3">Description</th>
+                    <th scope="col" class="px-4 py-3">URL</th>
+                    <th scope="col" class="px-4 py-3">Events</th>
+                    <th scope="col" class="px-4 py-3">Status</th>
+                    <th scope="col" class="px-4 py-3">Created</th>
+                    <th scope="col" class="px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="webhooksTableBody">
+                  <tr class="border-b border-muted/20">
+                    <td class="px-4 py-3">Example Webhook</td>
+                    <td class="px-4 py-3 font-mono text-xs truncate max-w-[200px]">https://example.com/webhooks/pastebin</td>
+                    <td class="px-4 py-3">
+                      <div class="flex flex-wrap gap-1">
+                        <span class="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-2 py-1 text-xs">paste.created</span>
+                        <span class="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-2 py-1 text-xs">paste.viewed</span>
+                      </div>
+                    </td>
+                    <td class="px-4 py-3">
+                      <span class="inline-flex items-center rounded-full bg-green-100 dark:bg-green-900/30 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:text-green-300">
+                        Active
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 text-xs">2025-04-12</td>
+                    <td class="px-4 py-3">
+                      <div class="flex gap-2">
+                        <Button variant="ghost" size="sm">Edit</Button>
+                        <Button variant="ghost" size="sm" class="text-destructive">Delete</Button>
+                      </div>
+                    </td>
+                  </tr>
+                  <!-- More rows would be populated from API -->
+                </tbody>
+              </table>
+            </div>
+            
+            <div id="emptyState" class="hidden py-8 text-center">
+              <p class="text-muted-foreground mb-4">No webhooks configured yet</p>
+              <Button id="createFirstWebhook">Create your first webhook</Button>
+            </div>
+          </CardContent>
+        </Card>
+        
+        <!-- Webhook creation modal (would be implemented with a proper modal component) -->
+        <div id="webhookModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="bg-background rounded-lg shadow-lg w-full max-w-md p-6">
+            <h2 class="text-xl font-bold mb-4">Create Webhook</h2>
+            
+            <form class="space-y-4">
+              <div>
+                <label for="description" class="block text-sm font-medium mb-1">
+                  Description
+                </label>
+                <input
+                  id="description"
+                  type="text"
+                  class="w-full rounded-md border border-input px-3 py-2 bg-background"
+                  placeholder="My API Integration"
+                />
+              </div>
+              
+              <div>
+                <label for="url" class="block text-sm font-medium mb-1">
+                  Webhook URL
+                </label>
+                <input
+                  id="url"
+                  type="url"
+                  class="w-full rounded-md border border-input px-3 py-2 bg-background"
+                  placeholder="https://example.com/webhooks/pastebin"
+                />
+              </div>
+              
+              <div>
+                <span class="block text-sm font-medium mb-1">
+                  Events
+                </span>
+                <div class="space-y-2">
+                  <label class="flex items-center">
+                    <input type="checkbox" class="mr-2" value="paste.created" />
+                    paste.created
+                  </label>
+                  <label class="flex items-center">
+                    <input type="checkbox" class="mr-2" value="paste.viewed" />
+                    paste.viewed
+                  </label>
+                  <label class="flex items-center">
+                    <input type="checkbox" class="mr-2" value="paste.deleted" />
+                    paste.deleted
+                  </label>
+                  <label class="flex items-center">
+                    <input type="checkbox" class="mr-2" value="paste.expired" />
+                    paste.expired
+                  </label>
+                </div>
+              </div>
+              
+              <div class="flex justify-end space-x-2 pt-4">
+                <Button type="button" variant="outline" id="cancelWebhook">Cancel</Button>
+                <Button type="submit">Create Webhook</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    )}
+  </main>
+</Layout>
+
+<script>
+  // Basic modal functionality (would be replaced with a proper component in production)
+  document.addEventListener('DOMContentLoaded', () => {
+    const createBtn = document.getElementById('createWebhook');
+    const createFirstBtn = document.getElementById('createFirstWebhook');
+    const cancelBtn = document.getElementById('cancelWebhook');
+    const modal = document.getElementById('webhookModal');
+    
+    const openModal = () => {
+      if (modal) modal.classList.remove('hidden');
+    };
+    
+    const closeModal = () => {
+      if (modal) modal.classList.add('hidden');
+    };
+    
+    if (createBtn) createBtn.addEventListener('click', openModal);
+    if (createFirstBtn) createFirstBtn.addEventListener('click', openModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    
+    // Close on outside click
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+      });
+    }
+    
+    // Show empty state if no webhooks
+    const table = document.getElementById('webhooksTableBody');
+    const emptyState = document.getElementById('emptyState');
+    
+    // This would be based on actual data in production
+    const hasRows = table && table.querySelectorAll('tr').length > 0;
+    
+    if (!hasRows && emptyState) {
+      table?.closest('table')?.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+    }
+  });
+</script>

@@ -153,6 +153,18 @@ export default {
         // TODO: Add actual authentication for this endpoint
         response = await apiHandlers.handleGetLogs(request);
         response = preventCaching(response); // Don't cache log data
+      } else if (path === '/api/webhooks' && (request.method === 'GET' || request.method === 'POST')) {
+        // Webhook management endpoints
+        // TODO: Add actual authentication for this endpoint
+        response = await apiHandlers.handleWebhooks(request);
+        response = preventCaching(response); // Don't cache webhook data
+      } else if (path.match(/^\/api\/webhooks\/([^\/]+)$/) && 
+                (request.method === 'GET' || request.method === 'PUT' || 
+                 request.method === 'PATCH' || request.method === 'DELETE')) {
+        // Webhook operations for specific webhook ID
+        const webhookId = path.split('/')[3];
+        response = await apiHandlers.handleWebhookById(request, webhookId);
+        response = preventCaching(response); // Don't cache webhook data
       } else if (path.match(/^\/pastes\/([^\/]+)\/delete$/) && (request.method === 'DELETE' || request.method === 'POST' || request.method === 'GET')) {
         // Delete paste endpoint - supports both DELETE and POST for broader compatibility
         // Extract paste ID from path - format: /pastes/{id}/delete
