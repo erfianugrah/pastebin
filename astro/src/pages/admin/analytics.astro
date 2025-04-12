@@ -1,0 +1,197 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+
+// This will be replaced with actual admin auth middleware
+const isAuthenticated = true;
+---
+
+<Layout title="Analytics - Admin Dashboard - Pastebin">
+  <main class="container mx-auto px-4 py-8">
+    {!isAuthenticated ? (
+      <div class="flex justify-center items-center min-h-[60vh]">
+        <p class="text-xl">Please <a href="/admin" class="text-primary hover:underline">login</a> to access this page.</p>
+      </div>
+    ) : (
+      <div>
+        <div class="flex justify-between items-center mb-8">
+          <h1 class="text-3xl font-bold">Analytics</h1>
+          <div class="flex gap-2">
+            <select 
+              id="timeRange" 
+              class="rounded-md border border-input px-3 py-1.5 bg-background text-sm"
+            >
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="365">Last year</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Total Views</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p class="text-2xl font-bold">-</p>
+              <p class="text-xs text-muted-foreground"><span class="text-green-500">↑ 12%</span> from previous period</p>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">New Pastes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p class="text-2xl font-bold">-</p>
+              <p class="text-xs text-muted-foreground"><span class="text-red-500">↓ 3%</span> from previous period</p>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Encrypted Pastes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p class="text-2xl font-bold">-</p>
+              <p class="text-xs text-muted-foreground"><span class="text-green-500">↑ 25%</span> from previous period</p>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Deleted Pastes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p class="text-2xl font-bold">-</p>
+              <p class="text-xs text-muted-foreground"><span class="text-green-500">↑ 5%</span> from previous period</p>
+            </CardContent>
+          </Card>
+        </div>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Paste Creation Trend</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div class="h-80 flex items-center justify-center bg-muted/20">
+                <p class="text-muted-foreground">Chart will be loaded here</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader>
+              <CardTitle>Paste Views Trend</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div class="h-80 flex items-center justify-center bg-muted/20">
+                <p class="text-muted-foreground">Chart will be loaded here</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Languages</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div class="space-y-4">
+                <div>
+                  <div class="flex justify-between mb-1">
+                    <span class="text-sm font-medium">JavaScript</span>
+                    <span class="text-sm text-muted-foreground">35%</span>
+                  </div>
+                  <div class="w-full bg-muted rounded-full h-2.5">
+                    <div class="bg-primary h-2.5 rounded-full" style="width: 35%"></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex justify-between mb-1">
+                    <span class="text-sm font-medium">Python</span>
+                    <span class="text-sm text-muted-foreground">25%</span>
+                  </div>
+                  <div class="w-full bg-muted rounded-full h-2.5">
+                    <div class="bg-primary h-2.5 rounded-full" style="width: 25%"></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex justify-between mb-1">
+                    <span class="text-sm font-medium">TypeScript</span>
+                    <span class="text-sm text-muted-foreground">15%</span>
+                  </div>
+                  <div class="w-full bg-muted rounded-full h-2.5">
+                    <div class="bg-primary h-2.5 rounded-full" style="width: 15%"></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex justify-between mb-1">
+                    <span class="text-sm font-medium">JSON</span>
+                    <span class="text-sm text-muted-foreground">10%</span>
+                  </div>
+                  <div class="w-full bg-muted rounded-full h-2.5">
+                    <div class="bg-primary h-2.5 rounded-full" style="width: 10%"></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex justify-between mb-1">
+                    <span class="text-sm font-medium">Other</span>
+                    <span class="text-sm text-muted-foreground">15%</span>
+                  </div>
+                  <div class="w-full bg-muted rounded-full h-2.5">
+                    <div class="bg-primary h-2.5 rounded-full" style="width: 15%"></div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader>
+              <CardTitle>Paste Attributes</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-muted/20 rounded-lg p-4 text-center">
+                  <p class="text-sm text-muted-foreground mb-1">Password Protected</p>
+                  <p class="text-2xl font-bold">28%</p>
+                </div>
+                <div class="bg-muted/20 rounded-lg p-4 text-center">
+                  <p class="text-sm text-muted-foreground mb-1">Burn After Reading</p>
+                  <p class="text-2xl font-bold">15%</p>
+                </div>
+                <div class="bg-muted/20 rounded-lg p-4 text-center">
+                  <p class="text-sm text-muted-foreground mb-1">E2E Encrypted</p>
+                  <p class="text-2xl font-bold">42%</p>
+                </div>
+                <div class="bg-muted/20 rounded-lg p-4 text-center">
+                  <p class="text-sm text-muted-foreground mb-1">Private</p>
+                  <p class="text-2xl font-bold">56%</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )}
+  </main>
+</Layout>
+
+<script>
+  // This will be replaced with actual data fetching and chart rendering
+  document.addEventListener('DOMContentLoaded', () => {
+    const timeRange = document.getElementById('timeRange');
+    if (timeRange) {
+      timeRange.addEventListener('change', (e) => {
+        const days = (e.target as HTMLSelectElement).value;
+        console.log(`Fetching data for the last ${days} days`);
+        // Here we would fetch new data and update the charts
+      });
+    }
+  });
+</script>
