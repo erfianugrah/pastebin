@@ -1,4 +1,4 @@
-import { crypto } from '@cloudflare/workers-types';
+// Use the global crypto object from Cloudflare Workers runtime
 import { AppError } from '../errors/AppError';
 import { Logger } from '../logging/logger';
 import { Paste } from '../../domain/models/paste';
@@ -50,7 +50,7 @@ export class WebhookService {
       }
     } catch (error) {
       this.logger.error('Failed to initialize webhook service', { error });
-      throw new AppError('Failed to initialize webhook service', 500);
+      throw new AppError('Failed to initialize webhook service', '500');
     }
   }
 
@@ -83,7 +83,7 @@ export class WebhookService {
       return newEndpoint;
     } catch (error) {
       this.logger.error('Failed to register webhook endpoint', { error });
-      throw new AppError('Failed to register webhook endpoint', 500);
+      throw new AppError('Failed to register webhook endpoint', '500');
     }
   }
 
@@ -93,7 +93,7 @@ export class WebhookService {
       const index = this.endpoints.findIndex(e => e.id === id);
       
       if (index === -1) {
-        throw new AppError('Webhook endpoint not found', 404);
+        throw new AppError('Webhook endpoint not found', '404');
       }
       
       // Update the endpoint
@@ -110,7 +110,7 @@ export class WebhookService {
       return this.endpoints[index];
     } catch (error) {
       this.logger.error('Failed to update webhook endpoint', { error, id });
-      throw error instanceof AppError ? error : new AppError('Failed to update webhook endpoint', 500);
+      throw error instanceof AppError ? error : new AppError('Failed to update webhook endpoint', '500');
     }
   }
 
@@ -121,7 +121,7 @@ export class WebhookService {
       this.endpoints = this.endpoints.filter(e => e.id !== id);
       
       if (this.endpoints.length === initialLength) {
-        throw new AppError('Webhook endpoint not found', 404);
+        throw new AppError('Webhook endpoint not found', '404');
       }
       
       // Persist to KV
@@ -130,7 +130,7 @@ export class WebhookService {
       this.logger.info('Deleted webhook endpoint', { id });
     } catch (error) {
       this.logger.error('Failed to delete webhook endpoint', { error, id });
-      throw error instanceof AppError ? error : new AppError('Failed to delete webhook endpoint', 500);
+      throw error instanceof AppError ? error : new AppError('Failed to delete webhook endpoint', '500');
     }
   }
 
@@ -258,7 +258,7 @@ export class WebhookService {
           'Content-Type': 'application/json',
           'X-Webhook-Signature': signature,
           'X-Webhook-ID': payload.id,
-          'User-Agent': 'Pastebin-Webhook-Service/1.0',
+          'User-Agent': 'Pasteriser-Webhook-Service/1.0',
         },
         body: payloadString,
       });
@@ -313,7 +313,7 @@ export class WebhookService {
       await this.kvNamespace.put('webhook_endpoints', JSON.stringify(this.endpoints));
     } catch (error) {
       this.logger.error('Failed to persist webhook endpoints', { error });
-      throw new AppError('Failed to persist webhook endpoints', 500);
+      throw new AppError('Failed to persist webhook endpoints', '500');
     }
   }
 }

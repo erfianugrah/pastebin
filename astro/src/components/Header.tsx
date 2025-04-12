@@ -5,7 +5,7 @@ interface HeaderProps {
   title?: string;
 }
 
-export default function Header({ title = 'Pastebin' }: HeaderProps) {
+export default function Header({ title = 'Pasteriser' }: HeaderProps) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   

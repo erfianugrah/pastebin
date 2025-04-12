@@ -8,7 +8,7 @@ export class HtmlRenderer {
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Pastebin Service</title>
+        <title>Pasteriser Service</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
         <style>
           .container { max-width: 800px; margin: 0 auto; padding: 20px; }
@@ -20,7 +20,7 @@ export class HtmlRenderer {
       </head>
       <body>
         <div class="container">
-          <h1>Pastebin Service</h1>
+          <h1>Pasteriser Service</h1>
           <form id="paste-form">
             <div class="form-group">
               <label for="title">Title (optional):</label>
