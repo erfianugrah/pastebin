@@ -35,7 +35,7 @@ export function Toast({
   return isVisible ? (
     <div 
       className={cn(
-        "fixed bottom-4 right-4 px-4 py-3 rounded border shadow-md z-50 max-w-md transition-all transform",
+        "fixed bottom-20 right-4 px-4 py-3 rounded border shadow-md z-50 max-w-md transition-all transform",
         typeClasses[type],
         isVisible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
       )}
