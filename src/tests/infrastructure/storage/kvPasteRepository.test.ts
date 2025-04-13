@@ -69,8 +69,12 @@ describe('KVPasteRepository', () => {
         visibility: 'public',
         burnAfterReading: false,
         isEncrypted: false,
-        isPasswordProtected: false,
+        securityType: 'Public',
         readCount: 0,
+        version: 0,
+        hasViewLimit: false,
+        remainingViews: null,
+        viewLimit: undefined,
       });
       expect(putOptions).toEqual({
         expirationTtl: 3600,

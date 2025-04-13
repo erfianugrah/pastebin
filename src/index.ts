@@ -8,7 +8,6 @@ import { CreatePasteCommand } from './application/commands/createPasteCommand';
 import { DeletePasteCommand } from './application/commands/deletePasteCommand';
 import { GetPasteQuery } from './application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery';
-import { AccessProtectedPasteQuery } from './application/queries/accessProtectedPasteQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
 import { ApiMiddleware } from './interfaces/api/middleware';
 import { HtmlRenderer } from './interfaces/ui/htmlRenderer';
@@ -76,7 +75,6 @@ export default {
       
       const getPasteQuery = new GetPasteQuery(pasteRepository);
       const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository);
-      const accessProtectedPasteQuery = new AccessProtectedPasteQuery(pasteRepository);
       
       // Create handlers and middleware
       const apiHandlers = new ApiHandlers(
@@ -84,7 +82,6 @@ export default {
         deletePasteCommand,
         getPasteQuery,
         getRecentPastesQuery,
-        accessProtectedPasteQuery,
         configService,
         logger,
         env

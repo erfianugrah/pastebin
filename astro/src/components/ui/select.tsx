@@ -2,8 +2,9 @@ import * as React from "react"
 import {
   CaretSortIcon,
   CheckIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
+  // Remove unused icons
+  // ChevronDownIcon,
+  // ChevronUpIcon,
 } from "@radix-ui/react-icons"
 import * as SelectPrimitive from "@radix-ui/react-select"
 

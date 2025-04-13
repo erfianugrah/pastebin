@@ -50,6 +50,7 @@ describe('CreatePasteCommand', () => {
       visibility: 'public',
       burnAfterReading: false,
       isEncrypted: false,
+      version: 2, // Use client-side encryption by default
     };
     
     // Setup mocks
@@ -92,6 +93,7 @@ describe('CreatePasteCommand', () => {
       visibility: 'public',
       burnAfterReading: false,
       isEncrypted: false,
+      version: 2, // Use client-side encryption by default
     };
     
     // Setup mocks

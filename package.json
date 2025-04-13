@@ -22,7 +22,7 @@
 	"dependencies": {
 		"@astrojs/check": "^0.9.4",
 		"pino": "^8.21.0",
-		"zod": "^3.22.4"
+		"zod": "^4.0.0-beta.20250412T085909"
 	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20250410.0",

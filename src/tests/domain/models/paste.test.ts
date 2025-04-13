@@ -135,8 +135,12 @@ describe('Paste', () => {
       visibility: 'public',
       burnAfterReading: false,
       isEncrypted: false,
-      isPasswordProtected: false,
+      securityType: 'Public',
       readCount: 0,
+      version: 0,
+      hasViewLimit: false,
+      remainingViews: null,
+      viewLimit: undefined,
     });
   });
 });

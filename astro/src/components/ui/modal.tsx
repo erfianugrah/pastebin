@@ -137,12 +137,16 @@ export function showConfirmModal(props: Omit<ModalProps, 'isOpen' | 'onClose'>):
     
     // Use ReactDOM.render in a compatibility layer
     const renderModal = () => {
+      // We're using a manual approach instead of React elements
+      // This commented code shows what we would do with normal React rendering:
+      /*
       const modalElement = React.createElement(Modal, {
         ...props,
         isOpen: true,
         onClose: handleCancel,
         onConfirm: handleConfirm,
       });
+      */
       
       // In a real app with full React support, you'd use:
       // ReactDOM.render(modalElement, root);

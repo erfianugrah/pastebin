@@ -27,10 +27,11 @@ export class PasteFactory {
       data.title,
       data.language,
       data.visibility,
-      data.passwordHash,
       data.burnAfterReading || false,
       data.readCount || 0,
-      data.isEncrypted || false
+      data.isEncrypted || false,
+      data.viewLimit,
+      data.version || 0
     );
   }
 }

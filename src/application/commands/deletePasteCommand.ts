@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { PasteId } from '../../domain/models/paste';
 import { PasteRepository } from '../../domain/repositories/pasteRepository';
 
+// Using Zod 4 schema definition
 export const DeletePasteSchema = z.object({
   id: z.string(),
   // Optional owner token for authorization (future enhancement)

@@ -4,7 +4,7 @@ export const ConfigSchema = z.object({
   application: z.object({
     name: z.string(),
     version: z.string(),
-    baseUrl: z.string().url(),
+    baseUrl: z.url(),
   }),
   storage: z.object({
     namespace: z.string(),
@@ -62,6 +62,11 @@ export const defaultConfig: Config = {
 
 export class ConfigurationService {
   private config: Config;
+
+  // Add get method to fix the property access error
+  get(key: string): any {
+    return (this.config as any)[key];
+  }
 
   constructor(customConfig: Partial<Config> = {}) {
     // Merge default config with custom config

@@ -158,7 +158,7 @@ export class WebhookService {
         createdAt: paste.getCreatedAt().toISOString(),
         expiresAt: paste.getExpiresAt().toISOString(),
         isEncrypted: paste.getIsEncrypted(),
-        hasPassword: paste.hasPassword(),
+        securityType: paste.getSecurityType(),
         burnAfterReading: paste.isBurnAfterReading(),
         // Note: We don't include the content for security reasons
       },

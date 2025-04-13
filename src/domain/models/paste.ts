@@ -64,10 +64,12 @@ export class Paste {
     private readonly title?: string,
     private readonly language?: string,
     private readonly visibility: Visibility = 'public',
-    private readonly passwordHash?: string,
+    // passwordHash field is removed in Phase 4
     private readonly burnAfterReading: boolean = false,
     private readonly readCount: number = 0,
     private readonly isEncrypted: boolean = false,
+    private readonly viewLimit?: number,
+    private readonly version: number = 0, // 0=plaintext, 1=server-side password, 2=client-side encryption
   ) {}
 
   static create(
@@ -77,10 +79,25 @@ export class Paste {
     title?: string,
     language?: string,
     visibility: Visibility = 'public',
-    passwordHash?: string,
+    // passwordHash parameter removed in Phase 4
     burnAfterReading: boolean = false,
     isEncrypted: boolean = false,
+    viewLimit?: number,
+    version: number = 0, // 0=plaintext, 1=server-side pw, 2=client-side encryption
   ): Paste {
+    // Infer version if not explicitly provided
+    if (version === 0) {
+      if (isEncrypted) {
+        version = 2; // Client-side encryption
+      }
+      // Otherwise remains 0 (plaintext)
+    }
+    
+    // Phase 4: All new pastes are at least version 2 (client-side encryption)
+    if (version < 2) {
+      version = 2;
+    }
+
     return new Paste(
       id,
       content,
@@ -89,10 +106,12 @@ export class Paste {
       title,
       language,
       visibility,
-      passwordHash,
+      // passwordHash parameter removed in Phase 4
       burnAfterReading,
       0, // readCount starts at 0
       isEncrypted,
+      viewLimit,
+      version,
     );
   }
 
@@ -132,13 +151,7 @@ export class Paste {
     return this.expirationPolicy.hasExpired(this.createdAt, currentDate);
   }
   
-  hasPassword(): boolean {
-    return !!this.passwordHash;
-  }
-  
-  getPasswordHash(): string | undefined {
-    return this.passwordHash;
-  }
+  // All password-related methods have been removed in the final cleanup
   
   isBurnAfterReading(): boolean {
     return this.burnAfterReading;
@@ -157,9 +170,11 @@ export class Paste {
       this.title,
       this.language,
       this.visibility,
-      this.passwordHash,
       this.burnAfterReading,
-      this.readCount + 1
+      this.readCount + 1,
+      this.isEncrypted,
+      this.viewLimit,
+      this.version
     );
   }
   
@@ -167,36 +182,55 @@ export class Paste {
     return this.burnAfterReading && this.readCount > 0;
   }
   
-  async isPasswordCorrect(passwordToCheck: string): Promise<boolean> {
-    if (!this.passwordHash) {
-      return true; // No password set
-    }
-    
-    // Use the WebCrypto API to generate a secure hash
-    const hash = await this.hashPassword(passwordToCheck);
-    return hash === this.passwordHash;
-  }
+  // Password verification method has been removed in the final cleanup
   
-  private async hashPassword(password: string): Promise<string> {
-    // Use WebCrypto API for better security
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    
-    // Use SHA-256 algorithm
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    
-    // Convert buffer to hex string
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    
-    return hashHex;
+  // Helper method to identify client-side encrypted content
+  isClientSideEncrypted(): boolean {
+    // Phase 4: All encrypted content must use client-side encryption
+    // This returns true for all encrypted content and also version >= 2
+    return this.isEncrypted === true || this.version >= 2;
   }
 
   getIsEncrypted(): boolean {
-    return this.isEncrypted;
+    // Phase 4: All version 2+ pastes are considered encrypted
+    return this.isEncrypted || this.version >= 2;
+  }
+  
+  getVersion(): number {
+    return this.version;
+  }
+  
+  /**
+   * Get security type of the paste in a human-readable format
+   * @returns Security type string
+   */
+  getSecurityType(): string {
+    if (this.version >= 2 || this.isEncrypted) {
+      return 'E2E Encrypted';
+    } else {
+      // Phase 4: All new pastes are either plaintext or E2E encrypted
+      return 'Public';
+    }
+  }
+  
+  getViewLimit(): number | undefined {
+    return this.viewLimit;
+  }
+  
+  hasViewLimit(): boolean {
+    return typeof this.viewLimit === 'number' && this.viewLimit > 0;
+  }
+  
+  hasReachedViewLimit(): boolean {
+    if (!this.hasViewLimit()) {
+      return false;
+    }
+    
+    return this.readCount >= (this.viewLimit as number);
   }
 
-  toJSON(includePasswordHash = false) {
+  toJSON(_includePasswordHash = false) {
+    // Phase 4: Password hashes are completely removed
     const json = {
       id: this.id.toString(),
       content: this.content,
@@ -205,19 +239,16 @@ export class Paste {
       createdAt: this.createdAt.toISOString(),
       expiresAt: this.getExpiresAt().toISOString(),
       visibility: this.visibility,
-      isPasswordProtected: this.hasPassword(),
+      // isPasswordProtected field removed in final cleanup
       burnAfterReading: this.burnAfterReading,
       readCount: this.readCount,
-      isEncrypted: this.isEncrypted,
+      isEncrypted: this.isEncrypted || this.version >= 2, // Consider all v2+ pastes encrypted
+      hasViewLimit: this.hasViewLimit(),
+      viewLimit: this.viewLimit,
+      remainingViews: this.hasViewLimit() ? Math.max(0, (this.viewLimit as number) - this.readCount) : null,
+      version: this.version, // Include encryption version
+      securityType: this.getSecurityType(), // Human-readable security description
     };
-
-    // Only include password hash for storage, not for API responses
-    if (includePasswordHash && this.passwordHash) {
-      return {
-        ...json,
-        passwordHash: this.passwordHash
-      };
-    }
     
     return json;
   }
@@ -231,9 +262,15 @@ export class Paste {
       createdAt: this.createdAt.toISOString(),
       expiresAt: this.getExpiresAt().toISOString(),
       visibility: this.visibility,
-      isPasswordProtected: this.hasPassword(),
+      // isPasswordProtected field removed in final cleanup
       burnAfterReading: this.burnAfterReading,
-      isEncrypted: this.isEncrypted,
+      isEncrypted: this.isEncrypted || this.version >= 2, // Consider all v2+ pastes encrypted
+      hasViewLimit: this.hasViewLimit(),
+      viewLimit: this.viewLimit,
+      remainingViews: this.hasViewLimit() ? Math.max(0, (this.viewLimit as number) - this.readCount) : null,
+      readCount: this.readCount,
+      version: this.version,
+      securityType: this.getSecurityType(),
     };
   }
 }
@@ -246,9 +283,13 @@ export interface PasteData {
   createdAt: string;
   expiresAt: string;
   visibility: Visibility;
-  passwordHash?: string;
-  isPasswordProtected?: boolean;
+  // passwordHash and isPasswordProtected fields removed in final cleanup
   burnAfterReading?: boolean;
   readCount?: number;
   isEncrypted?: boolean;
+  viewLimit?: number;
+  hasViewLimit?: boolean;
+  remainingViews?: number | null;
+  version?: number; // Encryption version: 0=plaintext, 1=server-side, 2=client-side
+  securityType?: string; // Human-readable security description
 }

@@ -62,7 +62,8 @@ export default function ThemeToggle() {
   // We've simplified the approach with direct setTheme calls on each button
   // No need for the toggleTheme function anymore
 
-  // Get label for current theme
+  // This function is not currently used
+  /*
   const getThemeLabel = () => {
     switch(theme) {
       case 'light': return 'Light';
@@ -70,6 +71,7 @@ export default function ThemeToggle() {
       default: return 'System';
     }
   };
+  */
 
   if (!mounted) return null;
 

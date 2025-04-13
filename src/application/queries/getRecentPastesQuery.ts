@@ -22,7 +22,7 @@ export class GetRecentPastesQuery {
     return pastes.map(paste => ({
       id: paste.getId().toString(),
       title: paste.getTitle() || 'Untitled Paste',
-      language: paste.getLanguage(),
+      language: paste.getLanguage() || null,
       createdAt: paste.getCreatedAt().toISOString(),
       expiresAt: paste.getExpiresAt().toISOString(),
       readCount: paste.getReadCount()

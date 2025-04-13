@@ -2,7 +2,6 @@ import { CreatePasteCommand, CreatePasteParams } from '../../application/command
 import { DeletePasteCommand, DeletePasteParams } from '../../application/commands/deletePasteCommand';
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../application/queries/getRecentPastesQuery';
-import { AccessProtectedPasteQuery } from '../../application/queries/accessProtectedPasteQuery';
 import { ConfigurationService } from '../../infrastructure/config/config';
 import { Logger } from '../../infrastructure/logging/logger';
 import { Analytics } from '../../infrastructure/analytics/analytics';
@@ -18,7 +17,6 @@ export class ApiHandlers {
     private readonly deletePasteCommand: DeletePasteCommand,
     private readonly getPasteQuery: GetPasteQuery,
     private readonly getRecentPastesQuery: GetRecentPastesQuery,
-    private readonly accessProtectedPasteQuery: AccessProtectedPasteQuery,
     private readonly configService: ConfigurationService,
     private readonly logger: Logger,
     private readonly env: Env,
@@ -72,13 +70,14 @@ export class ApiHandlers {
       this.logger.error('Error creating paste', { error });
 
       // Check if it's a validation error (from zod)
-      if (error instanceof Error && 'issues' in (error as any)) {
+      // Note: In Zod 4, ZodError no longer extends Error but implements the Error interface
+      if (error && typeof error === 'object' && 'issues' in error) {
         return new Response(
           JSON.stringify({
             error: {
               code: 'validation_error',
               message: 'Invalid paste data',
-              details: (error as any).issues,
+              details: error.issues,
             },
           }),
           { status: 400, headers: { 'Content-Type': 'application/json' } },
@@ -102,7 +101,7 @@ export class ApiHandlers {
     try {
       this.logger.debug('Handling get paste request', { pasteId });
       
-      // First get the paste summary to check if it requires a password
+      // First get the paste summary to check security status
       const summary = await this.getPasteQuery.executeSummary(pasteId);
       
       if (!summary) {
@@ -117,97 +116,84 @@ export class ApiHandlers {
         );
       }
       
-      // If the paste requires a password
-      if (summary.requiresPassword) {
-        // Check if password was provided in request
-        let password: string | null = null;
+      // Get the encryption version and security type
+      const version = summary.paste.getVersion();
+      const securityType = summary.paste.getSecurityType();
+      
+      // Log the security information
+      this.logger.debug('Paste security info', { 
+        pasteId, 
+        version, 
+        securityType,
+        isE2EEncrypted: summary.isE2EEncrypted,
+        isEncrypted: summary.paste.getIsEncrypted()
+      });
+      
+      // Check if this is an E2E encrypted paste (client-side only)
+      if (summary.isE2EEncrypted || version === 2) {
+        // For E2E encrypted pastes, we just return the encrypted content directly
+        // No server-side password checking is needed - decryption happens client-side
+        this.logger.debug('Returning E2E encrypted paste', { pasteId, version });
         
-        // Try to get password from query param
-        const url = new URL(request.url);
-        password = url.searchParams.get('password');
-        
-        // If no password in query params, check if request body has password
-        if (!password && request.method === 'POST') {
-          try {
-            const body = await request.json() as { password?: string };
-            password = body.password || null;
-          } catch (e) {
-            // Ignore parsing errors
-          }
-        }
-        
-        if (!password) {
-          // No password provided but paste is password-protected
-          // Return a response indicating password is required, but don't show paste content
-          this.logger.debug('Password required for paste', { pasteId });
-          
-          return new Response(
-            JSON.stringify({
-              id: pasteId,
-              requiresPassword: true,
-              title: summary.paste.getTitle(),
-              language: summary.paste.getLanguage(),
-              createdAt: summary.paste.getCreatedAt().toISOString(),
-              expiresAt: summary.paste.getExpiresAt().toISOString(),
-              visibility: summary.paste.getVisibility(),
-            }),
-            { status: 403, headers: { 'Content-Type': 'application/json' } },
-          );
-        }
-        
-        // Try to access the protected paste with the provided password
-        const paste = await this.accessProtectedPasteQuery.execute({
-          id: pasteId,
-          password: password || '',
-        });
-        
-        if (!paste) {
-          // Incorrect password
-          this.logger.debug('Incorrect password for paste', { pasteId });
-          
-          // Track failed password attempt
-          await this.analytics.trackEvent('paste_password_error', {
-            id: pasteId,
-          });
-          
-          return new Response(
-            JSON.stringify({
-              error: {
-                code: 'invalid_password',
-                message: 'Incorrect password',
-              },
-            }),
-            { status: 403, headers: { 'Content-Type': 'application/json' } },
-          );
-        }
-        
-        // Password correct, track view and return paste
+        // Track view
         await this.analytics.trackEvent('paste_viewed', {
           id: pasteId,
-          language: paste.getLanguage() || 'plaintext',
-          visibility: paste.getVisibility(),
-          passwordProtected: true,
+          language: summary.paste.getLanguage() || 'plaintext',
+          visibility: summary.paste.getVisibility(),
+          isEncrypted: true,
         });
         
         // Trigger webhook for paste view
         if (this.webhookService) {
-          this.webhookService.pasteViewed(paste).catch(error => {
+          this.webhookService.pasteViewed(summary.paste).catch(error => {
             this.logger.error('Failed to trigger webhook for paste view', { error, pasteId });
           });
         }
         
-        return new Response(JSON.stringify(paste.toJSON()), {
+        // Simply return the paste data with encrypted content
+        // The client will handle decryption with the key from URL fragment or password input
+        return new Response(JSON.stringify(summary.paste.toJSON()), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
       }
       
-      // No password required, track view and return paste
+      // Phase 4: If a pre-Phase 4 paste is accessed, upgrade it to use client-side encryption
+      if (version < 2) {
+        this.logger.warn('Legacy paste access attempted - server-side passwords are no longer supported', { 
+          pasteId, 
+          version, 
+          securityType
+        });
+        
+        // Create a response that informs the client about the encryption upgrade
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: 'encryption_upgrade_required',
+              message: 'This paste uses a legacy security method that is no longer supported.',
+              details: {
+                id: pasteId,
+                title: summary.paste.getTitle(),
+                language: summary.paste.getLanguage(),
+                createdAt: summary.paste.getCreatedAt().toISOString(),
+                expiresAt: summary.paste.getExpiresAt().toISOString(),
+                securityUpgradeRequired: true,
+                legacyVersion: version
+              }
+            }
+          }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      
+      // No password or encryption required, track view and return paste
       await this.analytics.trackEvent('paste_viewed', {
         id: pasteId,
         language: summary.paste.getLanguage() || 'plaintext',
         visibility: summary.paste.getVisibility(),
         passwordProtected: false,
+        isEncrypted: false,
       });
       
       // Trigger webhook for paste view
@@ -381,13 +367,14 @@ export class ApiHandlers {
       this.logger.error('Error deleting paste', { error, pasteId });
       
       // Check if it's a validation error
-      if (error instanceof Error && 'issues' in (error as any)) {
+      // Note: In Zod 4, ZodError no longer extends Error but implements the Error interface
+      if (error && typeof error === 'object' && 'issues' in error) {
         return new Response(
           JSON.stringify({
             error: {
               code: 'validation_error',
               message: 'Invalid delete request',
-              details: (error as any).issues,
+              details: error.issues,
             },
           }),
           { status: 400, headers: { 'Content-Type': 'application/json' } },

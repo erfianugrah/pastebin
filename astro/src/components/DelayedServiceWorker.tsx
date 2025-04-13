@@ -21,6 +21,9 @@ export default function DelayedServiceWorker() {
       }, 5000); // 5 second delay
       
       return () => clearTimeout(timer);
+    } else {
+      // Return a no-op cleanup function for TypeScript
+      return () => {};
     }
   }, []);
   
