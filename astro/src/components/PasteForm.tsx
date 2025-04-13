@@ -649,11 +649,11 @@ export default function PasteForm() {
                       // Update state with the new password value
                       setPasswordValue(e.target.value);
                       
-                      // Update the security method dropdown based on password presence
-                      if (typeof document !== 'undefined') {
+                      // Only update security method if we have an actual value (not just empty)
+                      if (typeof document !== 'undefined' && e.target.value.trim().length > 0) {
                         const securityMethodSelect = document.getElementById('securityMethod');
                         if (securityMethodSelect && securityMethodSelect instanceof HTMLSelectElement) {
-                          securityMethodSelect.value = e.target.value ? 'password' : 'key';
+                          securityMethodSelect.value = 'password';
                         }
                       }
                     }}
