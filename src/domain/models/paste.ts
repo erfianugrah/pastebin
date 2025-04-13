@@ -186,14 +186,14 @@ export class Paste {
   
   // Helper method to identify client-side encrypted content
   isClientSideEncrypted(): boolean {
-    // Phase 4: All encrypted content must use client-side encryption
-    // This returns true for all encrypted content and also version >= 2
-    return this.isEncrypted === true || this.version >= 2;
+    // Phase 4: Check if content is encrypted AND uses client-side encryption
+    return this.isEncrypted === true && this.version >= 2;
   }
 
   getIsEncrypted(): boolean {
-    // Phase 4: All version 2+ pastes are considered encrypted
-    return this.isEncrypted || this.version >= 2;
+    // In Phase 4, we respect the explicit isEncrypted flag
+    // Version is just metadata about the encryption method used (if any)
+    return this.isEncrypted;
   }
   
   getVersion(): number {
@@ -205,11 +205,12 @@ export class Paste {
    * @returns Security type string
    */
   getSecurityType(): string {
-    if (this.version >= 2 || this.isEncrypted) {
+    if (this.isEncrypted && this.version >= 2) {
       return 'E2E Encrypted';
+    } else if (this.isEncrypted && this.version < 2) {
+      return 'Legacy Encrypted';
     } else {
-      // Phase 4: All new pastes are either plaintext or E2E encrypted
-      return 'Public';
+      return this.visibility === 'public' ? 'Public' : 'Private';
     }
   }
   
@@ -242,7 +243,7 @@ export class Paste {
       // isPasswordProtected field removed in final cleanup
       burnAfterReading: this.burnAfterReading,
       readCount: this.readCount,
-      isEncrypted: this.isEncrypted || this.version >= 2, // Consider all v2+ pastes encrypted
+      isEncrypted: this.isEncrypted, // Use the explicit encryption flag
       hasViewLimit: this.hasViewLimit(),
       viewLimit: this.viewLimit,
       remainingViews: this.hasViewLimit() ? Math.max(0, (this.viewLimit as number) - this.readCount) : null,
@@ -264,7 +265,7 @@ export class Paste {
       visibility: this.visibility,
       // isPasswordProtected field removed in final cleanup
       burnAfterReading: this.burnAfterReading,
-      isEncrypted: this.isEncrypted || this.version >= 2, // Consider all v2+ pastes encrypted
+      isEncrypted: this.isEncrypted, // Use the explicit encryption flag
       hasViewLimit: this.hasViewLimit(),
       viewLimit: this.viewLimit,
       remainingViews: this.hasViewLimit() ? Math.max(0, (this.viewLimit as number) - this.readCount) : null,

@@ -96,9 +96,14 @@ const pasteId = id || 'placeholder';
 			// Handle password protected pastes
 			if (response.status === 403) {
 				const data = await response.json();
+				
+				// Log status and response for debugging
+				console.log('HTTP 403 Response:', data);
 
 				// Check if it's a password required response
+				// In Phase 4, this should only happen for legacy pastes
 				if (data.requiresPassword) {
+					console.log('Password protection detected');
 					// Hide loading, show password form
 					document.getElementById('loading-container')?.classList.add('hidden');
 					document.getElementById('password-container')?.classList.remove('hidden');
@@ -174,6 +179,17 @@ const pasteId = id || 'placeholder';
 			if (pasteData.title) {
 				document.title = `${pasteData.title} - Pasteriser`;
 			}
+			
+			// Check if this paste is actually password protected or not
+			const isPasswordProtected = pasteData.isPasswordProtected || false;
+			const isEncrypted = pasteData.isEncrypted || false;
+			
+			console.log('Paste details:', { 
+				id: pasteData.id,
+				isPasswordProtected,
+				isEncrypted,
+				visibility: pasteData.visibility,
+			});
 
 			// Hide loading container, show paste container
 			document.getElementById('loading-container')?.classList.add('hidden');
@@ -183,6 +199,12 @@ const pasteId = id || 'placeholder';
 			if (pasteContainer) {
 				pasteContainer.classList.remove('hidden');
 				
+				// Check if we need to handle client-side decryption
+				// If the paste is encrypted and has a key in the URL fragment, we need to decrypt
+				if (pasteData.isEncrypted && window.location.hash.startsWith('#key=')) {
+					console.log('Detected client-side encrypted paste with key in URL');
+				}
+
 				// Create client-side React component for the paste
 				import('../../components/CodeViewer').then(({ default: CodeViewer }) => {
 					// Try to hydrate the React component

@@ -37,6 +37,17 @@ interface CodeViewerProps {
 }
 
 export default function CodeViewer({ paste }: CodeViewerProps) {
+  // Add debugging info to console
+  console.log('CodeViewer: Paste data received:', { 
+    id: paste.id,
+    isEncrypted: paste.isEncrypted,
+    isPasswordProtected: paste.isPasswordProtected,
+    visibility: paste.visibility,
+    contentLength: paste.content?.length || 0,
+    version: paste.version,
+    securityType: paste.securityType
+  });
+
   const [content, setContent] = useState<string>(paste.content);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [decrypted, setDecrypted] = useState(false);
@@ -90,7 +101,15 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
   useEffect(() => {
     // Check for encryption key in URL fragment, localStorage, or prompt for password
     async function attemptDecryption() {
+      // Skip decryption for all public pastes regardless of encryption flag
+      // Public pastes are never encrypted in the system design
+      if (paste.visibility === 'public') {
+        console.log('CodeViewer: Public paste - skipping decryption altogether');
+        return;
+      }
+      
       if (paste.isEncrypted && !decrypted) {
+        console.log('CodeViewer: Private encrypted paste detected, attempting decryption');
         try {
           setIsDecrypting(true);
           
@@ -329,7 +348,7 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
           <span className="hidden sm:inline">•</span>
           <span>Visibility: {paste.visibility}</span>
           
-          {paste.isEncrypted && (
+          {paste.isEncrypted && paste.visibility !== 'public' && (
             <>
               <span className="hidden sm:inline">•</span>
               <span className={`flex items-center font-medium ${
@@ -388,8 +407,8 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
         </div>
       </div>
       
-      {/* Success notification after decryption */}
-      {paste.isEncrypted && decrypted && (
+      {/* Success notification after decryption - only for private pastes */}
+      {paste.isEncrypted && decrypted && paste.visibility !== 'public' && (
         <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4 rounded-md mb-4 flex items-start">
           <div className="flex-shrink-0">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
@@ -440,8 +459,8 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
         </div>
       )}
       
-      {/* Encryption notice - shown while still encrypted */}
-      {paste.isEncrypted && !decrypted && !isDecrypting && !showPasswordForm && (
+      {/* Encryption notice - shown while still encrypted - only for encrypted pastes */}
+      {paste.isEncrypted && !decrypted && !isDecrypting && !showPasswordForm && paste.visibility !== 'public' && (
         <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-4 rounded-md mb-4 flex items-start">
           <div className="flex-shrink-0">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
@@ -489,7 +508,7 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
       
       {/* Code content */}
       <div className={`${isDecrypting ? 'opacity-50' : ''} relative`}>
-        <pre className={`p-4 rounded-md overflow-x-auto bg-gray-100 dark:bg-gray-800 font-mono text-sm max-h-[600px] ${paste.isEncrypted && !decrypted ? 'blur-sm' : ''}`}>
+        <pre className={`p-4 rounded-md overflow-x-auto bg-gray-100 dark:bg-gray-800 font-mono text-sm max-h-[600px] ${paste.isEncrypted && !decrypted && paste.visibility !== 'public' ? 'blur-sm' : ''}`}>
           <code ref={codeRef} className={`language-${paste.language || 'plaintext'}`}>
             {visibleContent}
           </code>
@@ -506,8 +525,8 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
         )}
       </div>
       
-      {/* Password form */}
-      {paste.isEncrypted && !decrypted && showPasswordForm && (
+      {/* Password form - only show for encrypted pastes when explicity requested */}
+      {paste.isEncrypted && !decrypted && showPasswordForm && paste.visibility !== 'public' && (
         <div className="mt-4 p-6 bg-muted/30 rounded-md border border-border shadow-sm">
           <div className="flex items-center mb-2">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-500 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -595,8 +614,8 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
         </div>
       )}
       
-      {/* Encrypted content message - key missing */}
-      {paste.isEncrypted && !decrypted && !showPasswordForm && !isDecrypting && (
+      {/* Encrypted content message - key missing - only show for private pastes */}
+      {paste.isEncrypted && !decrypted && !showPasswordForm && !isDecrypting && paste.visibility !== 'public' && (
         <div className="mt-6 max-w-md mx-auto">
           <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-5 shadow-sm">
             <div className="flex">

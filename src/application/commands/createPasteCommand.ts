@@ -55,8 +55,14 @@ export class CreatePasteCommand {
       validParams.isEncrypted = true;
     }
     
-    // Always use at least version 2 (client-side encryption)
-    validParams.version = Math.max(2, validParams.version || 0);
+    // Only use version 2+ for actual encrypted content
+    if (validParams.isEncrypted) {
+      // For encrypted content, use at least version 2 (client-side encryption)
+      validParams.version = Math.max(2, validParams.version || 0);
+    } else {
+      // For unencrypted content, use version 0
+      validParams.version = 0;
+    }
     
     // Create paste entity
     const paste = Paste.create(

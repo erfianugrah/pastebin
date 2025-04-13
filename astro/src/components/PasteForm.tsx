@@ -188,10 +188,10 @@ export default function PasteForm() {
           visibility,
           password: passwordHash,
           burnAfterReading,
-          isEncrypted: !!(e2eEncryption || (visibility === 'private' && isE2EEncrypted)),
+          isEncrypted: !!(e2eEncryption || (securityMethod !== 'none' && isE2EEncrypted)),
           viewLimit: viewLimitEnabled ? viewLimit : undefined,
           // Add version to track encryption method (1=server-side, 2=client-side)
-          version: (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) ? 2 : (passwordHash ? 1 : 0),
+          version: (e2eEncryption || (securityMethod !== 'none' && isE2EEncrypted)) ? 2 : 0,
         }),
       }).catch(fetchError => {
         console.error('Network error:', fetchError);
@@ -432,7 +432,7 @@ export default function PasteForm() {
                   
                   {/* Web Development */}
                   <optgroup label="Web Development">
-                    <option value="html">HTML</option>
+                    <option value="markup">HTML</option>
                     <option value="css">CSS</option>
                     <option value="javascript">JavaScript</option>
                     <option value="typescript">TypeScript</option>
@@ -444,7 +444,7 @@ export default function PasteForm() {
                   {/* Data Formats */}
                   <optgroup label="Data Formats">
                     <option value="json">JSON</option>
-                    <option value="xml">XML</option>
+                    <option value="xml-doc">XML</option>
                     <option value="yaml">YAML</option>
                     <option value="toml">TOML</option>
                     <option value="ini">INI</option>
@@ -454,9 +454,9 @@ export default function PasteForm() {
                   {/* Infrastructure & DevOps */}
                   <optgroup label="Infrastructure & DevOps">
                     <option value="hcl">HCL (Terraform)</option>
-                    <option value="dockerfile">Dockerfile</option>
+                    <option value="docker">Dockerfile</option>
                     <option value="bash">Bash</option>
-                    <option value="shell">Shell</option>
+                    <option value="shell-session">Shell</option>
                     <option value="powershell">PowerShell</option>
                     <option value="nginx">Nginx</option>
                   </optgroup>
@@ -529,13 +529,18 @@ export default function PasteForm() {
                   name="visibility"
                   className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
                   onChange={(e) => {
-                    // Enable E2E encryption by default when private is selected
                     if (e.target.value === 'private') {
-                      setIsE2EEncrypted(true);
-                      // Set security method if not already set
-                      if (securityMethod === 'none') {
-                        setSecurityMethod(passwordValue ? 'password' : 'key');
+                      // Suggest encryption for private pastes but don't force it
+                      // Only set E2E encryption if a security method is already chosen
+                      if (securityMethod !== 'none') {
+                        setIsE2EEncrypted(true);
                       }
+                      // Inform the user that encryption is recommended for private pastes
+                      toast({
+                        message: 'Encryption is recommended for private pastes',
+                        type: 'info',
+                        duration: 3000
+                      });
                     }
                   }}
                 >
