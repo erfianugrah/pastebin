@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './ui/card';
 import { Textarea } from './ui/textarea';
@@ -13,7 +13,17 @@ export default function PasteForm() {
   const [result, setResult] = useState<{id: string, url: string, encryptionKey?: string} | null>(null);
   const [isE2EEncrypted, setIsE2EEncrypted] = useState(false);
   const [passwordValue, setPasswordValue] = useState('');
+  const [securityMethod, setSecurityMethod] = useState<'none' | 'password' | 'key'>('none');
   const [encryptionProgress, setEncryptionProgress] = useState<number | null>(null);
+  
+  // Keep security method in sync with encryption state
+  useEffect(() => {
+    if (isE2EEncrypted && securityMethod === 'none') {
+      setSecurityMethod(passwordValue ? 'password' : 'key');
+    } else if (!isE2EEncrypted && securityMethod !== 'none') {
+      setSecurityMethod('none');
+    }
+  }, [isE2EEncrypted, passwordValue]);
   
   const validateForm = (formData: FormData) => {
     const errors: {[key: string]: string} = {};
@@ -522,6 +532,10 @@ export default function PasteForm() {
                     // Enable E2E encryption by default when private is selected
                     if (e.target.value === 'private') {
                       setIsE2EEncrypted(true);
+                      // Set security method if not already set
+                      if (securityMethod === 'none') {
+                        setSecurityMethod(passwordValue ? 'password' : 'key');
+                      }
                     }
                   }}
                 >
@@ -558,20 +572,23 @@ export default function PasteForm() {
                   name="securityMethod"
                   className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
                   onChange={(e) => {
-                    if (e.target.value === 'none') {
+                    const value = e.target.value as 'none' | 'password' | 'key';
+                    setSecurityMethod(value);
+                    
+                    if (value === 'none') {
                       setIsE2EEncrypted(false);
                       // Clear password field
                       setPasswordValue('');
-                    } else if (e.target.value === 'password' || e.target.value === 'key') {
+                    } else if (value === 'password' || value === 'key') {
                       setIsE2EEncrypted(true);
                       
                       // If switching to key mode, clear any existing password
-                      if (e.target.value === 'key') {
+                      if (value === 'key') {
                         setPasswordValue('');
                       }
                     }
                   }}
-                  value={!isE2EEncrypted ? 'none' : passwordValue ? 'password' : 'key'}
+                  value={!isE2EEncrypted ? 'none' : securityMethod === 'none' ? (passwordValue ? 'password' : 'key') : securityMethod}
                 >
                   <option value="none">None (Plaintext)</option>
                   <option value="password">Password Protection (E2EE) - Recommended</option>
@@ -649,12 +666,9 @@ export default function PasteForm() {
                       // Update state with the new password value
                       setPasswordValue(e.target.value);
                       
-                      // Only update security method if we have an actual value (not just empty)
-                      if (typeof document !== 'undefined' && e.target.value.trim().length > 0) {
-                        const securityMethodSelect = document.getElementById('securityMethod');
-                        if (securityMethodSelect && securityMethodSelect instanceof HTMLSelectElement) {
-                          securityMethodSelect.value = 'password';
-                        }
+                      // If we have an actual value, update security method to password
+                      if (e.target.value.trim().length > 0) {
+                        setSecurityMethod('password');
                       }
                     }}
                   />
@@ -863,6 +877,8 @@ export default function PasteForm() {
                 onClick={() => {
                   setFormErrors({});
                   setIsE2EEncrypted(false);
+                  setSecurityMethod('none');
+                  setPasswordValue('');
                 }}
               >
                 Clear
