@@ -1,29 +1,41 @@
-# Pastebin Project Documentation
+# Pasteriser Documentation
 
-This directory contains comprehensive documentation for the Pastebin application built with Cloudflare Workers and Astro.
+Welcome to the Pasteriser documentation. This directory contains comprehensive documentation for our modern, secure code sharing platform built with Cloudflare Workers and Astro.
 
 ## Core Documentation
 
-- [**Project Architecture**](../pastebin-architecture.md) - Overall architecture and design principles
-- [**API Documentation**](API.md) - API endpoints, requests, and responses
-- [**Setup Guide**](SETUP.md) - How to set up and run the application
-- [**Development Guide**](DEVELOPMENT.md) - Development workflow and guidelines
+| Document | Description |
+|----------|-------------|
+| [**Architecture**](ARCHITECTURE.md) | Complete system architecture and design principles |
+| [**Frontend**](FRONTEND.md) | Frontend architecture, browser integration, and performance optimization |
+| [**Encryption**](ENCRYPTION.md) | End-to-end encryption implementation details |
+| [**API Reference**](API.md) | API endpoints and integration details |
+| [**Setup Guide**](SETUP.md) | Initial setup and configuration instructions |
+| [**Development Guide**](DEVELOPMENT.md) | Development workflow and processes |
 
-## Technical Documentation
+## Technical Guides
 
-- [**UI Approach**](UI-APPROACH.md) - Design and implementation of the Astro UI
-- [**Integration Guide**](INTEGRATION.md) - How the UI and Worker are integrated
-- [**Enhancement Plan**](ENHANCEMENT_PLAN.md) - Planned improvements and features
+| Document | Description |
+|----------|-------------|
+| [**E2EE Testing**](E2EE_TESTING.md) | Testing procedures for encryption features |
+| [**PWA Setup**](PWA_SETUP.md) | Progressive Web App configuration details |
 
-## Project Management
+## Internal Documentation
 
-- [**Project Plan**](PROJECT_PLAN.md) - Overall project implementation plan
-- [**Progress Report**](PROGRESS.md) - Current status and completed tasks
-- [**Next Steps**](NEXT_STEPS.md) - Immediate next steps for the project
+| Document | Description |
+|----------|-------------|
+| [**Next Steps**](NEXT_STEPS.md) | Upcoming task prioritization and future plans |
+| [**Progress**](PROGRESS.md) | Current project status and completed milestones |
+| [**Enhancement Plan 2025**](ENHANCEMENT_PLAN_2025.md) | Planned improvements for 2025 |
+
+## Consolidated Documentation
+
+The following documents have been consolidated for better organization:
+- BROWSER_INTEGRATION.md → [FRONTEND.md](FRONTEND.md)
+- FRONTEND_ARCHITECTURE.md → [FRONTEND.md](FRONTEND.md)
+- UI-APPROACH.md → [FRONTEND.md](FRONTEND.md)
 
 ## Directory Structure
-
-The Pastebin project follows a Domain-Driven Design architecture:
 
 ```
 pastebin/
@@ -31,6 +43,7 @@ pastebin/
 │   ├── src/
 │   │   ├── components/     # UI components
 │   │   ├── layouts/        # Page layouts
+│   │   ├── lib/            # Utilities and libraries
 │   │   ├── pages/          # Route pages
 │   │   └── styles/         # Global styles
 │   └── public/             # Static assets
@@ -44,32 +57,20 @@ pastebin/
 
 ## Key Features
 
-- **Create and View Pastes**: Share code or text snippets
-- **Syntax Highlighting**: Support for multiple programming languages
-- **Expiration Policies**: Pastes expire automatically after a set time
-- **Responsive UI**: Works on desktop and mobile devices
-
-## Deployment
-
-The application is deployed to Cloudflare Workers and accessible at:
-
-- Production: [paste.erfianugrah.com](https://paste.erfianugrah.com)
-- Staging: [paste-staging.erfianugrah.com](https://paste-staging.erfianugrah.com)
+- **Secure Sharing**: End-to-end encryption for sensitive content
+- **Syntax Highlighting**: Support for 40+ programming languages
+- **Expiration Policies**: Auto-expiring pastes with configurable TTL
+- **Performance Optimized**: Web Workers for crypto operations
+- **Responsive UI**: Works on mobile and desktop devices
+- **Progressive Web App**: Offline support and installable experience
+- **Accessibility**: ARIA compliant with keyboard navigation
 
 ## Development Workflow
 
 1. Run local development server: `npm run dev:all`
 2. Build for production: `npm run build`
 3. Deploy to Cloudflare: `npm run deploy`
-4. Deploy to production: `npm run deploy:prod`
-5. Deploy to staging: `npm run deploy:staging`
 
 ## Testing
 
 Run tests with: `npm test`
-
-## Known Issues and Limitations
-
-- Rate limiting not yet implemented
-- No user authentication system
-- Limited monitoring and analytics

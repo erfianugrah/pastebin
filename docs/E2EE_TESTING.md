@@ -184,9 +184,65 @@ This guide outlines how to test the end-to-end encryption (E2EE) features implem
 - On revisit, clicking "Try Saved Key" should work
 - User should not need to re-enter the password
 
-#### 3.5 Edge Cases
+#### 3.5 Web Worker Performance
 
-##### 3.5.1 Long Content Encryption/Decryption
+##### 3.5.1 Worker-Based Encryption/Decryption
+
+**Steps:**
+1. Open developer tools and navigate to the Performance tab
+2. Start recording a performance profile
+3. Create a paste with a large amount of text (e.g., 500KB or more)
+4. Select end-to-end encryption
+5. Submit the paste
+6. Stop the performance recording
+7. Examine CPU usage across threads
+
+**Expected Results:**
+- A separate Web Worker thread should be visible in the performance profile
+- The main UI thread should not be heavily blocked during encryption
+- The progress bar should update smoothly
+- Encryption should complete successfully
+
+##### 3.5.2 Progress Reporting
+
+**Steps:**
+1. Create a paste with a very large amount of text (e.g., 1MB+)
+2. Enable end-to-end encryption
+3. Submit the paste
+4. Observe the progress bar and status messages
+
+**Expected Results:**
+- Progress bar should appear for large content
+- Progress percentage should update incrementally
+- Status messages should change at different stages (key derivation, encryption)
+- The UI should remain responsive during the process
+
+##### 3.5.3 Worker Fallback Testing
+
+**Steps:**
+1. Open browser developer tools
+2. Execute the following in the console to disable workers:
+   ```javascript
+   // Store original Worker
+   window._originalWorker = window.Worker;
+   // Override Worker constructor
+   window.Worker = function() { throw new Error('Workers disabled for testing'); };
+   ```
+3. Create a new encrypted paste
+4. Check console logs
+
+**Expected Results:**
+- Encryption should still work despite Worker being unavailable
+- Console should show fallback to main thread
+- Functionality should be preserved, though possibly slower
+- No errors should be shown to the user
+
+You can restore worker support with:
+```javascript
+window.Worker = window._originalWorker;
+```
+
+##### 3.5.4 Long Content Encryption/Decryption
 
 **Steps:**
 1. Create a paste with a very large amount of text (e.g., 1MB)
@@ -196,9 +252,25 @@ This guide outlines how to test the end-to-end encryption (E2EE) features implem
 **Expected Results:**
 - Encryption and decryption should work correctly
 - The UI should remain responsive
-- Progressive loading indicators should be shown for very large content
+- Progress bars should show during both encryption and decryption
+- Worker threads should be used for processing
 
-##### 3.5.2 Special Characters and Unicode
+##### 3.5.5 Service Worker Integration
+
+**Steps:**
+1. First ensure the application is working with a registered service worker
+2. Open browser DevTools → Application → Service Workers and verify registration
+3. Create and encrypt a large paste with E2E encryption
+4. Enable offline mode in DevTools (Network tab)
+5. Open the URL of the encrypted paste
+
+**Expected Results:**
+- Service worker should load cached resources
+- Crypto Web Worker should still initialize properly
+- Decryption should work entirely offline
+- Progress indicators should function correctly
+
+##### 3.5.6 Special Characters and Unicode
 
 **Steps:**
 1. Create a paste with special characters, Unicode, and emojis
