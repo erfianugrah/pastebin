@@ -26,7 +26,7 @@
 	},
 	"routes": [
 		{
-			"pattern": "paste.erfianugrah.com",
+			"pattern": "paste.erfi.dev",
 			"custom_domain": true
 		}
 	],
@@ -35,7 +35,7 @@
 			"name": "pastebin-prod",
 			"routes": [
 				{
-					"pattern": "paste.erfianugrah.com",
+					"pattern": "paste.erfi.dev",
 					"custom_domain": true
 				}
 			],
@@ -50,7 +50,7 @@
 			"name": "pastebin-staging",
 			"routes": [
 				{
-					"pattern": "paste-staging.erfianugrah.com",
+					"pattern": "paste-staging.erfi.dev",
 					"custom_domain": true
 				}
 			],
