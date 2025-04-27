@@ -709,7 +709,7 @@ export default function PasteForm() {
             
             <div className="space-y-4 mt-4">
               {/* Security options section */}
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 shadow-sm">
                 <h3 className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-2">Security Options</h3>
                 
                 {/* Burn after reading option */}
@@ -719,7 +719,7 @@ export default function PasteForm() {
                       type="checkbox"
                       id="burnAfterReading"
                       name="burnAfterReading"
-                      className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                      className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-primary dark:text-primary focus:ring-primary dark:focus:ring-primary focus:ring-offset-0 bg-white dark:bg-gray-800 checked:bg-primary dark:checked:bg-primary form-checkbox"
                     />
                   </div>
                   <div className="ml-3 text-sm">
@@ -739,7 +739,7 @@ export default function PasteForm() {
                       type="checkbox"
                       id="enableViewLimit"
                       name="enableViewLimit"
-                      className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                      className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-primary dark:text-primary focus:ring-primary dark:focus:ring-primary focus:ring-offset-0 bg-white dark:bg-gray-800 checked:bg-primary dark:checked:bg-primary form-checkbox"
                       onChange={(e) => {
                         if (typeof document !== 'undefined') {
                           const viewLimitInput = document.getElementById('viewLimit') as HTMLInputElement;
@@ -766,7 +766,7 @@ export default function PasteForm() {
                         max="100" 
                         defaultValue="1" 
                         disabled
-                        className="w-16 px-2 py-1 text-xs rounded border border-input" 
+                        className="w-16 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100" 
                       />
                       <label htmlFor="viewLimit" className="ml-2 text-xs text-gray-500 dark:text-gray-400">
                         views before expiration
