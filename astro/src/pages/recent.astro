@@ -1,10 +1,16 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import { Debug } from 'astro:components';
 ---
 
 <Layout title="Recent Pastes - Pasteriser">
   <div class="container mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold mb-6">Recent Public Pastes</h1>
+    
+    <!-- Debug component to help troubleshoot -->
+    <div class="hidden debug-only">
+      <Debug data-from-server="Recent pastes page is rendering" />
+    </div>
     
     <!-- Spinner shown while loading -->
     <div id="loading" class="py-12 text-center">
@@ -80,6 +86,13 @@ import Layout from '../layouts/Layout.astro';
       const data = await response.json();
       const pastes = data.pastes || [];
       
+      // Debug: Add data logging
+      console.log('Recent pastes data:', {
+        pasteCount: pastes.length,
+        pastesData: pastes,
+        rawResponse: data
+      });
+      
       const pastesContainer = document.getElementById('pastes-container');
       const loadingElement = document.getElementById('loading');
       const emptyState = document.getElementById('empty-state');
@@ -109,6 +122,12 @@ import Layout from '../layouts/Layout.astro';
     } catch (error) {
       console.error('Error fetching recent pastes:', error);
       
+      // Debug: Add console log for debugging
+      console.log('Recent pastes fetch error details:', {
+        message: error.message,
+        stack: error.stack
+      });
+      
       // Show empty state in case of error
       const loadingElement = document.getElementById('loading');
       const emptyState = document.getElementById('empty-state');
@@ -135,4 +154,14 @@ import Layout from '../layouts/Layout.astro';
 
   // Load pastes when document is ready
   document.addEventListener('DOMContentLoaded', loadRecentPastes);
+  
+  // Also load pastes on client-side navigation
+  // This handles Astro View Transitions or other client-side routing
+  document.addEventListener('astro:page-load', loadRecentPastes);
+  
+  // Ensure we load pastes even if we're already on the page
+  // This is a fallback in case neither of the above events fire
+  if (document.readyState === 'complete') {
+    loadRecentPastes();
+  }
 </script>
