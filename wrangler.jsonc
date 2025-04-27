@@ -19,6 +19,14 @@
 		{
 			"binding": "PASTES",
 			"id": "7ab6cc1ce0744c119c50554173707600"
+		},
+		{
+			"binding": "PASTE_LOGS",
+			"id": "8d7f5a1c7bd641ce96f1bcd4a66045e9"
+		},
+		{
+			"binding": "PASTE_RL",
+			"id": "5a1fb152b29e468f8bcf4b509d6726ed"
 		}
 	],
 	"observability": {
@@ -43,6 +51,14 @@
 				{
 					"binding": "PASTES",
 					"id": "7ab6cc1ce0744c119c50554173707600"
+				},
+				{
+					"binding": "PASTE_LOGS",
+					"id": "8d7f5a1c7bd641ce96f1bcd4a66045e9"
+				},
+				{
+					"binding": "PASTE_RL",
+					"id": "5a1fb152b29e468f8bcf4b509d6726ed"
 				}
 			]
 		},
@@ -58,6 +74,14 @@
 				{
 					"binding": "PASTES",
 					"id": "7ab6cc1ce0744c119c50554173707600"
+				},
+				{
+					"binding": "PASTE_LOGS",
+					"id": "8d7f5a1c7bd641ce96f1bcd4a66045e9"
+				},
+				{
+					"binding": "PASTE_RL",
+					"id": "5a1fb152b29e468f8bcf4b509d6726ed"
 				}
 			]
 		}

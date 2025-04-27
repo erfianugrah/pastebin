@@ -27,6 +27,8 @@ interface PasteData {
   isPasswordProtected: boolean;
   burnAfterReading: boolean;
   isEncrypted?: boolean;
+  version?: string;
+  securityType?: string;
   hasViewLimit?: boolean;
   viewLimit?: number;
   remainingViews?: number;

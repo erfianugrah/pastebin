@@ -15,10 +15,14 @@ export class Logger {
   private logger: pino.Logger;
   private context: LoggerContext = {};
   private env?: Env;
+  private logsKV?: KVNamespace;
 
   constructor(configService: ConfigurationService, env?: Env) {
     const loggingConfig = configService.getLoggingConfig();
     this.env = env;
+    
+    // Store the specific LOGS KV namespace if available
+    this.logsKV = env?.PASTE_LOGS;
     
     // Configure Pino with Cloudflare-friendly options
     this.logger = pino({
@@ -38,6 +42,12 @@ export class Logger {
           }
         : undefined,
     });
+    
+    // Log warning if the LOGS KV namespace is not available
+    if (!this.logsKV) {
+      console.warn("PASTE_LOGS KV namespace not configured. Logs will not be persisted to KV.");
+      this.logger.warn({}, "PASTE_LOGS KV namespace not configured. Logs will not be persisted to KV.");
+    }
   }
 
   setContext(context: LoggerContext): void {
@@ -79,8 +89,8 @@ export class Logger {
     // Log to console using Pino
     this.logger[level]({ ...this.context, ...obj }, msg);
     
-    // Store logs in KV for later retrieval
-    if (this.env?.PASTES) {
+    // Store logs in dedicated LOGS KV namespace
+    if (this.logsKV) {
       try {
         const logEntry = {
           level,
@@ -91,9 +101,9 @@ export class Logger {
         
         // Store in KV with auto-expiration (7 days)
         const key = `logs:${level}:${Date.now()}:${crypto.randomUUID()}`;
-        this.env.PASTES.put(key, JSON.stringify(logEntry), { 
+        this.logsKV.put(key, JSON.stringify(logEntry), { 
           expirationTtl: 60 * 60 * 24 * 7 // 7 days
-        });
+        }).catch(e => console.error(`Failed to persist log to PASTE_LOGS KV (key: ${key}):`, e));
       } catch (e) {
         // Don't let logging errors cause issues
         console.error('Failed to persist log:', e);
@@ -107,7 +117,8 @@ export class Logger {
    * @returns Array of log entries
    */
   async getLogs(options: LogQueryOptions = {}): Promise<LogEntry[]> {
-    if (!this.env?.PASTES) {
+    if (!this.logsKV) {
+      this.warn('PASTE_LOGS KV namespace not configured, cannot retrieve stored logs.');
       return [];
     }
 
@@ -127,7 +138,7 @@ export class Logger {
       const prefix = level ? `logs:${level}:` : 'logs:';
       
       // List all logs with the given prefix
-      const { keys } = await this.env.PASTES.list({ prefix });
+      const { keys } = await this.logsKV.list({ prefix });
       
       // Filter keys by timestamp
       const filteredKeys = keys.filter(key => {
@@ -152,20 +163,21 @@ export class Logger {
       const logEntries: LogEntry[] = [];
       
       for (const key of sortedKeys) {
-        const logJson = await this.env.PASTES.get(key.name);
+        const logJson = await this.logsKV.get(key.name);
         if (logJson) {
           try {
             const entry = JSON.parse(logJson) as LogEntry;
             logEntries.push(entry);
           } catch (e) {
             // Skip invalid entries
+            this.error('Failed to parse log entry from KV', { key: key.name, error: e });
           }
         }
       }
       
       return logEntries;
     } catch (e) {
-      console.error('Failed to retrieve logs:', e);
+      this.error('Failed to retrieve logs from PASTE_LOGS KV', { error: e });
       return [];
     }
   }

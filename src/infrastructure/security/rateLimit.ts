@@ -18,6 +18,16 @@ export async function handleRateLimit(
   const windowSize = options.windowSize || 60 * 1000; // 1 minute window by default
   const pathPrefix = options.pathPrefix || ''; // Optional path prefix to limit specific endpoints
 
+  // Get the specific RATE_LIMITS namespace from environment
+  const rateLimitsKV = env.PASTE_RL;
+  
+  // Check if the namespace binding exists
+  if (!rateLimitsKV) {
+    console.error("PASTE_RL KV namespace binding is missing or undefined in the environment. Rate limiting is disabled.");
+    // Since rate limiting is a security feature, we choose to continue rather than block all traffic
+    return null;
+  }
+
   // Check if path should be rate limited
   const url = new URL(request.url);
   if (pathPrefix && !url.pathname.startsWith(pathPrefix)) {
@@ -30,16 +40,15 @@ export async function handleRateLimit(
 
   // Only check if the rate limit could be exceeded - optimization
   // We'll only read from KV if this isn't the first request and could potentially exceed the limit
-  const isReadNeeded = limit <= 30; // If limit is low, always check
+  const isReadNeeded = true; // Simplification: always read for rate limiting check
   
   const now = Date.now();
   let count = 1; // Start with 1 (current request)
   let resetTime = now + windowSize;
-  let needsUpdate = true;
 
   if (isReadNeeded) {
     // Get current rate limit data from KV
-    const data = await env.PASTES.get(key);
+    const data = await rateLimitsKV.get(key);
     
     if (data) {
       try {
@@ -61,19 +70,19 @@ export async function handleRateLimit(
 
   // Only update KV if:
   // 1. This is the first request in a time window (count = 1)
-  // 2. We're approaching the limit (count >= limit*0.5)
+  // 2. We're approaching the limit (count >= limit*0.8)
   // 3. We've exceeded the limit (count > limit)
   // This reduces KV operations significantly
-  const needsWrite = count === 1 || count >= (limit * 0.5) || count > limit;
+  const needsWrite = count === 1 || count >= (limit * 0.8) || count > limit;
   
   if (needsWrite) {
     // Update KV with new count and expiration
     // TTL is set to the window size in seconds
-    await env.PASTES.put(
+    await rateLimitsKV.put(
       key,
       JSON.stringify({ count, resetTime }),
       { expirationTtl: Math.ceil(windowSize / 1000) }
-    );
+    ).catch(e => console.error(`Failed to write rate limit data for key ${key}:`, e));
   }
 
   // If count exceeds limit, return 429 Too Many Requests

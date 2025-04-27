@@ -1,7 +1,11 @@
+/// <reference types="@cloudflare/workers-types" />
+
 // Add or extend your main environment definition
 export interface Env {
   // KV namespace bindings
   PASTES: KVNamespace;
+  PASTE_LOGS: KVNamespace;
+  PASTE_RL: KVNamespace;
   ANALYTICS: KVNamespace;
   WEBHOOKS: KVNamespace;
   ASSETS: Fetcher;
