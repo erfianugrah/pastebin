@@ -7,12 +7,47 @@ import nacl from 'tweetnacl';
 import util from 'tweetnacl-util';
 
 // Extract functions from the CommonJS module
-const { encodeBase64, decodeBase64 } = util;
+const { encodeBase64, decodeBase64: originalDecodeBase64 } = util;
 
 // Constants
 const PBKDF2_ITERATIONS = 300000; // High iteration count for better security
 const SALT_LENGTH = 16; // 16 bytes salt
 const KEY_LENGTH = nacl.secretbox.keyLength; // 32 bytes for NaCl secretbox
+
+// Create a safe decodeBase64 function that handles invalid inputs
+function safeDecodeBase64(input: string): Uint8Array {
+  try {
+    // Try standard decoding first
+    return originalDecodeBase64(input);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('invalid encoding')) {
+      console.warn('Fixing invalid Base64 encoding in input');
+      
+      // Fix common Base64 issues:
+      // 1. Ensure length is multiple of 4 by adding padding
+      let fixedInput = input;
+      while (fixedInput.length % 4 !== 0) {
+        fixedInput += '=';
+      }
+      
+      // 2. Replace any invalid characters with 'A'
+      fixedInput = fixedInput.replace(/[^A-Za-z0-9+/=]/g, 'A');
+      
+      try {
+        const result = originalDecodeBase64(fixedInput);
+        console.log('Successfully fixed and decoded Base64 input');
+        return result;
+      } catch (fixError) {
+        console.error('Failed to fix Base64 encoding:', fixError);
+        throw new Error('Unable to decode corrupted Base64 data. The encryption key may be invalid or the data is corrupted.');
+      }
+    }
+    throw error;
+  }
+}
+
+// Replace all uses of originalDecodeBase64 with safeDecodeBase64
+const decodeBase64 = safeDecodeBase64;
 
 // Browser feature detection and compatibility
 interface BrowserCompatibility {

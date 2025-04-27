@@ -76,8 +76,26 @@ import { Debug } from 'astro:components';
 
   // Fetch and display recent pastes
   async function loadRecentPastes() {
+    // Ensure the UI elements exist before proceeding
+    const loadingElement = document.getElementById('loading');
+    const pastesContainer = document.getElementById('pastes-container');
+    const emptyState = document.getElementById('empty-state');
+    
+    // If we can't find the required DOM elements, we're likely in an intermediate state
+    if (!loadingElement || !pastesContainer || !emptyState) {
+      console.warn('Recent pastes DOM elements not found, deferring load');
+      return;
+    }
+    
+    // Show loading immediately
+    loadingElement.classList.remove('hidden');
+    pastesContainer.classList.add('hidden');
+    emptyState.classList.add('hidden');
+    
     try {
-      const response = await fetch('/api/recent');
+      // Use a cache-busting parameter to avoid getting stale data during navigation
+      const cacheBuster = `?_=${Date.now()}`;
+      const response = await fetch('/api/recent' + cacheBuster);
       
       if (!response.ok) {
         throw new Error('Failed to fetch recent pastes');
@@ -86,16 +104,16 @@ import { Debug } from 'astro:components';
       const data = await response.json();
       const pastes = data.pastes || [];
       
-      // Debug: Add data logging
+      // Debug: Add more comprehensive data logging
       console.log('Recent pastes data:', {
         pasteCount: pastes.length,
         pastesData: pastes,
-        rawResponse: data
+        rawResponse: data,
+        timestamp: new Date().toISOString(),
+        source: 'After fetch with cache-buster'
       });
       
-      const pastesContainer = document.getElementById('pastes-container');
-      const loadingElement = document.getElementById('loading');
-      const emptyState = document.getElementById('empty-state');
+      // Elements were already fetched at the beginning of this function
       
       // Hide loading
       if (loadingElement) {
@@ -152,15 +170,19 @@ import { Debug } from 'astro:components';
     }
   }
 
-  // Load pastes when document is ready
+  // Load pastes when document is ready (initial page load)
   document.addEventListener('DOMContentLoaded', loadRecentPastes);
   
-  // Also load pastes on client-side navigation
-  // This handles Astro View Transitions or other client-side routing
+  // For View Transitions navigation - this event fires immediately after content swap
+  document.addEventListener('astro:after-swap', () => {
+    // Small delay to ensure DOM is fully ready after the swap
+    setTimeout(loadRecentPastes, 10);
+  });
+  
+  // Also keep the page-load event as a backup
   document.addEventListener('astro:page-load', loadRecentPastes);
   
-  // Ensure we load pastes even if we're already on the page
-  // This is a fallback in case neither of the above events fire
+  // Fallback for initial page load when not using View Transitions
   if (document.readyState === 'complete') {
     loadRecentPastes();
   }

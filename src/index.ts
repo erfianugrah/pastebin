@@ -74,7 +74,7 @@ export default {
       );
       
       const getPasteQuery = new GetPasteQuery(pasteRepository);
-      const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository);
+      const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
       
       // Create handlers and middleware
       const apiHandlers = new ApiHandlers(

@@ -116,8 +116,23 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
           const urlHash = window.location.hash.substring(1);
           console.log('URL fragment:', urlHash);
           
-          const hashParams = new URLSearchParams(urlHash);
-          const key = hashParams.get('key');
+          // Handle both URL query param style (?key=xxx) and direct fragment (#key=xxx)
+          let key;
+          try {
+            const hashParams = new URLSearchParams(urlHash);
+            key = hashParams.get('key');
+            
+            // If no key was found and the URL fragment might be a direct key
+            if (!key && urlHash && urlHash.includes('=')) {
+              // Try to extract key from different formats like "key=xxx" without the "?"
+              const directMatch = urlHash.match(/key=([^&]+)/);
+              if (directMatch && directMatch[1]) {
+                key = directMatch[1];
+              }
+            }
+          } catch (e) {
+            console.warn('Error parsing URL fragment:', e);
+          }
           
           // Check localStorage for saved key if not in URL
           const savedKey = !key && paste.id ? localStorage.getItem(`paste_key_${paste.id}`) : null;
