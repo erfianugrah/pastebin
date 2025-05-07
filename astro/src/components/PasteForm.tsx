@@ -209,7 +209,12 @@ export default function PasteForm() {
       // The fragment is not sent to the server
       let resultUrl = data.url;
       if (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) {
-        resultUrl = `${data.url}#key=${encryptionKey}`;
+        // Keep the "+" character as-is by using encodeURIComponent and then replacing %2B back to +
+        // This ensures proper handling of Base64 keys that may contain "+" characters
+        // Note: Base64 characters "+", "/" and "=" need to be properly handled in URLs
+        const encodedKey = encryptionKey ? encryptionKey.replace(/\+/g, "%2B").replace(/\//g, "%2F").replace(/=/g, "%3D") : "";
+        resultUrl = `${data.url}#key=${encodedKey}`;
+        console.log('Added encryption key to URL fragment');
       }
       
       // Handle the encryptionKey prop to avoid type issues with undefined

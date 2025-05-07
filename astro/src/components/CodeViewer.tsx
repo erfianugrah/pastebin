@@ -121,15 +121,47 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
           // Handle both URL query param style (?key=xxx) and direct fragment (#key=xxx)
           let key;
           try {
-            const hashParams = new URLSearchParams(urlHash);
-            key = hashParams.get('key');
+            // First try to extract the key with regex to preserve the exact encoding
+            const directMatch = urlHash.match(/key=([^&]+)/);
+            if (directMatch && directMatch[1]) {
+              // Use the raw match to preserve '+' and other special characters
+              key = directMatch[1];
+              console.log('Found key with regex match');
+            } else {
+              // If regex fails, try URLSearchParams
+              const hashParams = new URLSearchParams(urlHash);
+              key = hashParams.get('key');
+              
+              if (key) {
+                // URLSearchParams converts '+' to space, so convert spaces back to '+'
+                key = key.replace(/ /g, '+');
+                console.log('Found key with URLSearchParams, fixed spaces');
+              }
+            }
             
-            // If no key was found and the URL fragment might be a direct key
-            if (!key && urlHash && urlHash.includes('=')) {
-              // Try to extract key from different formats like "key=xxx" without the "?"
-              const directMatch = urlHash.match(/key=([^&]+)/);
-              if (directMatch && directMatch[1]) {
-                key = directMatch[1];
+            // Apply decoding to handle URL-encoded characters, especially for Base64 special chars
+            if (key) {
+              try {
+                // First check for percent-encoded characters
+                if (key.includes('%')) {
+                  key = decodeURIComponent(key);
+                  console.log('Decoded URI-encoded key');
+                }
+                
+                // Handle the special case of the older format where + might have been encoded as %2B
+                // and then decoded to a space by URLSearchParams
+                if (key.includes(' ')) {
+                  key = key.replace(/ /g, '+');
+                  console.log('Replaced spaces with plus signs in key');
+                }
+                
+                // Recover any potentially encoded Base64 special characters
+                key = key.replace(/%2B/g, '+').replace(/%2F/g, '/').replace(/%3D/g, '=');
+                
+                console.log('Key prepared for decryption');
+              } catch (decodeError) {
+                console.warn('Error processing encryption key:', decodeError);
+                // Keep using the original key if processing fails
               }
             }
           } catch (e) {
