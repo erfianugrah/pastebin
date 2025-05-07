@@ -1,6 +1,5 @@
 import { Env } from './types';
 import { ConfigurationService } from './infrastructure/config/config';
-import { Logger } from './infrastructure/logging/logger';
 import { KVPasteRepository } from './infrastructure/storage/kvPasteRepository';
 import { CloudflareUniqueIdService } from './infrastructure/services/cloudflareUniqueIdService';
 import { DefaultExpirationService } from './domain/services/expirationService';
@@ -12,6 +11,7 @@ import { ApiHandlers } from './interfaces/api/handlers';
 import { ApiMiddleware } from './interfaces/api/middleware';
 import { HtmlRenderer } from './interfaces/ui/htmlRenderer';
 import { errorHandler } from './infrastructure/errors/AppError';
+import { initializeLogger } from './infrastructure/logging/loggerFactory';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -24,7 +24,7 @@ export default {
       },
     });
   
-    const logger = new Logger(configService, env);
+    const logger = initializeLogger(configService, env);
     
     // Gather request details for logging context
     const requestId = crypto.randomUUID();

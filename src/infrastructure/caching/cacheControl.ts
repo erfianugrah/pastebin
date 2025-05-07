@@ -126,3 +126,28 @@ export function preventCaching(response: Response): Response {
     headers,
   });
 }
+
+/**
+ * Returns the default cache TTL based on the path
+ * @param path The URL path
+ * @returns The TTL in seconds
+ */
+export function getDefaultTtl(path: string): number {
+  // Default TTL values for different content types
+  if (path.match(/\.(js|css|svg|png|jpg|jpeg|gif|webp|ico)$/)) {
+    // Static assets - long cache time
+    return 86400; // 1 day
+  } else if (path.match(/\/api\/recent/)) {
+    // Recent pastes API - short cache time
+    return 60; // 1 minute
+  } else if (path.match(/\/pastes\/[^\/]+$/)) {
+    // Individual paste views
+    return 3600; // 1 hour
+  } else if (path === '/' || path === '/recent') {
+    // Main pages
+    return 300; // 5 minutes
+  }
+  
+  // Default - no caching
+  return 0;
+}

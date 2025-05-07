@@ -3,6 +3,10 @@ import { decryptData, deriveKeyFromPassword } from '../lib/crypto';
 import { toast } from './ui/toast';
 import util from 'tweetnacl-util';
 import { ExpirationCountdown } from './ExpirationCountdown';
+import { useErrorHandler } from '../hooks/useErrorHandler';
+import { useAsyncEffect } from '../hooks/useAsyncEffect';
+import { ErrorDisplay } from './ui/error-display';
+import { ErrorCategory } from '../../../src/infrastructure/errors/errorHandler';
 
 // Extract decodeBase64 from the CommonJS module
 const { decodeBase64 } = util;
@@ -58,6 +62,9 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
   const [fullContentLoaded, setFullContentLoaded] = useState(false);
   const [decryptionProgress, setDecryptionProgress] = useState<number | null>(null);
   const codeRef = useRef<HTMLElement>(null);
+  
+  // Use our error handler hook
+  const { error, errorMessage, category, handleError } = useErrorHandler();
   
   // Define threshold for large files (5MB)
   const largeFileThreshold = 5 * 1024 * 1024;
@@ -228,7 +235,13 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
                 }
               }
             } catch (error) {
-              console.error('Decryption failed:', error);
+              // Use our error handler to process the error
+              handleError(error, {
+                location: 'CodeViewer.attemptDecryption',
+                pasteId: paste.id,
+                keySource: savedKey ? 'localStorage' : 'url',
+                contentLength: paste.content.length
+              });
               
               // If we tried with a saved key and it failed, remove it
               if (savedKey && paste.id) {
@@ -351,6 +364,14 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
       }
     } catch (error) {
       console.error('Password decryption failed:', error);
+      
+      // Use our error handler with context
+      handleError(error, {
+        location: 'CodeViewer.handlePasswordSubmit',
+        pasteId: paste.id,
+        authType: 'password',
+        contentLength: paste.content.length
+      });
       
       toast({
         message: 'Invalid password. Please try again.',
@@ -523,6 +544,19 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
             </div>
           </div>
         </div>
+      )}
+      
+      {/* Error display for decryption issues */}
+      {error && category === ErrorCategory.CRYPTO && !isDecrypting && (
+        <ErrorDisplay
+          message={errorMessage || "Error decrypting content"}
+          category={ErrorCategory.CRYPTO}
+          retry={() => {
+            // Reload the page to try again
+            window.location.reload();
+          }}
+          details={error.stack}
+        />
       )}
       
       {/* Decryption in progress */}

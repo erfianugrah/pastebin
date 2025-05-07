@@ -6,6 +6,8 @@ import { toast } from './ui/toast';
 import { Tooltip } from './ui/tooltip';
 import { PasswordStrengthMeter } from './ui/password-strength';
 import { generateEncryptionKey, encryptData, deriveKeyFromPassword } from '../lib/crypto';
+import { validatePasteForm } from '../lib/validation';
+import { useErrorHandler } from '../hooks/useErrorHandler';
 
 export default function PasteForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -15,6 +17,9 @@ export default function PasteForm() {
   const [passwordValue, setPasswordValue] = useState('');
   const [securityMethod, setSecurityMethod] = useState<'none' | 'password' | 'key'>('none');
   const [encryptionProgress, setEncryptionProgress] = useState<number | null>(null);
+  
+  // Use our error handler hook
+  const { handleError } = useErrorHandler();
   
   // Keep security method in sync with encryption state
   useEffect(() => {
@@ -28,20 +33,24 @@ export default function PasteForm() {
   const validateForm = (formData: FormData) => {
     const errors: {[key: string]: string} = {};
     
-    // Validate content
-    const content = formData.get('content') as string;
-    if (!content || content.trim().length === 0) {
-      errors.content = 'Content is required';
-    } else if (content.length > 25 * 1024 * 1024) { // 25MB
-      errors.content = 'Content is too large (max 25MB)';
-    } else if (content.length > 5 * 1024 * 1024) { // 5MB warning
-      console.warn('Large paste detected:', Math.floor(content.length / (1024 * 1024)), 'MB');
+    // Convert FormData to Record<string, string> for validation
+    const formFields: Record<string, string> = {};
+    formData.forEach((value, key) => {
+      formFields[key] = value.toString();
+    });
+    
+    // Use the validation utility
+    const validationErrors = validatePasteForm(formFields);
+    
+    // Convert validation errors to simple string format for compatibility
+    for (const [field, error] of Object.entries(validationErrors)) {
+      errors[field] = error.message;
     }
     
-    // Validate title
-    const title = formData.get('title') as string;
-    if (title && title.length > 100) {
-      errors.title = 'Title is too long (max 100 characters)';
+    // Add warning for large pastes
+    const content = formData.get('content') as string;
+    if (content && content.length > 5 * 1024 * 1024) { // 5MB warning
+      console.warn('Large paste detected:', Math.floor(content.length / (1024 * 1024)), 'MB');
     }
     
     return errors;
@@ -123,7 +132,12 @@ export default function PasteForm() {
           }
         } catch (error) {
           console.error('Encryption error:', error);
-          throw new Error('Failed to encrypt content. Please try again.');
+          // Add more context to the error
+          const enhancedError = new Error('Failed to encrypt content. Please try again.');
+          // Add original error details to help with debugging
+          (enhancedError as any).originalError = error;
+          (enhancedError as any).code = 'encryption_failed';
+          throw enhancedError;
         }
       } else if (password) {
         // In Phase 3, all passwords must use client-side encryption
@@ -165,7 +179,12 @@ export default function PasteForm() {
           passwordHash = undefined;
         } catch (error) {
           console.error('Encryption error:', error);
-          throw new Error('Failed to encrypt content with password. Please try again.');
+          // Add more context to the error
+          const enhancedError = new Error('Failed to encrypt content with password. Please try again.');
+          // Add original error details to help with debugging
+          (enhancedError as any).originalError = error;
+          (enhancedError as any).code = 'password_encryption_failed';
+          throw enhancedError;
         }
       }
       
@@ -195,12 +214,18 @@ export default function PasteForm() {
         }),
       }).catch(fetchError => {
         console.error('Network error:', fetchError);
-        throw new Error('Network error. Please check your connection and try again.');
+        const networkError = new Error('Network error. Please check your connection and try again.');
+        (networkError as any).originalError = fetchError;
+        (networkError as any).code = 'network_error';
+        throw networkError;
       });
       
       if (!response.ok) {
-        const errorData = await response.json() as { error?: { message?: string } };
-        throw new Error(errorData.error?.message || 'Failed to create paste');
+        const errorData = await response.json() as { error?: { message?: string, code?: string } };
+        const serverError = new Error(errorData.error?.message || 'Failed to create paste');
+        (serverError as any).code = errorData.error?.code || 'server_error';
+        (serverError as any).status = response.status;
+        throw serverError;
       }
       
       const data = await response.json() as { id: string; url: string };
@@ -235,10 +260,18 @@ export default function PasteForm() {
         type: 'success',
       });
     } catch (error) {
-      console.error(error);
-      toast({
-        message: error instanceof Error ? error.message : 'Failed to create paste',
-        type: 'error',
+      // Use our error handler
+      handleError(error, {
+        location: 'PasteForm.handleSubmit',
+        formData: {
+          hasTitle: !!(document.getElementById('title') as HTMLInputElement | null)?.value,
+          contentLength: (document.getElementById('content') as HTMLTextAreaElement | null)?.value?.length || 0,
+          visibility: (() => {
+            const el = document.getElementById('visibility');
+            return el instanceof HTMLSelectElement ? el.value : 'unknown';
+          })(),
+          isE2EEncrypted
+        }
       });
     } finally {
       setIsSubmitting(false);
