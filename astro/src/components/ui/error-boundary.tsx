@@ -1,7 +1,7 @@
 import React, { Component, ReactNode, ErrorInfo } from 'react';
 import { ErrorDisplay } from './error-display';
-import { clientLogger } from '../../../src/infrastructure/logging/clientLogger';
-import { ErrorCategory } from '../../../src/infrastructure/errors/errorHandler';
+import { clientLogger } from '../../lib/clientLogger';
+import { ErrorCategory } from '../../lib/errorTypes';
 
 interface ErrorBoundaryProps {
   children: ReactNode;

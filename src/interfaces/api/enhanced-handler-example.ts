@@ -40,7 +40,7 @@ export class EnhancedApiHandler {
     private readonly env: Env,
   ) {
     this.logger = logger;
-    this.config = new ConfigurationService(env);
+    this.config = new ConfigurationService();
     this.analytics = new Analytics(env, logger);
   }
 

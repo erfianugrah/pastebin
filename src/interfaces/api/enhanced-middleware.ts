@@ -6,8 +6,8 @@ import { AppError, NetworkError, NotFoundError, ValidationError, RateLimitError,
 import { ErrorCategory, categorizeError, getUserFriendlyMessage, logError } from '../../infrastructure/errors/errorHandler';
 import { Logger } from '../../infrastructure/logging/logger';
 import { ConfigurationService } from '../../infrastructure/config/config';
-import { rateLimit } from '../../infrastructure/security/rateLimit';
-import { cacheControl } from '../../infrastructure/caching/cacheControl';
+import { handleRateLimit } from '../../infrastructure/security/rateLimit';
+import { addCacheHeaders, getDefaultTtl, preventCaching } from '../../infrastructure/caching/cacheControl';
 import { Env } from '../../types';
 
 /**
@@ -64,7 +64,7 @@ export function createRequestContext(
   logger: Logger,
   params: Record<string, string> = {}
 ): RequestContext {
-  const config = new ConfigurationService(env);
+  const config = new ConfigurationService();
   const url = new URL(request.url);
   const requestId = crypto.randomUUID();
 
@@ -106,9 +106,12 @@ export function createErrorResponse(error: Error | unknown, status = 500): Respo
     status = error.statusCode;
     errorBody = error.toJSON();
   } else {
+    // Convert unknown errors to Error instances
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    
     // For standard errors, categorize them and provide a more user-friendly message
-    const category = categorizeError(error);
-    const friendlyMessage = getUserFriendlyMessage(error);
+    const category = categorizeError(errorObj);
+    const friendlyMessage = getUserFriendlyMessage(errorObj);
     
     // Determine appropriate status code and error code based on category
     if (category === ErrorCategory.NETWORK) {
@@ -162,7 +165,8 @@ export function withErrorHandling(
       return await handler(context);
     } catch (error) {
       // Log the error with context
-      logError(error, {
+      const errorObj = error instanceof Error ? error : new Error(String(error));
+      logError(errorObj, {
         requestId: context.requestId,
         url: context.url.pathname,
         method: context.request.method,
@@ -260,14 +264,10 @@ export function rateLimitMiddleware(
 
     try {
       // Apply rate limiting
-      const rateLimited = await rateLimit(
-        {
-          ip,
-          endpoint: url.pathname,
-        },
-        env,
-        options.requestsPerMinute
-      );
+      const rateLimited = await handleRateLimit(request, env, {
+        limit: options.requestsPerMinute,
+        pathPrefix: url.pathname
+      });
 
       if (rateLimited) {
         logger.warn(`Rate limit exceeded for IP: ${ip}`, { ip, path: url.pathname });
@@ -287,6 +287,7 @@ export function rateLimitMiddleware(
       logger.error(`Rate limiting error: ${error instanceof Error ? error.message : String(error)}`, {
         ip,
         path: url.pathname,
+        error: error instanceof Error ? error : new Error(String(error))
       });
     }
 
@@ -389,13 +390,13 @@ export function cachingMiddleware(options: { ttl?: number } = {}): MiddlewareHan
 
     try {
       // Apply caching headers based on the path
-      const cacheTtl = options.ttl || cacheControl.getDefaultTtl(url.pathname);
+      const cacheTtl = options.ttl || getDefaultTtl(url.pathname);
       
       if (cacheTtl > 0) {
         ctx.waitUntil(
           (async () => {
             // This doesn't block the request, but ensures caching happens
-            await cacheControl.setCacheHeaders(request, cacheTtl);
+            await addCacheHeaders(new Response(), { maxAge: cacheTtl });
           })()
         );
       }
@@ -403,6 +404,7 @@ export function cachingMiddleware(options: { ttl?: number } = {}): MiddlewareHan
       // Log error but don't block the request on caching failures
       console.error(`Caching error: ${error instanceof Error ? error.message : String(error)}`, {
         path: url.pathname,
+        error: error instanceof Error ? error : new Error(String(error))
       });
     }
 

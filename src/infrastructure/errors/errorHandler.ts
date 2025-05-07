@@ -3,7 +3,7 @@
  * Provides consistent error handling functions across the application
  */
 import { AppError, NetworkError, CryptoError, TimeoutError, ValidationError, StorageError } from './errorTypes';
-import { logger } from '../logging/logger';
+import { logger } from '../logging/loggerFactory';
 
 // Error categories for classification
 export enum ErrorCategory {
@@ -110,19 +110,17 @@ export function logError(error: Error, context: Record<string, any> = {}): void 
   
   // Log appropriate information based on error type
   if (error instanceof AppError) {
-    logger.error({
-      message: error.message,
+    logger.error(`${error.message}`, {
       code: error.code,
       category,
       context: sanitizedContext,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      stack: (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') ? error.stack : undefined
     });
   } else {
-    logger.error({
-      message: error.message,
+    logger.error(`${error.message}`, {
       category,
       context: sanitizedContext,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      stack: (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') ? error.stack : undefined
     });
   }
 }
@@ -168,7 +166,7 @@ export function withTimeout<T>(
   timeoutMs: number,
   timeoutMessage = 'Operation timed out'
 ): Promise<T> {
-  let timeoutId: NodeJS.Timeout;
+  let timeoutId: number | ReturnType<typeof setTimeout>;
   
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {

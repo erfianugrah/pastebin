@@ -1,9 +1,9 @@
 /**
  * Client-side error handling utilities for Astro components
  */
-import { clientLogger } from '../../../src/infrastructure/logging/clientLogger';
+import { clientLogger } from './clientLogger';
 import { toast } from '../components/ui/toast';
-import { ErrorCategory } from '../../../src/infrastructure/errors/errorHandler';
+import { ErrorCategory } from './errorTypes';
 
 // Map of error types to user-friendly messages
 const ERROR_MESSAGES: Record<string, string> = {

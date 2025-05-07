@@ -1,5 +1,5 @@
 import React from 'react';
-import { ErrorCategory } from '../../../src/infrastructure/errors/errorHandler';
+import { ErrorCategory } from '../../lib/errorTypes';
 
 interface ErrorDisplayProps {
   message: string;

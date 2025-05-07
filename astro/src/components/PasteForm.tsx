@@ -264,9 +264,12 @@ export default function PasteForm() {
       handleError(error, {
         location: 'PasteForm.handleSubmit',
         formData: {
-          hasTitle: !!formData.get('title'),
-          contentLength: (formData.get('content') as string)?.length || 0,
-          visibility: formData.get('visibility'),
+          hasTitle: !!(document.getElementById('title') as HTMLInputElement | null)?.value,
+          contentLength: (document.getElementById('content') as HTMLTextAreaElement | null)?.value?.length || 0,
+          visibility: (() => {
+            const el = document.getElementById('visibility');
+            return el instanceof HTMLSelectElement ? el.value : 'unknown';
+          })(),
           isE2EEncrypted
         }
       });
