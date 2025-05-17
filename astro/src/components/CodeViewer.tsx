@@ -8,6 +8,17 @@ import { useAsyncEffect } from '../hooks/useAsyncEffect';
 import { ErrorDisplay } from './ui/error-display';
 import { ErrorCategory } from '../../../src/infrastructure/errors/errorHandler';
 
+// Add Prism.js theme
+import 'prismjs/themes/prism-okaidia.css';
+
+// Import Prism core and autoloader
+import Prism from 'prismjs';
+import 'prismjs/plugins/autoloader/prism-autoloader';
+
+// Configure the autoloader to use our local copy of components in public directory
+// This path is relative to the site root
+Prism.plugins.autoloader.languages_path = '/prism-components/';
+
 // Extract decodeBase64 from the CommonJS module
 const { decodeBase64 } = util;
 
@@ -98,11 +109,11 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
 
   // Syntax highlighting effect
   useEffect(() => {
-    if (fullContentLoaded && window.Prism && codeRef.current) {
-      // Apply syntax highlighting
-      window.Prism.highlightElement(codeRef.current);
+    if (fullContentLoaded && codeRef.current) {
+      // Apply syntax highlighting using our imported Prism instance
+      Prism.highlightElement(codeRef.current);
     }
-  }, [fullContentLoaded]);
+  }, [fullContentLoaded, paste.language, visibleContent]);
 
   const [passwordInput, setPasswordInput] = useState<string>('');
   const [showPasswordForm, setShowPasswordForm] = useState<boolean>(false);
