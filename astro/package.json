@@ -3,11 +3,14 @@
   "type": "module",
   "version": "0.0.1",
   "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
-    "build": "astro build",
+    "dev": "npm run update-prism && astro dev",
+    "start": "npm run update-prism && astro dev",
+    "build": "npm run update-prism && astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "update-prism": "mkdir -p public/prism-components && cp -r node_modules/prismjs/components/* public/prism-components/",
+    "deploy": "npm run update-prism && astro build",
+    "deploy:full": "npm run update-prism && astro build"
   },
   "dependencies": {
     "@astrojs/react": "^4.2.7",
