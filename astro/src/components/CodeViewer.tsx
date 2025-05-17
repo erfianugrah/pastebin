@@ -8,6 +8,64 @@ import { useAsyncEffect } from '../hooks/useAsyncEffect';
 import { ErrorDisplay } from './ui/error-display';
 import { ErrorCategory } from '../../../src/infrastructure/errors/errorHandler';
 
+// Add Prism.js theme
+import 'prismjs/themes/prism-okaidia.css';
+
+// Import Prism core
+import Prism from 'prismjs';
+
+// Core language components
+import 'prismjs/components/prism-clike';
+import 'prismjs/components/prism-markup'; // For HTML, XML, SVG, MathML
+import 'prismjs/components/prism-css';
+import 'prismjs/components/prism-javascript';
+
+// Web Development
+import 'prismjs/components/prism-jsx';
+import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-tsx';
+import 'prismjs/components/prism-markup-templating'; // Required by PHP
+import 'prismjs/components/prism-php';
+
+// Data Formats
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-yaml';
+import 'prismjs/components/prism-toml';
+import 'prismjs/components/prism-csv';
+import 'prismjs/components/prism-ini';
+
+// Infrastructure & DevOps
+import 'prismjs/components/prism-bash'; // For shell
+import 'prismjs/components/prism-docker';
+import 'prismjs/components/prism-powershell';
+import 'prismjs/components/prism-nginx';
+import 'prismjs/components/prism-hcl'; // For terraform
+
+// Programming Languages
+import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-java';
+import 'prismjs/components/prism-csharp';
+import 'prismjs/components/prism-c';
+import 'prismjs/components/prism-cpp';
+import 'prismjs/components/prism-go';
+import 'prismjs/components/prism-rust';
+import 'prismjs/components/prism-ruby';
+import 'prismjs/components/prism-kotlin';
+import 'prismjs/components/prism-swift';
+import 'prismjs/components/prism-scala';
+import 'prismjs/components/prism-perl';
+import 'prismjs/components/prism-r';
+
+// Database
+import 'prismjs/components/prism-sql';
+import 'prismjs/components/prism-mongodb';
+import 'prismjs/components/prism-graphql';
+
+// Markup & Style
+import 'prismjs/components/prism-markdown';
+import 'prismjs/components/prism-scss';
+import 'prismjs/components/prism-less';
+
 // Extract decodeBase64 from the CommonJS module
 const { decodeBase64 } = util;
 
@@ -98,11 +156,11 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
 
   // Syntax highlighting effect
   useEffect(() => {
-    if (fullContentLoaded && window.Prism && codeRef.current) {
-      // Apply syntax highlighting
-      window.Prism.highlightElement(codeRef.current);
+    if (fullContentLoaded && codeRef.current) {
+      // Apply syntax highlighting using our imported Prism instance
+      Prism.highlightElement(codeRef.current);
     }
-  }, [fullContentLoaded]);
+  }, [fullContentLoaded, paste.language, visibleContent]);
 
   const [passwordInput, setPasswordInput] = useState<string>('');
   const [showPasswordForm, setShowPasswordForm] = useState<boolean>(false);
