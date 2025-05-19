@@ -2,6 +2,7 @@
  * Enhanced client-side encryption utilities for pastes using TweetNaCl.js and Web Crypto API
  * Implements true end-to-end encryption (E2EE) with modern cryptography standards
  * Now with Web Worker support for better performance on large pastes
+ * Optimized with chunked processing for large files
  */
 import nacl from 'tweetnacl';
 import util from 'tweetnacl-util';
@@ -11,8 +12,11 @@ const { encodeBase64, decodeBase64: originalDecodeBase64 } = util;
 
 // Constants
 const PBKDF2_ITERATIONS = 300000; // High iteration count for better security
+const PBKDF2_ITERATIONS_LARGE_FILE = 100000; // Lower for large files to improve performance
 const SALT_LENGTH = 16; // 16 bytes salt
 const KEY_LENGTH = nacl.secretbox.keyLength; // 32 bytes for NaCl secretbox
+const LARGE_FILE_THRESHOLD = 1000000; // 1MB threshold for large file optimizations
+const CHUNK_SIZE = 1024 * 1024; // 1MB chunk size for processing
 
 // Create a safe decodeBase64 function that handles invalid inputs
 function safeDecodeBase64(input: string): Uint8Array {
@@ -55,6 +59,64 @@ interface BrowserCompatibility {
   hasWebCryptoSupport: boolean;
   hasTweetNaclSupport: boolean;
   canUseWorker: boolean;
+}
+
+/**
+ * Incrementally decode Base64 string in chunks (main thread implementation)
+ * @param input The Base64 string to decode
+ * @param chunkSize Size of each chunk to process
+ * @param onProgress Callback for progress reporting
+ */
+async function incrementalBase64Decode(
+  input: string, 
+  chunkSize: number = CHUNK_SIZE,
+  onProgress?: (processed: number, total: number) => void
+): Promise<Uint8Array> {
+  const total = input.length;
+  const numChunks = Math.ceil(total / chunkSize);
+  let processedBytes = 0;
+  
+  // First, calculate the exact length of the output buffer
+  // Base64 decoding: 4 chars → 3 bytes (with padding)
+  const outputLength = Math.floor((input.length * 3) / 4);
+  const result = new Uint8Array(outputLength);
+  
+  let resultOffset = 0;
+  
+  for (let i = 0; i < numChunks; i++) {
+    // Get next chunk
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, total);
+    const chunk = input.slice(start, end);
+    
+    // Ensure chunk is valid base64 (multiple of 4)
+    let paddedChunk = chunk;
+    // Only add padding if this is the last chunk
+    if (i === numChunks - 1) {
+      while (paddedChunk.length % 4 !== 0) {
+        paddedChunk += '=';
+      }
+    }
+    
+    // Decode chunk
+    const decodedChunk = decodeBase64(paddedChunk);
+    
+    // Copy to result buffer
+    result.set(decodedChunk, resultOffset);
+    resultOffset += decodedChunk.length;
+    
+    // Report progress
+    processedBytes += (end - start);
+    if (onProgress) {
+      onProgress(processedBytes, total);
+    }
+    
+    // Allow UI to update between chunks
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  
+  // Return the actual data (might be slightly smaller than allocated due to padding)
+  return result.slice(0, resultOffset);
 }
 
 /**
@@ -256,13 +318,17 @@ async function executeInWorker<T>(
     if (onProgress) {
       progressCallbacks.set(requestId, onProgress);
     }
+
+    // Add additional parameters for optimization
+    const isLargeOperation = 
+      (operation === 'decrypt' && params.encrypted?.length > LARGE_FILE_THRESHOLD) ||
+      (operation === 'encrypt' && params.data?.length > LARGE_FILE_THRESHOLD);
     
     // Add timing info to the message for large operations
     const enhancedParams = { 
       ...params, 
       reportProgress: !!onProgress,
-      // For large operations, send in chunks
-      chunkSize: params.data?.length > 1000000 ? 500000 : undefined
+      isLargeFile: isLargeOperation
     };
     
     // Send the message to the worker
@@ -283,11 +349,25 @@ async function fallbackToMainThread<T>(operation: WorkerOperation, params: any):
   // If the worker failed, fall back to the main thread implementation
   switch (operation) {
     case 'deriveKey':
-      return await deriveKeyFromPasswordMain(params.password, params.salt) as T;
+      return await deriveKeyFromPasswordMain(
+        params.password, 
+        params.salt, 
+        params.isLargeFile || false
+      ) as T;
     case 'encrypt':
-      return await encryptDataMain(params.data, params.key, params.isPasswordDerived, params.salt) as T;
+      return await encryptDataMain(
+        params.data, 
+        params.key, 
+        params.isPasswordDerived, 
+        params.salt
+      ) as T;
     case 'decrypt':
-      return await decryptDataMain(params.encrypted, params.key, params.isPasswordProtected) as T;
+      return await decryptDataMain(
+        params.encrypted, 
+        params.key, 
+        params.isPasswordProtected,
+        params.onProgress
+      ) as T;
     default:
       throw new Error(`Unknown operation: ${operation}`);
   }
@@ -305,10 +385,12 @@ export function generateEncryptionKey(): string {
 /**
  * Main thread implementation of deriveKeyFromPassword
  * Used as a fallback if the worker fails
+ * Now with adaptive iteration count based on file size
  */
 async function deriveKeyFromPasswordMain(
   password: string, 
-  saltBase64?: string
+  saltBase64?: string,
+  isLargeFile: boolean = false
 ): Promise<{ key: string, salt: string }> {
   try {
     // Generate salt if not provided
@@ -329,12 +411,15 @@ async function deriveKeyFromPasswordMain(
       ['deriveKey', 'deriveBits']
     );
     
+    // Use adaptive iteration count based on file size for performance
+    const iterations = isLargeFile ? PBKDF2_ITERATIONS_LARGE_FILE : PBKDF2_ITERATIONS;
+    
     // Use PBKDF2 to derive a key
     const derivedBits = await crypto.subtle.deriveBits(
       {
         name: 'PBKDF2',
         salt: salt,
-        iterations: PBKDF2_ITERATIONS,
+        iterations: iterations,
         hash: 'SHA-256'
       },
       passwordKey,
@@ -419,24 +504,43 @@ async function encryptDataMain(
 
 /**
  * Main thread implementation of decryptData
- * Used as a fallback if the worker fails
+ * Optimized for large files using chunked processing
  */
 async function decryptDataMain(
   encryptedBase64: string, 
   keyBase64: string, 
-  isPasswordProtected = false
+  isPasswordProtected = false,
+  progressCallback?: (progress: { percent: number }) => void
 ): Promise<string> {
   console.log('Decrypting data of length:', encryptedBase64.length);
   console.log('Using key:', keyBase64.substring(0, 5) + '...');
   
   try {
-    // Decode from base64
-    const encryptedMessage = decodeBase64(encryptedBase64);
+    const isLargeFile = encryptedBase64.length > LARGE_FILE_THRESHOLD;
+    
+    // For large files, use incremental decoding to reduce memory pressure
+    const encryptedMessage = isLargeFile
+      ? await incrementalBase64Decode(
+          encryptedBase64,
+          CHUNK_SIZE,
+          progressCallback ? (processed, total) => {
+            progressCallback({
+              percent: Math.round((processed / total) * 50) // Base64 decoding is ~50% of the work
+            });
+          } : undefined
+        )
+      : decodeBase64(encryptedBase64);
+    
     console.log('Decoded message length:', encryptedMessage.length);
     
     let key: Uint8Array;
     let nonce: Uint8Array;
     let ciphertext: Uint8Array;
+    
+    // Report progress after base64 decoding
+    if (progressCallback && isLargeFile) {
+      progressCallback({ percent: 50 });
+    }
     
     if (isPasswordProtected) {
       // Extract salt, nonce, and ciphertext from the encrypted message
@@ -446,14 +550,25 @@ async function decryptDataMain(
       ciphertext = encryptedMessage.slice(SALT_LENGTH + nacl.secretbox.nonceLength);
       
       // Derive key from password using the extracted salt
-      const { key: derivedKeyBase64 } = await deriveKeyFromPassword(keyBase64, encodeBase64(salt));
+      // Use adaptive iteration count for large files
+      const { key: derivedKeyBase64 } = await deriveKeyFromPasswordMain(keyBase64, encodeBase64(salt), isLargeFile);
       key = decodeBase64(derivedKeyBase64);
+      
+      // Report progress after key derivation
+      if (progressCallback && isLargeFile) {
+        progressCallback({ percent: 75 });
+      }
     } else {
       // Direct key decryption
       // Format: [nonce(24) + ciphertext]
       key = decodeBase64(keyBase64);
       nonce = encryptedMessage.slice(0, nacl.secretbox.nonceLength);
       ciphertext = encryptedMessage.slice(nacl.secretbox.nonceLength);
+      
+      // Skip the key derivation progress update
+      if (progressCallback && isLargeFile) {
+        progressCallback({ percent: 75 });
+      }
     }
     
     console.log('Extracted nonce length:', nonce.length);
@@ -474,10 +589,40 @@ async function decryptDataMain(
     
     console.log('Decrypted data length:', decryptedData.length);
     
-    // Convert back to string
-    const result = new TextDecoder().decode(decryptedData);
+    // Convert back to string in chunks for large data
+    let result = '';
+    if (isLargeFile && decryptedData.length > CHUNK_SIZE) {
+      const decoder = new TextDecoder();
+      const chunks = Math.ceil(decryptedData.length / CHUNK_SIZE);
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, decryptedData.length);
+        const chunk = decryptedData.slice(start, end);
+        
+        // Use streaming mode for TextDecoder to handle large strings efficiently
+        result += decoder.decode(chunk, { stream: i < chunks - 1 });
+        
+        // Report progress during string conversion
+        if (progressCallback) {
+          const percent = 75 + (i / chunks) * 25; // 75-100%
+          progressCallback({ percent: Math.round(percent) });
+        }
+        
+        // Allow UI to update between chunks
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    } else {
+      // For smaller data, decode all at once
+      result = new TextDecoder().decode(decryptedData);
+      
+      // Final progress update
+      if (progressCallback) {
+        progressCallback({ percent: 100 });
+      }
+    }
+    
     console.log('Decrypted string length:', result.length);
-    console.log('First 50 chars of decrypted data:', result.substring(0, 50));
     
     return result;
   } catch (error) {
@@ -485,10 +630,6 @@ async function decryptDataMain(
     throw error;
   }
 }
-
-// Size thresholds for using workers
-const SMALL_DATA_THRESHOLD = 10000;  // 10KB
-const LARGE_DATA_THRESHOLD = 1000000; // 1MB
 
 // Register cleanup on page unload
 if (typeof window !== 'undefined') {
@@ -519,6 +660,9 @@ export async function deriveKeyFromPassword(
     return deriveKeyFromPasswordMain(password, saltBase64);
   }
   
+  // Detect if this is for a large file operation
+  const isLargeFile = false; // Default for key derivation alone
+  
   // Use the worker for client-side rendering
   try {
     console.log('Deriving key from password using Web Worker');
@@ -534,12 +678,12 @@ export async function deriveKeyFromPassword(
     
     return await executeInWorker<{ key: string, salt: string }>(
       'deriveKey', 
-      { password, salt: saltBase64 },
+      { password, salt: saltBase64, isLargeFile },
       onProgress
     );
   } catch (error) {
     console.error('Worker-based key derivation failed, using main thread:', error);
-    return deriveKeyFromPasswordMain(password, saltBase64);
+    return deriveKeyFromPasswordMain(password, saltBase64, isLargeFile);
   }
 }
 
@@ -562,13 +706,13 @@ export async function encryptData(
   progressCallback?: (progress: { percent: number }) => void
 ): Promise<string> {
   // Skip worker for server-side rendering or small data
-  if (typeof window === 'undefined' || data.length < SMALL_DATA_THRESHOLD) {
+  if (typeof window === 'undefined' || data.length < LARGE_FILE_THRESHOLD / 10) {
     return encryptDataMain(data, keyBase64, isPasswordDerived, saltBase64);
   }
   
-  // Use the worker for client-side rendering with large data
+  // Use the worker for client-side rendering with larger data
   try {
-    const isLargeData = data.length >= LARGE_DATA_THRESHOLD;
+    const isLargeData = data.length >= LARGE_FILE_THRESHOLD;
     
     if (isLargeData) {
       console.log(`Encrypting large data (${Math.round(data.length/1024)}KB) using Web Worker with progress reporting`);
@@ -603,7 +747,7 @@ export async function encryptData(
 
 /**
  * Public API: Decrypt data that was encrypted with encryptData
- * Uses Web Worker for improved performance
+ * Uses Web Worker for improved performance with chunked processing for large files
  * 
  * @param encryptedBase64 The base64-encoded encrypted data
  * @param keyBase64 The base64-encoded encryption key, or password for password-protected content
@@ -617,23 +761,23 @@ export async function decryptData(
   isPasswordProtected = false,
   progressCallback?: (progress: { percent: number }) => void
 ): Promise<string> {
-  // Skip worker for server-side rendering or small data
-  if (typeof window === 'undefined' || encryptedBase64.length < SMALL_DATA_THRESHOLD) {
-    return decryptDataMain(encryptedBase64, keyBase64, isPasswordProtected);
+  // Skip worker for server-side rendering or very small data
+  if (typeof window === 'undefined' || encryptedBase64.length < LARGE_FILE_THRESHOLD / 10) {
+    return decryptDataMain(encryptedBase64, keyBase64, isPasswordProtected, progressCallback);
   }
   
-  // Use the worker for client-side rendering with large data
+  // Use the worker for client-side rendering with sufficient data size
   try {
-    const isLargeData = encryptedBase64.length >= LARGE_DATA_THRESHOLD;
+    const isLargeData = encryptedBase64.length >= LARGE_FILE_THRESHOLD;
     
     if (isLargeData) {
-      console.log(`Decrypting large data (${Math.round(encryptedBase64.length/1024)}KB) using Web Worker with progress reporting`);
+      console.log(`Decrypting large data (${Math.round(encryptedBase64.length/1024)}KB) using Web Worker with chunked processing`);
     } else {
       console.log('Decrypting data using Web Worker');
     }
     
     // Wrap the progress callback to report percentage
-    const onProgress = (isLargeData && progressCallback)
+    const onProgress = progressCallback
       ? (progress: ProgressData) => {
           progressCallback({
             percent: Math.round((progress.processed / progress.total) * 100)
@@ -652,6 +796,6 @@ export async function decryptData(
     );
   } catch (error) {
     console.error('Worker-based decryption failed, using main thread:', error);
-    return decryptDataMain(encryptedBase64, keyBase64, isPasswordProtected);
+    return decryptDataMain(encryptedBase64, keyBase64, isPasswordProtected, progressCallback);
   }
 }
