@@ -1,6 +1,7 @@
 /**
  * Web Worker for cryptographic operations
  * This worker handles CPU-intensive encryption and decryption tasks
+ * Optimized for chunked processing of large files
  */
 import nacl from 'tweetnacl';
 import util from 'tweetnacl-util';
@@ -10,8 +11,11 @@ const { encodeBase64, decodeBase64: originalDecodeBase64 } = util;
 
 // Constants
 const PBKDF2_ITERATIONS = 300000; // High iteration count for better security
+const PBKDF2_ITERATIONS_LARGE_FILE = 100000; // Lower for large files to improve performance
+const LARGE_FILE_THRESHOLD = 1000000; // 1MB
 const SALT_LENGTH = 16; // 16 bytes salt
 const KEY_LENGTH = nacl.secretbox.keyLength; // 32 bytes for NaCl secretbox
+const CHUNK_SIZE = 1024 * 1024; // 1MB chunk size for processing
 
 // Create a safe decodeBase64 function that handles invalid inputs
 function safeDecodeBase64(input: string): Uint8Array {
@@ -49,11 +53,71 @@ function safeDecodeBase64(input: string): Uint8Array {
 const decodeBase64 = safeDecodeBase64;
 
 /**
+ * Incrementally decode Base64 string in chunks
+ * @param input The Base64 string to decode
+ * @param chunkSize Size of each chunk to process
+ * @param onProgress Callback for progress reporting
+ */
+async function incrementalBase64Decode(
+  input: string, 
+  chunkSize: number = CHUNK_SIZE,
+  onProgress?: (processed: number, total: number) => void
+): Promise<Uint8Array> {
+  const total = input.length;
+  const numChunks = Math.ceil(total / chunkSize);
+  let processedBytes = 0;
+  
+  // First, calculate the exact length of the output buffer
+  // Base64 decoding: 4 chars → 3 bytes (with padding)
+  const outputLength = Math.floor((input.length * 3) / 4);
+  const result = new Uint8Array(outputLength);
+  
+  let resultOffset = 0;
+  
+  for (let i = 0; i < numChunks; i++) {
+    // Get next chunk
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, total);
+    const chunk = input.slice(start, end);
+    
+    // Ensure chunk is valid base64 (multiple of 4)
+    let paddedChunk = chunk;
+    // Only add padding if this is the last chunk
+    if (i === numChunks - 1) {
+      while (paddedChunk.length % 4 !== 0) {
+        paddedChunk += '=';
+      }
+    }
+    
+    // Decode chunk
+    const decodedChunk = decodeBase64(paddedChunk);
+    
+    // Copy to result buffer
+    result.set(decodedChunk, resultOffset);
+    resultOffset += decodedChunk.length;
+    
+    // Report progress
+    processedBytes += (end - start);
+    if (onProgress) {
+      onProgress(processedBytes, total);
+    }
+    
+    // Allow UI to update
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  
+  // Return the actual data (might be slightly smaller than allocated due to padding)
+  return result.slice(0, resultOffset);
+}
+
+/**
  * Derive an encryption key from a password using PBKDF2
+ * Now with adaptive iteration count based on file size
  */
 async function deriveKeyFromPassword(
   password: string, 
-  saltBase64?: string
+  saltBase64?: string,
+  isLargeFile: boolean = false
 ): Promise<{ key: string, salt: string }> {
   try {
     // Generate salt if not provided
@@ -74,12 +138,15 @@ async function deriveKeyFromPassword(
       ['deriveKey', 'deriveBits']
     );
     
+    // Use adaptive iteration count based on file size for performance
+    const iterations = isLargeFile ? PBKDF2_ITERATIONS_LARGE_FILE : PBKDF2_ITERATIONS;
+    
     // Use PBKDF2 to derive a key
     const derivedBits = await crypto.subtle.deriveBits(
       {
         name: 'PBKDF2',
         salt: salt,
-        iterations: PBKDF2_ITERATIONS,
+        iterations: iterations,
         hash: 'SHA-256'
       },
       passwordKey,
@@ -148,15 +215,47 @@ async function encryptData(
 
 /**
  * Decrypt data that was encrypted with encryptData
+ * Optimized for large files with chunked processing
  */
 async function decryptData(
   encryptedBase64: string, 
   keyBase64: string, 
-  isPasswordProtected = false
+  isPasswordProtected = false,
+  reportProgress = false,
+  requestId = ''
 ): Promise<string> {
   try {
-    // Decode from base64
-    const encryptedMessage = decodeBase64(encryptedBase64);
+    const isLargeFile = encryptedBase64.length > LARGE_FILE_THRESHOLD;
+    
+    // Decode from base64 using incremental decoding for large files
+    const encryptedMessage = isLargeFile 
+      ? await incrementalBase64Decode(
+          encryptedBase64,
+          CHUNK_SIZE,
+          reportProgress ? (processed, total) => {
+            self.postMessage({
+              progress: {
+                operation: 'decrypt',
+                total: total,
+                processed: processed,
+                requestId
+              }
+            });
+          } : undefined
+        )
+      : decodeBase64(encryptedBase64);
+    
+    // Report progress after base64 decoding complete
+    if (reportProgress) {
+      self.postMessage({
+        progress: {
+          operation: 'decrypt',
+          total: 100,
+          processed: 50, // Base64 decoding complete - 50% of the way there
+          requestId
+        }
+      });
+    }
     
     let key: Uint8Array;
     let nonce: Uint8Array;
@@ -170,85 +269,115 @@ async function decryptData(
       ciphertext = encryptedMessage.slice(SALT_LENGTH + nacl.secretbox.nonceLength);
       
       // Derive key from password using the extracted salt
-      const { key: derivedKeyBase64 } = await deriveKeyFromPassword(keyBase64, encodeBase64(salt));
+      // Use the adaptive iteration count for large files
+      const { key: derivedKeyBase64 } = await deriveKeyFromPassword(keyBase64, encodeBase64(salt), isLargeFile);
       key = decodeBase64(derivedKeyBase64);
+      
+      // Report progress after key derivation (which is CPU-intensive)
+      if (reportProgress) {
+        self.postMessage({
+          progress: {
+            operation: 'decrypt',
+            total: 100,
+            processed: 75, // Key derivation complete
+            requestId
+          }
+        });
+      }
     } else {
       // Direct key decryption
       // Format: [nonce(24) + ciphertext]
       key = decodeBase64(keyBase64);
       nonce = encryptedMessage.slice(0, nacl.secretbox.nonceLength);
       ciphertext = encryptedMessage.slice(nacl.secretbox.nonceLength);
+      
+      // Report progress (skip the key derivation step)
+      if (reportProgress) {
+        self.postMessage({
+          progress: {
+            operation: 'decrypt',
+            total: 100,
+            processed: 75, // Moving to decryption step
+            requestId
+          }
+        });
+      }
     }
     
     if (key.length !== KEY_LENGTH) {
       throw new Error(`Invalid key length: ${key.length}, expected: ${KEY_LENGTH}`);
     }
     
-    // Decrypt the data
+    // Decrypt the data - unfortunately nacl.secretbox.open doesn't support streaming
+    // so we have to process the entire ciphertext at once
     const decryptedData = nacl.secretbox.open(ciphertext, nonce, key);
     
     if (!decryptedData) {
       throw new Error('Decryption failed - invalid key or corrupted data');
     }
     
-    // Convert back to string
-    const result = new TextDecoder().decode(decryptedData);
-    return result;
-  } catch (error) {
-    throw error;
-  }
-}
-
-/**
- * Process data in chunks with progress reporting
- * @param data The data to process
- * @param chunkSize Size of each chunk
- * @param processor Function to process each chunk
- * @param operation The operation being performed
- * @param requestId The request ID for progress reporting
- */
-async function processWithProgress<T>(
-  data: Uint8Array | string,
-  chunkSize: number,
-  processor: (chunk: any) => Promise<T>,
-  operation: string,
-  requestId: string,
-  reportProgress: boolean
-): Promise<T[]> {
-  // Convert string to Uint8Array if needed for consistent handling
-  const buffer = typeof data === 'string' 
-    ? new TextEncoder().encode(data)
-    : data;
-  
-  const total = buffer.length;
-  const numChunks = Math.ceil(total / chunkSize);
-  const results: T[] = [];
-  let processed = 0;
-  
-  for (let i = 0; i < numChunks; i++) {
-    const start = i * chunkSize;
-    const end = Math.min(start + chunkSize, total);
-    const chunk = buffer.slice(start, end);
-    
-    const result = await processor(chunk);
-    results.push(result);
-    
-    processed += (end - start);
-    
-    // Report progress at regular intervals
-    if (reportProgress && (i % 2 === 0 || i === numChunks - 1)) {
+    // Report progress before text decoding
+    if (reportProgress) {
       self.postMessage({
         progress: {
-          operation,
-          total,
-          processed,
+          operation: 'decrypt',
+          total: 100,
+          processed: 90, // Decryption complete, converting to string
           requestId
         }
       });
     }
+    
+    // Convert back to string in chunks for large data
+    let result = '';
+    if (decryptedData.length > CHUNK_SIZE) {
+      const decoder = new TextDecoder();
+      const chunks = Math.ceil(decryptedData.length / CHUNK_SIZE);
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, decryptedData.length);
+        const chunk = decryptedData.slice(start, end);
+        
+        result += decoder.decode(chunk, { stream: i < chunks - 1 });
+        
+        // Report progress during string conversion
+        if (reportProgress) {
+          const percent = 90 + (i / chunks) * 10; // 90-100%
+          self.postMessage({
+            progress: {
+              operation: 'decrypt',
+              total: 100,
+              processed: Math.round(percent),
+              requestId
+            }
+          });
+        }
+        
+        // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    } else {
+      // For smaller data, decode all at once
+      result = new TextDecoder().decode(decryptedData);
+    }
+    
+    // Final progress update
+    if (reportProgress) {
+      self.postMessage({
+        progress: {
+          operation: 'decrypt',
+          total: 100,
+          processed: 100, // Complete
+          requestId
+        }
+      });
+    }
+    
+    return result;
+  } catch (error) {
+    throw error;
   }
-  
-  return results;
 }
 
 /**
@@ -258,13 +387,16 @@ self.onmessage = async (event: MessageEvent) => {
   try {
     const { operation, params, requestId } = event.data;
     const reportProgress = params.reportProgress || false;
-    const chunkSize = params.chunkSize || 1000000; // Default 1MB chunks
     
     let result;
     switch (operation) {
       case 'deriveKey':
         // Key derivation is a single operation, no chunking needed
-        result = await deriveKeyFromPassword(params.password, params.salt);
+        result = await deriveKeyFromPassword(
+          params.password, 
+          params.salt,
+          params.isLargeFile || false
+        );
         
         // Report completion progress
         if (reportProgress) {
@@ -280,81 +412,59 @@ self.onmessage = async (event: MessageEvent) => {
         break;
         
       case 'encrypt':
-        // For large data, we need to process in chunks
-        if (params.data.length > chunkSize && reportProgress) {
-          // Process in chunks for large data
-          // This is a simplified approach since we can't actually chunk encryption easily
-          // We're just reporting progress as if we were processing chunks
-          
+        // For large data, we report progress during encryption
+        if (params.data.length > LARGE_FILE_THRESHOLD && reportProgress) {
           // First, report starting progress
           self.postMessage({
             progress: {
               operation,
-              total: params.data.length,
+              total: 100,
               processed: 0,
               requestId
             }
           });
           
-          // Process in simulated chunks
-          for (let i = 0; i < params.data.length; i += chunkSize) {
-            // Simulate processing time for progress updates
-            if (i > 0) {
-              await new Promise(resolve => setTimeout(resolve, 1));
+          // Update for string encoding step
+          self.postMessage({
+            progress: {
+              operation,
+              total: 100,
+              processed: 20,
+              requestId
             }
-            
-            // Report progress
-            self.postMessage({
-              progress: {
-                operation,
-                total: params.data.length,
-                processed: Math.min(i + chunkSize, params.data.length),
-                requestId
-              }
-            });
-          }
+          });
         }
         
-        // Actually do the encryption (we can't chunk this easily with the current implementation)
-        result = await encryptData(params.data, params.key, params.isPasswordDerived, params.salt);
+        // Perform the actual encryption
+        result = await encryptData(
+          params.data, 
+          params.key, 
+          params.isPasswordDerived, 
+          params.salt
+        );
+        
+        // Final progress update
+        if (reportProgress) {
+          self.postMessage({
+            progress: {
+              operation,
+              total: 100,
+              processed: 100,
+              requestId
+            }
+          });
+        }
         break;
         
       case 'decrypt':
-        // For large data, report progress 
-        if (params.encrypted.length > chunkSize && reportProgress) {
-          // Same approach as encryption - simulate progress while doing full operation
-          
-          // First, report starting progress
-          self.postMessage({
-            progress: {
-              operation,
-              total: params.encrypted.length,
-              processed: 0,
-              requestId
-            }
-          });
-          
-          // Process in simulated chunks
-          for (let i = 0; i < params.encrypted.length; i += chunkSize) {
-            // Simulate processing time for progress updates
-            if (i > 0) {
-              await new Promise(resolve => setTimeout(resolve, 1));
-            }
-            
-            // Report progress
-            self.postMessage({
-              progress: {
-                operation,
-                total: params.encrypted.length,
-                processed: Math.min(i + chunkSize, params.encrypted.length),
-                requestId
-              }
-            });
-          }
-        }
-        
-        // Perform the actual decryption
-        result = await decryptData(params.encrypted, params.key, params.isPasswordProtected);
+        // Perform optimized chunked decryption with progress reporting
+        result = await decryptData(
+          params.encrypted, 
+          params.key, 
+          params.isPasswordProtected,
+          reportProgress,
+          requestId
+        );
         break;
         
       default:
