@@ -8,6 +8,7 @@ import { PasswordStrengthMeter } from './ui/password-strength';
 import { generateEncryptionKey, encryptData, deriveKeyFromPassword } from '../lib/crypto';
 import { validatePasteForm } from '../lib/validation';
 import { useErrorHandler } from '../hooks/useErrorHandler';
+import { appendKeyToUrl } from '../lib/urlUtils';
 
 export default function PasteForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -234,12 +235,9 @@ export default function PasteForm() {
       // The fragment is not sent to the server
       let resultUrl = data.url;
       if (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) {
-        // Keep the "+" character as-is by using encodeURIComponent and then replacing %2B back to +
-        // This ensures proper handling of Base64 keys that may contain "+" characters
-        // Note: Base64 characters "+", "/" and "=" need to be properly handled in URLs
-        const encodedKey = encryptionKey ? encryptionKey.replace(/\+/g, "%2B").replace(/\//g, "%2F").replace(/=/g, "%3D") : "";
-        resultUrl = `${data.url}#key=${encodedKey}`;
-        console.log('Added encryption key to URL fragment');
+        // Use our utility function to append the key to the URL in a URL-safe format
+        resultUrl = appendKeyToUrl(data.url, encryptionKey || '');
+        console.log('Added encryption key to URL fragment using URL-safe encoding');
       }
       
       // Handle the encryptionKey prop to avoid type issues with undefined

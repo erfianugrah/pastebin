@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { decryptData, deriveKeyFromPassword } from '../lib/crypto';
 import { toast } from './ui/toast';
-import util from 'tweetnacl-util';
+import { decodeBase64, safeDecodeBase64 } from '../lib/base64Utils';
 import { ExpirationCountdown } from './ExpirationCountdown';
 import { useErrorHandler } from '../hooks/useErrorHandler';
 import { useAsyncEffect } from '../hooks/useAsyncEffect';
 import { ErrorDisplay } from './ui/error-display';
 import { ErrorCategory } from '../../../src/infrastructure/errors/errorHandler';
+import { extractKeyFromUrlFragment } from '../lib/urlUtils';
 
 // Add Prism.js theme
 import 'prismjs/themes/prism-okaidia.css';
@@ -18,9 +19,6 @@ import 'prismjs/plugins/autoloader/prism-autoloader';
 // Configure the autoloader to use our local copy of components in public directory
 // This path is relative to the site root
 Prism.plugins.autoloader.languages_path = '/prism-components/';
-
-// Extract decodeBase64 from the CommonJS module
-const { decodeBase64 } = util;
 
 // Add Prism type declaration
 declare global {
@@ -132,58 +130,15 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
         try {
           setIsDecrypting(true);
           
-          // Get key from URL fragment
+          // Get key from URL fragment using our utility function
           const urlHash = window.location.hash.substring(1);
-          console.log('URL fragment:', urlHash);
+          console.log('URL fragment detected:', urlHash ? 'Yes' : 'No');
           
-          // Handle both URL query param style (?key=xxx) and direct fragment (#key=xxx)
-          let key;
-          try {
-            // First try to extract the key with regex to preserve the exact encoding
-            const directMatch = urlHash.match(/key=([^&]+)/);
-            if (directMatch && directMatch[1]) {
-              // Use the raw match to preserve '+' and other special characters
-              key = directMatch[1];
-              console.log('Found key with regex match');
-            } else {
-              // If regex fails, try URLSearchParams
-              const hashParams = new URLSearchParams(urlHash);
-              key = hashParams.get('key');
-              
-              if (key) {
-                // URLSearchParams converts '+' to space, so convert spaces back to '+'
-                key = key.replace(/ /g, '+');
-                console.log('Found key with URLSearchParams, fixed spaces');
-              }
-            }
-            
-            // Apply decoding to handle URL-encoded characters, especially for Base64 special chars
-            if (key) {
-              try {
-                // First check for percent-encoded characters
-                if (key.includes('%')) {
-                  key = decodeURIComponent(key);
-                  console.log('Decoded URI-encoded key');
-                }
-                
-                // Handle the special case of the older format where + might have been encoded as %2B
-                // and then decoded to a space by URLSearchParams
-                if (key.includes(' ')) {
-                  key = key.replace(/ /g, '+');
-                  console.log('Replaced spaces with plus signs in key');
-                }
-                
-                // Recover any potentially encoded Base64 special characters
-                key = key.replace(/%2B/g, '+').replace(/%2F/g, '/').replace(/%3D/g, '=');
-                
-                console.log('Key prepared for decryption');
-              } catch (decodeError) {
-                console.warn('Error processing encryption key:', decodeError);
-                // Keep using the original key if processing fails
-              }
-            }
-          } catch (e) {
-            console.warn('Error parsing URL fragment:', e);
+          // Extract and process the key from the URL fragment
+          const key = extractKeyFromUrlFragment(urlHash);
+          
+          if (key) {
+            console.log('Encryption key extracted from URL fragment');
           }
           
           // Check localStorage for saved key if not in URL
@@ -276,7 +231,8 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
             // No key available, check if this looks like a password-protected paste
             try {
               // Peek at the encrypted data to see if it has the salt+nonce+ciphertext format
-              const encryptedData = decodeBase64(paste.content);
+              // Use the safer decoding that can handle problematic Base64
+              const encryptedData = safeDecodeBase64(paste.content);
               
               // If the length is at least SALT_LENGTH + nonceLength (16 + 24), it might be password-protected
               if (encryptedData.length > 40) {
@@ -294,6 +250,7 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
                 });
               }
             } catch (e) {
+              console.warn('Error analyzing encrypted content format:', e);
               toast({
                 message: 'This content is encrypted. You need the decryption key to view it.',
                 type: 'info',

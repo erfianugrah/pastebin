@@ -10,7 +10,10 @@
     "astro": "astro",
     "update-prism": "mkdir -p public/prism-components && cp -r node_modules/prismjs/components/* public/prism-components/",
     "deploy": "npm run update-prism && astro build",
-    "deploy:full": "npm run update-prism && astro build"
+    "deploy:full": "npm run update-prism && astro build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@astrojs/react": "^4.2.7",
@@ -28,8 +31,6 @@
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.2.0",
     "tailwindcss": "^3.4.1",
-    "tweetnacl": "^1.0.3",
-    "tweetnacl-util": "^0.15.1",
     "zod": "^4.0.0-beta.20250412T085909"
   },
   "devDependencies": {
@@ -37,8 +38,11 @@
     "@types/prismjs": "^1.26.5",
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
+    "@vitest/coverage-v8": "^3.1.4",
+    "jsdom": "^26.1.0",
     "prettier": "^3.1.1",
     "prettier-plugin-astro": "^0.12.3",
-    "prettier-plugin-tailwindcss": "^0.5.10"
+    "prettier-plugin-tailwindcss": "^0.5.10",
+    "vitest": "^3.1.4"
   }
 }
