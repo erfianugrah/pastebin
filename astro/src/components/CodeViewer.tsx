@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { decryptData, deriveKeyFromPassword } from '../lib/crypto';
 import { toast } from './ui/toast';
-import util from 'tweetnacl-util';
 import { ExpirationCountdown } from './ExpirationCountdown';
 import { useErrorHandler } from '../hooks/useErrorHandler';
 import { useAsyncEffect } from '../hooks/useAsyncEffect';
@@ -19,8 +18,42 @@ import 'prismjs/plugins/autoloader/prism-autoloader';
 // This path is relative to the site root
 Prism.plugins.autoloader.languages_path = '/prism-components/';
 
-// Extract decodeBase64 from the CommonJS module
-const { decodeBase64 } = util;
+// Create a base64 decoding utility function
+function decodeBase64(input: string): Uint8Array {
+  try {
+    // Decode base64 to binary string
+    const binaryString = window.atob(input);
+    // Convert to Uint8Array
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  } catch (error) {
+    // Common base64 decoding errors - attempt to fix
+    console.warn('Attempting to fix invalid Base64 input');
+    
+    // Fix padding
+    let fixedBase64 = input;
+    while (fixedBase64.length % 4 !== 0) {
+      fixedBase64 += '=';
+    }
+    
+    // Remove invalid characters
+    fixedBase64 = fixedBase64.replace(/[^A-Za-z0-9+/=]/g, '');
+    
+    try {
+      const binaryString = window.atob(fixedBase64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes;
+    } catch (fixError) {
+      throw new Error('Unable to decode corrupted Base64 data');
+    }
+  }
+}
 
 // Add Prism type declaration
 declare global {
