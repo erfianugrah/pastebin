@@ -117,17 +117,27 @@ export default function PasteForm() {
             // Step 2: Encrypt the content with this key
             setEncryptionProgress(0); // Start encryption progress
             
-            encryptedContent = await encryptData(
-              content, 
-              encryptionKey, 
-              false, 
-              undefined, 
-              (progress) => {
-                setEncryptionProgress(progress.percent);
-              }
-            );
+            try {
+              // Do the actual encryption with progress tracking
+              encryptedContent = await encryptData(
+                content, 
+                encryptionKey, 
+                false, 
+                undefined,
+                (progress) => {
+                  console.log('Real encryption progress:', progress.percent);
+                  setEncryptionProgress(progress.percent);
+                }
+              );
+              
+              // Ensure 100% is shown at the end
+              setEncryptionProgress(100);
+            } catch (error) {
+              console.error('Encryption failed:', error);
+              throw error;
+            }
             
-            setEncryptionProgress(100); // Completed
+            // We already set progress to 100% inside the try block
             console.log('Content encrypted successfully with random key');
           }
         } catch (error) {
@@ -146,30 +156,46 @@ export default function PasteForm() {
         
         try {
           // Use client-side encryption by default
-          setEncryptionProgress(0); // Start key derivation progress
           
-          const { key: derivedKey, salt } = await deriveKeyFromPassword(
-            password,
-            undefined,
-            (progress) => {
-              setEncryptionProgress(Math.floor(progress.percent * 0.3)); // Key derivation is ~30% of the work
-            }
-          );
-          console.log('Derived key from password with salt');
+          try {
+            // Initialize progress
+            setEncryptionProgress(0);
+            
+            // First phase: Derive key with progress tracking (0-30%)
+            const { key: derivedKey, salt } = await deriveKeyFromPassword(
+              password,
+              undefined,
+              (keyProgress) => {
+                // Scale key derivation progress to 0-30% range
+                const scaledProgress = Math.floor(keyProgress.percent * 0.3);
+                console.log('Key derivation progress:', scaledProgress);
+                setEncryptionProgress(scaledProgress);
+              }
+            );
+            console.log('Derived key from password with salt');
+            
+            // Second phase: Encrypt with the derived key (30-100%)
+            encryptedContent = await encryptData(
+              content, 
+              derivedKey, 
+              true, 
+              salt,
+              (encryptProgress) => {
+                // Scale encryption progress to 30-100% range
+                const scaledProgress = 30 + Math.floor(encryptProgress.percent * 0.7);
+                console.log('Password encryption progress:', scaledProgress);
+                setEncryptionProgress(scaledProgress);
+              }
+            );
+            
+            // Ensure 100% is shown at the end
+            setEncryptionProgress(100);
+          } catch (error) {
+            console.error('Password encryption failed:', error);
+            throw error;
+          }
           
-          // Encrypt with the derived key
-          encryptedContent = await encryptData(
-            content, 
-            derivedKey, 
-            true, 
-            salt,
-            (progress) => {
-              // Key derivation was 30%, encryption is remaining 70%
-              setEncryptionProgress(30 + Math.floor(progress.percent * 0.7));
-            }
-          );
-          
-          setEncryptionProgress(100); // Completed
+          // We already set progress to 100% inside the try block
           console.log('Content encrypted with password-derived key');
           
           // Set encryption flag for response
@@ -891,13 +917,21 @@ export default function PasteForm() {
                 <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
                   <div 
                     className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-in-out" 
-                    style={{ width: `${encryptionProgress}%` }}
+                    style={{ 
+                      width: `${encryptionProgress}%`,
+                      transitionProperty: "width",
+                      transitionDuration: "300ms" 
+                    }}
                   ></div>
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {encryptionProgress < 30 ? "Generating encryption keys..." : 
-                   encryptionProgress < 90 ? "Encrypting your content..." : 
-                   "Finalizing encryption..."}
+                  {encryptionProgress === 0 ? "Preparing..." :
+                   encryptionProgress < 15 ? "Generating encryption keys..." : 
+                   encryptionProgress < 30 ? "Deriving secure key..." :
+                   encryptionProgress < 50 ? "Processing data..." :
+                   encryptionProgress < 75 ? "Applying encryption..." :
+                   encryptionProgress < 95 ? "Finalizing encryption..." : 
+                   "Securing your content..."}
                 </p>
               </div>
             )}
@@ -909,7 +943,9 @@ export default function PasteForm() {
               >
                 {isSubmitting ? 
                   (encryptionProgress !== null ? 
-                    `Encrypting (${encryptionProgress}%)` : 
+                    (encryptionProgress < 30 ? 
+                      `Securing (${encryptionProgress}%)` : 
+                      `Encrypting (${encryptionProgress}%)`) : 
                     'Creating...') : 
                   'Create Paste'}
               </Button>

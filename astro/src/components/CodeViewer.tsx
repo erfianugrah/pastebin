@@ -207,16 +207,67 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
               }
               
               // Attempt decryption with the key
-              const decryptedContent = await decryptData(
-                paste.content, 
-                keyToUse || '',
-                false,
-                isLarge ? (progress) => {
-                  setDecryptionProgress(progress.percent);
-                } : undefined
-              );
+              // Set initial progress explicitly to ensure UI updates
+              setDecryptionProgress(0);
               
-              setDecryptionProgress(100);
+              // Setup a realistic progress simulation
+              // For very large files (5MB+), use a much longer simulation time
+              const baseEstimatedTime = Math.max(2000, Math.min(paste.content.length / 1000, 60000)); // 2-60 seconds based on content size
+              
+              // For extremely large files (>10MB), add extra time to ensure simulation doesn't finish before actual decryption
+              const estimatedTime = paste.content.length > 10 * 1024 * 1024 
+                ? baseEstimatedTime * 1.5 // 50% longer for extremely large files
+                : baseEstimatedTime;
+              const startTime = Date.now();
+              let decryptedContent: string;
+              
+              // Progress interval that simulates decryption progress
+              const progressInterval = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                
+                // For large files (>5MB), use a more detailed progress simulation
+                let progress;
+                if (paste.content.length > 5 * 1024 * 1024) {
+                  // Use a delayed approach for very large files to better match actual processing time
+                  const progressPercentage = Math.min(1, elapsed / estimatedTime);
+                  
+                  // Create a curve that moves faster at start and middle, slower at end
+                  if (progressPercentage < 0.1) {
+                    // First 10% of time: move to 20% progress quickly (initial setup)
+                    progress = Math.floor(progressPercentage * 200);
+                  } else if (progressPercentage < 0.9) {
+                    // Next 80% of time: move from 20% to 85% progress (main decryption work)
+                    const adjustedPercentage = (progressPercentage - 0.1) / 0.8;
+                    progress = Math.floor(20 + (adjustedPercentage * 65));
+                  } else {
+                    // Final 10% of time: move from 85% to 95% progress (slow final phase)
+                    const adjustedPercentage = (progressPercentage - 0.9) / 0.1;
+                    progress = Math.floor(85 + (adjustedPercentage * 10));
+                  }
+                } else {
+                  // For smaller files, use linear progress
+                  progress = Math.min(95, Math.floor((elapsed / estimatedTime) * 100));
+                }
+                
+                console.log('Simulated decryption progress:', progress);
+                setDecryptionProgress(progress);
+              }, 50); // Update more frequently for smoother progress
+              
+              try {
+                // Perform the actual decryption
+                decryptedContent = await decryptData(
+                  paste.content, 
+                  keyToUse || '',
+                  false
+                );
+                
+                // Ensure 100% is shown at the end
+                setDecryptionProgress(100);
+              } finally {
+                // Always clear the interval
+                clearInterval(progressInterval);
+              }
+              
               console.log('Decryption successful, content length:', decryptedContent.length);
               
               // Update state with decrypted content
@@ -331,16 +382,92 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
       }
       
       // Decrypt with progress reporting
-      const decryptedContent = await decryptData(
-        paste.content, 
-        passwordInput, 
-        true,
-        isLarge ? (progress) => {
-          setDecryptionProgress(progress.percent);
-        } : undefined
-      );
+      // Set initial progress explicitly
+      setDecryptionProgress(0);
       
-      setDecryptionProgress(100);
+      // Setup a realistic progress simulation with two phases (key derivation and decryption)
+      // For very large files, use a much longer simulation time
+      const baseTotalTime = Math.max(3000, Math.min(paste.content.length / 1000, 60000)); // 3-60 seconds based on content size
+      
+      // For extremely large files (>10MB), add extra time to ensure simulation doesn't finish before actual decryption
+      const totalTime = paste.content.length > 10 * 1024 * 1024 
+        ? baseTotalTime * 1.5 // 50% longer for extremely large files
+        : baseTotalTime;
+      const keyDerivationTime = totalTime * 0.4; // 40% of the time for key derivation
+      const decryptionTime = totalTime * 0.6; // 60% of the time for actual decryption
+      const startTime = Date.now();
+      let decryptedContent: string;
+      
+      // Progress interval that handles both phases with more granular updates
+      const progressInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        let progress;
+        
+        // For large files (>5MB), adjust the progress simulation for better UX
+        if (paste.content.length > 5 * 1024 * 1024) {
+          if (elapsed < keyDerivationTime) {
+            // Phase 1: Key derivation with special handling for very large files
+            // For files >5MB, use a more detailed progression
+            const progressPercentage = Math.min(1, elapsed / keyDerivationTime);
+            if (progressPercentage < 0.2) {
+              // First 20% of derivation time: quick progress to 20%
+              progress = Math.floor(progressPercentage * 100);
+            } else {
+              // Remaining 80% of derivation time: progress from 20% to 40%
+              const adjustedPercentage = (progressPercentage - 0.2) / 0.8;
+              progress = Math.floor(20 + (adjustedPercentage * 20));
+            }
+          } else {
+            // Phase 2: Decryption (40-95%) with multi-stage approach for large files
+            const decryptElapsed = elapsed - keyDerivationTime;
+            const progressPercentage = Math.min(1, decryptElapsed / decryptionTime);
+            
+            // Create a curve with three segments for very large files
+            if (progressPercentage < 0.3) {
+              // First 30% of decryption time: quick progress from 40% to 60%
+              progress = 40 + Math.floor(progressPercentage * 20 / 0.3);
+            } else if (progressPercentage < 0.8) {
+              // Next 50% of decryption time: moderate progress from 60% to 85%
+              const adjustedPercentage = (progressPercentage - 0.3) / 0.5;
+              progress = 60 + Math.floor(adjustedPercentage * 25);
+            } else {
+              // Final 20% of decryption time: slow progress from 85% to 95%
+              const adjustedPercentage = (progressPercentage - 0.8) / 0.2;
+              progress = 85 + Math.floor(adjustedPercentage * 10);
+            }
+          }
+        } else {
+          // For smaller files, use standard progress reporting
+          if (elapsed < keyDerivationTime) {
+            // Phase 1: Key derivation (0-40%)
+            progress = Math.floor((elapsed / keyDerivationTime) * 40);
+          } else {
+            // Phase 2: Decryption (40-95%)
+            const decryptElapsed = elapsed - keyDerivationTime;
+            progress = 40 + Math.min(55, Math.floor((decryptElapsed / decryptionTime) * 55));
+          }
+        }
+        
+        console.log('Simulated password decryption progress:', progress);
+        setDecryptionProgress(progress);
+      }, 50); // Update more frequently for smoother progress
+      
+      try {
+        // Perform the actual decryption
+        decryptedContent = await decryptData(
+          paste.content, 
+          passwordInput, 
+          true
+        );
+        
+        // Ensure 100% is shown at the end (only once)
+        setDecryptionProgress(100);
+      } finally {
+        // Always clear the interval
+        clearInterval(progressInterval);
+      }
+      
+      // We already set progress to 100% inside the try block
       setContent(decryptedContent);
       setDecrypted(true);
       
@@ -585,9 +712,13 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
                 ></div>
               </div>
               <p className="text-xs text-gray-500 mt-2 text-center">
-                {decryptionProgress < 30 ? "Preparing decryption..." : 
-                 decryptionProgress < 90 ? "Decrypting content..." : 
-                 "Finalizing decryption..."}
+                {decryptionProgress === 0 ? "Preparing decryption..." :
+                 decryptionProgress < 10 ? "Initializing..." : 
+                 decryptionProgress < 40 ? "Decoding encrypted data..." : 
+                 decryptionProgress < 65 ? "Processing security keys..." :
+                 decryptionProgress < 85 ? "Decrypting content..." : 
+                 decryptionProgress < 95 ? "Processing decrypted content..." :
+                 "Finalizing..."}
               </p>
             </div>
           ) : (

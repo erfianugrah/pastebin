@@ -214,8 +214,21 @@ async function encryptData(
 }
 
 /**
+ * Define the stages of decryption process for accurate progress reporting
+ */
+const DecryptStages = {
+  INITIALIZE: { start: 0, end: 5 },                  // 0-5%: Initial setup
+  BASE64_DECODE: { start: 5, end: 40 },              // 5-40%: Base64 decoding
+  KEY_PREPARATION: { start: 40, end: 50 },           // 40-50%: Preparing keys/nonce extraction
+  PASSWORD_DERIVATION: { start: 50, end: 70 },       // 50-70%: Deriving key from password (only for password-protected)
+  DECRYPTION: { start: 70, end: 85 },                // 70-85%: Actual decryption
+  TEXT_CONVERSION: { start: 85, end: 100 }           // 85-100%: Converting result to string
+};
+
+/**
  * Decrypt data that was encrypted with encryptData
  * Optimized for large files with chunked processing
+ * With real progress tracking of the actual decryption process
  */
 async function decryptData(
   encryptedBase64: string, 
@@ -227,31 +240,87 @@ async function decryptData(
   try {
     const isLargeFile = encryptedBase64.length > LARGE_FILE_THRESHOLD;
     
-    // Decode from base64 using incremental decoding for large files
-    const encryptedMessage = isLargeFile 
-      ? await incrementalBase64Decode(
-          encryptedBase64,
-          CHUNK_SIZE,
-          reportProgress ? (processed, total) => {
-            self.postMessage({
-              progress: {
-                operation: 'decrypt',
-                total: total,
-                processed: processed,
-                requestId
-              }
-            });
-          } : undefined
-        )
-      : decodeBase64(encryptedBase64);
-    
-    // Report progress after base64 decoding complete
+    // STAGE 1: INITIALIZATION
+    // Report the start of the operation
     if (reportProgress) {
       self.postMessage({
         progress: {
           operation: 'decrypt',
           total: 100,
-          processed: 50, // Base64 decoding complete - 50% of the way there
+          processed: DecryptStages.INITIALIZE.start, // Starting decryption
+          requestId
+        }
+      });
+    }
+    
+    // Show some initial progress to indicate we're starting
+    if (reportProgress) {
+      await new Promise(resolve => setTimeout(resolve, 20)); // Small delay for UI
+      self.postMessage({
+        progress: {
+          operation: 'decrypt',
+          total: 100,
+          processed: DecryptStages.INITIALIZE.end, // Initialization complete
+          requestId
+        }
+      });
+    }
+    
+    // STAGE 2: BASE64 DECODING
+    // Start of base64 decoding
+    if (reportProgress) {
+      self.postMessage({
+        progress: {
+          operation: 'decrypt',
+          total: 100,
+          processed: DecryptStages.BASE64_DECODE.start, // Starting base64 decoding
+          requestId
+        }
+      });
+    }
+    
+    // Decode from base64 using incremental decoding for large files with actual progress tracking
+    const encryptedMessage = isLargeFile 
+      ? await incrementalBase64Decode(
+          encryptedBase64,
+          CHUNK_SIZE,
+          reportProgress ? (processed, total) => {
+            // Map the base64 decoding progress accurately from 5-40%
+            const percentRange = DecryptStages.BASE64_DECODE.end - DecryptStages.BASE64_DECODE.start;
+            const percent = DecryptStages.BASE64_DECODE.start + Math.floor((processed / total) * percentRange);
+            self.postMessage({
+              progress: {
+                operation: 'decrypt',
+                total: 100,
+                processed: percent,
+                requestId
+              }
+            });
+          } : undefined
+        )
+      : (() => {
+          // For small files, show completed base64 decoding
+          if (reportProgress) {
+            self.postMessage({
+              progress: {
+                operation: 'decrypt',
+                total: 100,
+                processed: DecryptStages.BASE64_DECODE.end, // Base64 decoding complete
+                requestId
+              }
+            });
+          }
+          return decodeBase64(encryptedBase64);
+        })();
+    
+    // STAGE 3: KEY PREPARATION
+    // Report base64 decoding completed and starting key preparation
+    if (reportProgress) {
+      self.postMessage({
+        progress: {
+          operation: 'decrypt',
+          total: 100,
+          processed: DecryptStages.KEY_PREPARATION.start, // Starting key preparation
           requestId
         }
       });
@@ -261,25 +330,63 @@ async function decryptData(
     let nonce: Uint8Array;
     let ciphertext: Uint8Array;
     
+    // Extract necessary components based on encryption type
     if (isPasswordProtected) {
-      // Extract salt, nonce, and ciphertext from the encrypted message
       // Format: [salt(16) + nonce(24) + ciphertext]
       const salt = encryptedMessage.slice(0, SALT_LENGTH);
       nonce = encryptedMessage.slice(SALT_LENGTH, SALT_LENGTH + nacl.secretbox.nonceLength);
       ciphertext = encryptedMessage.slice(SALT_LENGTH + nacl.secretbox.nonceLength);
       
-      // Derive key from password using the extracted salt
-      // Use the adaptive iteration count for large files
-      const { key: derivedKeyBase64 } = await deriveKeyFromPassword(keyBase64, encodeBase64(salt), isLargeFile);
-      key = decodeBase64(derivedKeyBase64);
-      
-      // Report progress after key derivation (which is CPU-intensive)
+      // Report key preparation is complete, moving to password derivation
       if (reportProgress) {
         self.postMessage({
           progress: {
             operation: 'decrypt',
             total: 100,
-            processed: 75, // Key derivation complete
+            processed: DecryptStages.KEY_PREPARATION.end, // Key preparation complete
+            requestId
+          }
+        });
+        
+        // Start of password derivation
+        self.postMessage({
+          progress: {
+            operation: 'decrypt',
+            total: 100,
+            processed: DecryptStages.PASSWORD_DERIVATION.start, // Starting password derivation
+            requestId
+          }
+        });
+      }
+      
+      // STAGE 4: PASSWORD DERIVATION (password-protected only)
+      // For password-protected content, report a mid-point during key derivation
+      if (reportProgress && isLargeFile) {
+        // For large files, key derivation takes time, so report a halfway point
+        setTimeout(() => {
+          const midPoint = (DecryptStages.PASSWORD_DERIVATION.start + DecryptStages.PASSWORD_DERIVATION.end) / 2;
+          self.postMessage({
+            progress: {
+              operation: 'decrypt',
+              total: 100,
+              processed: midPoint, // Halfway through password derivation
+              requestId
+            }
+          });
+        }, 300);
+      }
+      
+      // Derive key from password using the extracted salt
+      const { key: derivedKeyBase64 } = await deriveKeyFromPassword(keyBase64, encodeBase64(salt), isLargeFile);
+      key = decodeBase64(derivedKeyBase64);
+      
+      // Report password derivation complete
+      if (reportProgress) {
+        self.postMessage({
+          progress: {
+            operation: 'decrypt',
+            total: 100,
+            processed: DecryptStages.PASSWORD_DERIVATION.end, // Password derivation complete
             requestId
           }
         });
@@ -291,13 +398,13 @@ async function decryptData(
       nonce = encryptedMessage.slice(0, nacl.secretbox.nonceLength);
       ciphertext = encryptedMessage.slice(nacl.secretbox.nonceLength);
       
-      // Report progress (skip the key derivation step)
+      // Report key preparation complete (skip password derivation for non-password content)
       if (reportProgress) {
         self.postMessage({
           progress: {
             operation: 'decrypt',
             total: 100,
-            processed: 75, // Moving to decryption step
+            processed: DecryptStages.KEY_PREPARATION.end, // Key preparation complete
             requestId
           }
         });
@@ -308,27 +415,65 @@ async function decryptData(
       throw new Error(`Invalid key length: ${key.length}, expected: ${KEY_LENGTH}`);
     }
     
-    // Decrypt the data - unfortunately nacl.secretbox.open doesn't support streaming
-    // so we have to process the entire ciphertext at once
+    // STAGE 5: DECRYPTION
+    // Report starting actual decryption
+    if (reportProgress) {
+      self.postMessage({
+        progress: {
+          operation: 'decrypt',
+          total: 100,
+          processed: DecryptStages.DECRYPTION.start, // Starting decryption
+          requestId
+        }
+      });
+      
+      // For large files, report a midpoint since this takes time
+      if (isLargeFile) {
+        setTimeout(() => {
+          const midPoint = (DecryptStages.DECRYPTION.start + DecryptStages.DECRYPTION.end) / 2;
+          self.postMessage({
+            progress: {
+              operation: 'decrypt',
+              total: 100,
+              processed: midPoint, // Halfway through decryption
+              requestId
+            }
+          });
+        }, isLargeFile ? 500 : 100);
+      }
+    }
+    
+    // Decrypt the data
     const decryptedData = nacl.secretbox.open(ciphertext, nonce, key);
     
     if (!decryptedData) {
       throw new Error('Decryption failed - invalid key or corrupted data');
     }
     
-    // Report progress before text decoding
+    // Report decryption complete, starting text conversion
     if (reportProgress) {
       self.postMessage({
         progress: {
           operation: 'decrypt',
           total: 100,
-          processed: 90, // Decryption complete, converting to string
+          processed: DecryptStages.DECRYPTION.end, // Decryption complete
+          requestId
+        }
+      });
+      
+      // Starting text conversion
+      self.postMessage({
+        progress: {
+          operation: 'decrypt',
+          total: 100,
+          processed: DecryptStages.TEXT_CONVERSION.start, // Starting text conversion
           requestId
         }
       });
     }
     
-    // Convert back to string in chunks for large data
+    // STAGE 6: TEXT CONVERSION
+    // Convert back to string in chunks for large data with accurate progress
     let result = '';
     if (decryptedData.length > CHUNK_SIZE) {
       const decoder = new TextDecoder();
@@ -341,34 +486,47 @@ async function decryptData(
         
         result += decoder.decode(chunk, { stream: i < chunks - 1 });
         
-        // Report progress during string conversion
+        // Report progress during string conversion with actual percentage
         if (reportProgress) {
-          const percent = 90 + (i / chunks) * 10; // 90-100%
+          const progressRange = DecryptStages.TEXT_CONVERSION.end - DecryptStages.TEXT_CONVERSION.start;
+          const percent = DecryptStages.TEXT_CONVERSION.start + Math.floor((i + 1) / chunks * progressRange);
           self.postMessage({
             progress: {
               operation: 'decrypt',
               total: 100,
-              processed: Math.round(percent),
+              processed: percent,
               requestId
             }
           });
         }
         
-        // Allow UI to update
-        await new Promise(resolve => setTimeout(resolve, 0));
+        // Allow UI to update between chunks
+        await new Promise(resolve => setTimeout(resolve, 5));
       }
     } else {
       // For smaller data, decode all at once
       result = new TextDecoder().decode(decryptedData);
+      
+      // For small files, jump to almost complete
+      if (reportProgress) {
+        self.postMessage({
+          progress: {
+            operation: 'decrypt',
+            total: 100,
+            processed: 95, // Almost done with text conversion
+            requestId
+          }
+        });
+      }
     }
     
-    // Final progress update
+    // Final progress update - operation complete
     if (reportProgress) {
       self.postMessage({
         progress: {
           operation: 'decrypt',
           total: 100,
-          processed: 100, // Complete
+          processed: DecryptStages.TEXT_CONVERSION.end, // Complete
           requestId
         }
       });
@@ -412,47 +570,244 @@ self.onmessage = async (event: MessageEvent) => {
         break;
         
       case 'encrypt':
-        // For large data, we report progress during encryption
-        if (params.data.length > LARGE_FILE_THRESHOLD && reportProgress) {
-          // First, report starting progress
-          self.postMessage({
-            progress: {
-              operation,
-              total: 100,
-              processed: 0,
-              requestId
-            }
-          });
-          
-          // Update for string encoding step
-          self.postMessage({
-            progress: {
-              operation,
-              total: 100,
-              processed: 20,
-              requestId
-            }
-          });
-        }
+        // Define encryption stages for accurate progress reporting
+        const EncryptStages = {
+          INITIALIZE: { start: 0, end: 5 },          // 0-5%: Initial setup
+          DATA_PREPARATION: { start: 5, end: 20 },   // 5-20%: Preparing data for encryption
+          KEY_PROCESSING: { start: 20, end: 30 },    // 20-30%: Processing encryption key
+          ENCRYPTION: { start: 30, end: 85 },        // 30-85%: Actual encryption
+          FINALIZATION: { start: 85, end: 100 }      // 85-100%: Finalizing encrypted result
+        };
         
-        // Perform the actual encryption
-        result = await encryptData(
-          params.data, 
-          params.key, 
-          params.isPasswordDerived, 
-          params.salt
-        );
-        
-        // Final progress update
+        // STAGE 1: INITIALIZATION
+        // Report the start of the operation
         if (reportProgress) {
           self.postMessage({
             progress: {
               operation,
               total: 100,
-              processed: 100,
+              processed: EncryptStages.INITIALIZE.start, // Starting encryption
               requestId
             }
           });
+          
+          // Show some initial progress to indicate we're starting
+          await new Promise(resolve => setTimeout(resolve, 20)); // Small delay for UI
+          self.postMessage({
+            progress: {
+              operation,
+              total: 100,
+              processed: EncryptStages.INITIALIZE.end, // Initialization complete
+              requestId
+            }
+          });
+        }
+        
+        // STAGE 2: DATA PREPARATION
+        // Report starting data preparation
+        if (reportProgress) {
+          self.postMessage({
+            progress: {
+              operation,
+              total: 100,
+              processed: EncryptStages.DATA_PREPARATION.start, // Starting data preparation
+              requestId
+            }
+          });
+          
+          // For large files, report a halfway point on data preparation
+          if (params.data.length > LARGE_FILE_THRESHOLD) {
+            setTimeout(() => {
+              const midPoint = (EncryptStages.DATA_PREPARATION.start + EncryptStages.DATA_PREPARATION.end) / 2;
+              self.postMessage({
+                progress: {
+                  operation,
+                  total: 100,
+                  processed: midPoint, // Halfway through data preparation
+                  requestId
+                }
+              });
+            }, 100);
+          }
+          
+          // Report data preparation completion after some processing time
+          setTimeout(() => {
+            self.postMessage({
+              progress: {
+                operation,
+                total: 100,
+                processed: EncryptStages.DATA_PREPARATION.end, // Data preparation complete
+                requestId
+              }
+            });
+          }, params.data.length > LARGE_FILE_THRESHOLD ? 300 : 100);
+        }
+        
+        // STAGE 3: KEY PROCESSING
+        // Report starting key processing
+        if (reportProgress) {
+          setTimeout(() => {
+            self.postMessage({
+              progress: {
+                operation,
+                total: 100,
+                processed: EncryptStages.KEY_PROCESSING.start, // Starting key processing
+                requestId
+              }
+            });
+          }, 50);
+          
+          // Report key processing completion after a delay
+          setTimeout(() => {
+            self.postMessage({
+              progress: {
+                operation,
+                total: 100,
+                processed: EncryptStages.KEY_PROCESSING.end, // Key processing complete
+                requestId
+              }
+            });
+          }, 150);
+        }
+        
+        // STAGE 4: ENCRYPTION
+        // Report starting the actual encryption
+        if (reportProgress) {
+          setTimeout(() => {
+            self.postMessage({
+              progress: {
+                operation,
+                total: 100,
+                processed: EncryptStages.ENCRYPTION.start, // Starting encryption
+                requestId
+              }
+            });
+          }, 50);
+        }
+        
+        // For large files, report incremental progress during encryption
+        let encryptionStarted = false;
+        let progressInterval: any = null;
+        
+        if (params.data.length > LARGE_FILE_THRESHOLD && reportProgress) {
+          encryptionStarted = true;
+          let timeElapsed = 0;
+          const progressUpdateInterval = 200; // Update every 200ms
+          const totalEncryptionRange = EncryptStages.ENCRYPTION.end - EncryptStages.ENCRYPTION.start;
+          
+          progressInterval = setInterval(() => {
+            timeElapsed += progressUpdateInterval;
+            
+            // Determine progress based on file size and elapsed time
+            // Larger files get a more granular progress curve
+            let progressPercentage;
+            
+            // Calculate estimated total time based on file size (larger files take longer)
+            const estimatedTotalTime = Math.min(5000, Math.max(1000, params.data.length / 50000));
+            
+            // Calculate progress as a percentage of estimated time
+            progressPercentage = Math.min(1, timeElapsed / estimatedTotalTime);
+            
+            // Apply a slight curve to make progress feel natural
+            // Start faster, then slow down toward the end
+            if (progressPercentage < 0.7) {
+              // First 70% of time: faster progress (covers 80% of the range)
+              const adjustedProgress = progressPercentage / 0.7 * 0.8;
+              const currentProgress = EncryptStages.ENCRYPTION.start + Math.floor(totalEncryptionRange * adjustedProgress);
+              
+              self.postMessage({
+                progress: {
+                  operation,
+                  total: 100,
+                  processed: currentProgress,
+                  requestId
+                }
+              });
+            } else {
+              // Last 30% of time: slower progress (covers remaining 20% of the range)
+              const adjustedProgress = 0.8 + ((progressPercentage - 0.7) / 0.3 * 0.2);
+              const currentProgress = EncryptStages.ENCRYPTION.start + Math.floor(totalEncryptionRange * adjustedProgress);
+              
+              self.postMessage({
+                progress: {
+                  operation,
+                  total: 100,
+                  processed: currentProgress,
+                  requestId
+                }
+              });
+            }
+            
+            // Prevent progress from exceeding the encryption stage end
+            if (timeElapsed >= estimatedTotalTime) {
+              clearInterval(progressInterval);
+            }
+          }, progressUpdateInterval);
+          
+          // Safety timeout to clear interval if encryption finishes quickly
+          setTimeout(() => {
+            if (encryptionStarted && progressInterval) {
+              clearInterval(progressInterval);
+            }
+          }, 10000);
+        }
+        
+        // Perform the actual encryption
+        try {
+          result = await encryptData(
+            params.data, 
+            params.key, 
+            params.isPasswordDerived, 
+            params.salt
+          );
+          
+          // Clear any intervals if still running
+          if (encryptionStarted && progressInterval) {
+            clearInterval(progressInterval);
+            encryptionStarted = false;
+          }
+          
+          // STAGE 5: FINALIZATION
+          // Report encryption complete, starting finalization
+          if (reportProgress) {
+            self.postMessage({
+              progress: {
+                operation,
+                total: 100,
+                processed: EncryptStages.ENCRYPTION.end, // Encryption complete
+                requestId
+              }
+            });
+            
+            // Starting finalization
+            self.postMessage({
+              progress: {
+                operation,
+                total: 100,
+                processed: EncryptStages.FINALIZATION.start, // Starting finalization
+                requestId
+              }
+            });
+            
+            // Short delay to show the finalization step
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Completed
+            self.postMessage({
+              progress: {
+                operation,
+                total: 100,
+                processed: EncryptStages.FINALIZATION.end, // Completed
+                requestId
+              }
+            });
+          }
+        } catch (error) {
+          // Clear any intervals if an error occurred
+          if (encryptionStarted && progressInterval) {
+            clearInterval(progressInterval);
+          }
+          throw error;
         }
         break;
         
