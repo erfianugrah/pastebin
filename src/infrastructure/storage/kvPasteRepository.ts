@@ -99,35 +99,55 @@ export class KVPasteRepository implements PasteRepository {
 
   private async removeFromRecentList(id: string): Promise<void> {
     // Find all keys in the recent list that contain this ID
-    const { keys } = await this.kv.list({ prefix: 'recent:' });
-    
-    for (const key of keys) {
-      if (key.name.endsWith(`:${id}`)) {
-        await this.kv.delete(key.name);
+    let listComplete = false;
+    let cursor: string | undefined;
+    while (!listComplete) {
+      const { keys, list_complete, cursor: newCursor } = await this.kv.list({ prefix: 'recent:', cursor });
+      
+      for (const key of keys) {
+        if (key.name.endsWith(`:${id}`)) {
+          await this.kv.delete(key.name);
+        }
+      }
+      
+      if (list_complete) {
+        listComplete = true;
+      } else {
+        cursor = newCursor;
       }
     }
   }
 
   private async getRecentList(limit: number): Promise<string[]> {
     // List keys with recent prefix, sorted by timestamp (newest first)
-    const { keys } = await this.kv.list({
-      prefix: 'recent:',
-      limit,
-    });
-    
-    // Sort by timestamp (newest first)
-    keys.sort((a, b) => b.name.localeCompare(a.name));
-    
-    // Extract IDs
     const pasteIds: string[] = [];
-    
-    for (const key of keys) {
-      const id = await this.kv.get(key.name);
-      if (id) {
-        pasteIds.push(id);
+    let listComplete = false;
+    let cursor: string | undefined;
+
+    while (!listComplete && pasteIds.length < limit) {
+      const { keys, list_complete, cursor: newCursor } = await this.kv.list({
+        prefix: 'recent:',
+        limit: limit - pasteIds.length, // Fetch remaining needed keys
+        cursor,
+      });
+
+      // Sort by timestamp (newest first)
+      keys.sort((a, b) => b.name.localeCompare(a.name));
+
+      for (const key of keys) {
+        const id = await this.kv.get(key.name);
+        if (id) {
+          pasteIds.push(id);
+        }
+      }
+
+      if (list_complete) {
+        listComplete = true;
+      } else {
+        cursor = newCursor;
       }
     }
-    
+
     return pasteIds;
   }
 }
