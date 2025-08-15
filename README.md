@@ -16,7 +16,11 @@ A modern, secure code sharing service built on Cloudflare Workers with Domain-Dr
   - Password protection with strong key derivation
   - "Burn after reading" self-destructing pastes
   - Client-side encryption with secure key sharing
-  - Rate limiting and content validation
+  - Enterprise-grade security with comprehensive protections
+  - Encrypted local storage for sensitive data
+  - Rate limiting with bypass prevention
+  - Admin endpoint authentication
+  - XSS prevention and CSP headers
   - Private pastes hidden from listings
   
 - **Enhanced User Experience**
@@ -429,6 +433,43 @@ npm install
 cd ..
 ```
 
+### Security Configuration
+
+Before deployment, configure these security settings:
+
+#### Required Environment Variables
+
+```bash
+# Generate a strong admin API key (required)
+ADMIN_API_KEY=$(openssl rand -hex 32)
+
+# Configure allowed CORS origins for production
+ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com
+```
+
+Add these to your Cloudflare Workers environment or `wrangler.toml`:
+
+```toml
+[env.production.vars]
+ADMIN_API_KEY = "your-generated-32-character-hex-key"
+ALLOWED_ORIGINS = "https://yourdomain.com"
+```
+
+#### Admin API Usage
+
+Access administrative endpoints with Bearer token authentication:
+
+```bash
+# View analytics
+curl -H "Authorization: Bearer YOUR_API_KEY" https://yourdomain.com/api/analytics
+
+# View logs  
+curl -H "Authorization: Bearer YOUR_API_KEY" https://yourdomain.com/api/logs
+
+# Manage webhooks
+curl -H "Authorization: Bearer YOUR_API_KEY" https://yourdomain.com/api/webhooks
+```
+
 ### Configure Cloudflare KV Namespace
 
 Create a KV namespace for storing pastes:
@@ -483,15 +524,25 @@ npm run deploy
 
 ## Project Commands
 
+### Development
 - `npm run dev:all` - Start both UI and Worker development servers
-- `npm run dev:ui` - Start only the Astro UI development server
+- `npm run dev:ui` - Start only the Astro UI development server  
 - `npm run dev` - Start only the Cloudflare Worker
+
+### Build & Deploy
 - `npm run build` - Build both UI and Worker for production
 - `npm run deploy` - Deploy to Cloudflare Workers
+
+### Testing & Quality Assurance
 - `npm run test` - Run tests
 - `npm run test:watch` - Run tests in watch mode
 - `npm run lint` - Run ESLint
 - `npm run check` - Run TypeScript typechecking
+
+### Security
+- Generate admin API key: `openssl rand -hex 32`
+- Test admin endpoints: `curl -H "Authorization: Bearer YOUR_KEY" /api/analytics`
+- Review security config: See [SECURITY.md](./SECURITY.md) for complete guide
 
 ## Testing End-to-End Encryption
 
@@ -570,6 +621,9 @@ This section outlines how to test the encryption features in the application.
 - Server should never receive encryption keys or passwords
 - Decryption should always happen entirely client-side
 - Encryption keys should be properly secured in URL fragments
+- Admin endpoints should require proper authentication
+- CORS should be properly restricted in production
+- Debug information should not leak in production builds
 
 ## Accessibility
 
@@ -670,6 +724,117 @@ Feature support varies by browser with appropriate fallbacks:
 
 *Safari has some limitations with Service Workers in private browsing mode.
 **Safari in private browsing mode limits localStorage.
+
+## Security
+
+Pasteriser implements comprehensive security measures to protect user data and system integrity. For detailed security information, see [SECURITY.md](./SECURITY.md).
+
+### Security Highlights
+
+#### Authentication & Authorization ✅
+- **Admin API Protection**: All administrative endpoints (`/api/analytics`, `/api/logs`, `/api/webhooks`) require Bearer token authentication
+- **Timing-Safe Validation**: Uses constant-time string comparison to prevent timing attacks
+- **Proper Error Handling**: Returns standard HTTP 401 responses with appropriate headers
+
+#### Cross-Site Scripting (XSS) Prevention ✅
+- **Complete HTML Injection Prevention**: All user content uses `textContent` instead of `innerHTML`
+- **Safe DOM Creation**: Programmatic element creation throughout the application
+- **No Template Interpolation**: Zero template string interpolation with user data
+
+#### Cross-Origin Resource Sharing (CORS) Security ✅
+- **Strict Origin Validation**: Explicit allowlist-based CORS configuration
+- **No Wildcard Origins**: Wildcard CORS completely eliminated in production
+- **Development Fallback**: Localhost-only origins allowed in development
+
+#### Content Security Policy (CSP) ✅
+- **Comprehensive Directives**: Covers all resource types with minimal permissions
+- **Web Worker Support**: Allows necessary `blob:` sources for crypto workers
+- **No Inline Scripts**: Prevents injection of arbitrary JavaScript
+
+#### Rate Limiting Security ✅
+- **Path-Based Validation**: Prevents bypass via crafted file extensions
+- **Static Asset Protection**: Legitimate assets exempt without security holes
+- **Granular Limits**: Different limits for different operation types
+
+#### Secure Data Storage ✅
+- **Encrypted localStorage**: AES-GCM encryption for all sensitive data
+- **Master Key Management**: Per-session master keys with secure generation
+- **Backward Compatibility**: Graceful fallback to plaintext storage when needed
+
+#### Information Disclosure Prevention ✅
+- **Production-Safe Logging**: Debug information only shown in development
+- **Generic Error Messages**: Stack traces and sensitive details hidden in production
+- **Development Detection**: Hostname-based environment detection
+
+#### Security Headers ✅
+- **X-Content-Type-Options**: Prevents MIME type sniffing
+- **X-Frame-Options**: Clickjacking protection
+- **Strict-Transport-Security**: HTTPS enforcement with preload
+- **Referrer-Policy**: Controlled referrer information leakage
+- **Permissions-Policy**: Blocks unnecessary browser APIs
+
+### Security Architecture
+
+```mermaid
+graph TB
+    subgraph "Frontend Security"
+        XSS[XSS Prevention]
+        CSP[Content Security Policy]
+        SecureStorage[Encrypted Storage]
+        E2EE[End-to-End Encryption]
+    end
+    
+    subgraph "Backend Security"
+        Auth[Admin Authentication]
+        RateLimit[Rate Limiting]
+        CORS[CORS Protection]
+        Headers[Security Headers]
+    end
+    
+    subgraph "Infrastructure Security"
+        TLS[TLS/HTTPS]
+        Workers[Cloudflare Workers]
+        KV[Secure KV Storage]
+        EdgeSecurity[Edge Security]
+    end
+    
+    XSS --> SecureApp[Secure Application]
+    CSP --> SecureApp
+    SecureStorage --> SecureApp
+    E2EE --> SecureApp
+    
+    Auth --> SecureAPI[Secure API]
+    RateLimit --> SecureAPI
+    CORS --> SecureAPI
+    Headers --> SecureAPI
+    
+    TLS --> SecureInfra[Secure Infrastructure]
+    Workers --> SecureInfra
+    KV --> SecureInfra
+    EdgeSecurity --> SecureInfra
+    
+    SecureApp --> Production[Production Ready]
+    SecureAPI --> Production
+    SecureInfra --> Production
+```
+
+### Security Compliance
+
+- **OWASP Top 10 2021**: Addresses all major web application security risks
+- **Content Security Policy Level 3**: Modern CSP implementation
+- **Secure Headers**: Implements security.txt recommendations
+- **Timing Attack Resistance**: Constant-time operations for sensitive comparisons
+
+### Responsible Disclosure
+
+Security vulnerabilities should be reported responsibly:
+
+1. **Do not** create public issues for security vulnerabilities
+2. Contact maintainers through private channels
+3. Provide detailed vulnerability information
+4. Allow reasonable time for fixes before public disclosure
+
+For more detailed security information, configuration guides, and security checklist, see [SECURITY.md](./SECURITY.md).
 
 ## License
 

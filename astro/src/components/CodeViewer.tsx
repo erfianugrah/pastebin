@@ -54,16 +54,18 @@ interface CodeViewerProps {
 }
 
 export default function CodeViewer({ paste }: CodeViewerProps) {
-  // Add debugging info to console
-  console.log('CodeViewer: Paste data received:', { 
-    id: paste.id,
-    isEncrypted: paste.isEncrypted,
-    isPasswordProtected: paste.isPasswordProtected,
-    visibility: paste.visibility,
-    contentLength: paste.content?.length || 0,
-    version: paste.version,
-    securityType: paste.securityType
-  });
+  // Add debugging info to console only in development
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    console.log('CodeViewer: Paste data received:', { 
+      id: paste.id,
+      isEncrypted: paste.isEncrypted,
+      isPasswordProtected: paste.isPasswordProtected,
+      visibility: paste.visibility,
+      contentLength: paste.content?.length || 0,
+      version: paste.version,
+      securityType: paste.securityType
+    });
+  }
 
   const [content, setContent] = useState<string>(paste.content);
   const [isDecrypting, setIsDecrypting] = useState(false);
@@ -123,12 +125,18 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
     async function attemptDecryption() {
       // Only skip decryption if the paste is not encrypted
       if (!paste.isEncrypted) {
-        console.log('CodeViewer: Non-encrypted paste - skipping decryption');
+        // Only log in development
+        if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+          console.log('CodeViewer: Non-encrypted paste - skipping decryption');
+        }
         return;
       }
       
       if (!decrypted) {
-        console.log(`CodeViewer: Encrypted ${paste.visibility} paste detected, attempting decryption`);
+        // Only log in development
+        if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+          console.log(`CodeViewer: Encrypted ${paste.visibility} paste detected, attempting decryption`);
+        }
         try {
           setIsDecrypting(true);
           
@@ -144,7 +152,10 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
             if (directMatch && directMatch[1]) {
               // Use the raw match to preserve '+' and other special characters
               key = directMatch[1];
-              console.log('Found key with regex match');
+              // Only log in development
+              if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                console.log('Found key with regex match');
+              }
             } else {
               // If regex fails, try URLSearchParams
               const hashParams = new URLSearchParams(urlHash);
@@ -153,7 +164,10 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
               if (key) {
                 // URLSearchParams converts '+' to space, so convert spaces back to '+'
                 key = key.replace(/ /g, '+');
-                console.log('Found key with URLSearchParams, fixed spaces');
+                // Only log in development
+                if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                  console.log('Found key with URLSearchParams, fixed spaces');
+                }
               }
             }
             
@@ -163,20 +177,29 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
                 // First check for percent-encoded characters
                 if (key.includes('%')) {
                   key = decodeURIComponent(key);
-                  console.log('Decoded URI-encoded key');
+                  // Only log in development
+                  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                    console.log('Decoded URI-encoded key');
+                  }
                 }
                 
                 // Handle the special case of the older format where + might have been encoded as %2B
                 // and then decoded to a space by URLSearchParams
                 if (key.includes(' ')) {
                   key = key.replace(/ /g, '+');
-                  console.log('Replaced spaces with plus signs in key');
+                  // Only log in development
+                  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                    console.log('Replaced spaces with plus signs in key');
+                  }
                 }
                 
                 // Recover any potentially encoded Base64 special characters
                 key = key.replace(/%2B/g, '+').replace(/%2F/g, '/').replace(/%3D/g, '=');
                 
-                console.log('Key prepared for decryption');
+                // Only log in development
+                if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                  console.log('Key prepared for decryption');
+                }
               } catch (decodeError) {
                 console.warn('Error processing encryption key:', decodeError);
                 // Keep using the original key if processing fails
@@ -186,19 +209,35 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
             console.warn('Error parsing URL fragment:', e);
           }
           
-          // Check localStorage for saved key if not in URL
-          const savedKey = !key && paste.id ? localStorage.getItem(`paste_key_${paste.id}`) : null;
+          // Check secure storage for saved key if not in URL
+          let savedKey = null;
+          if (!key && paste.id) {
+            try {
+              const { secureRetrieve } = await import('../lib/secureStorage');
+              savedKey = await secureRetrieve(`paste_key_${paste.id}`);
+            } catch (error) {
+              console.warn('Failed to retrieve key from secure storage:', error);
+              // Fallback to regular localStorage for backward compatibility
+              savedKey = localStorage.getItem(`paste_key_${paste.id}`);
+            }
+          }
           
-          console.log('isEncrypted:', paste.isEncrypted);
-          console.log('Encryption key found:', key ? 'URL' : (savedKey ? 'Local Storage' : 'No'));
-          console.log('Content length:', paste.content.length);
+          // Only log in development
+          if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+            console.log('isEncrypted:', paste.isEncrypted);
+            console.log('Encryption key found:', key ? 'URL' : (savedKey ? 'Local Storage' : 'No'));
+            console.log('Content length:', paste.content.length);
+          }
           
           // If we have either a URL key or a saved key
           if (key || savedKey) {
             const keyToUse = key || savedKey;
             
             try {
-              console.log('Attempting to decrypt content with key');
+              // Only log in development
+              if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                console.log('Attempting to decrypt content with key');
+              }
               // Check if this is a large paste that needs progress reporting
               const isLarge = paste.content.length > 10000;
               
@@ -249,7 +288,8 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
                   progress = Math.min(95, Math.floor((elapsed / estimatedTime) * 100));
                 }
                 
-                console.log('Simulated decryption progress:', progress);
+                // Only log in development (removed for production)
+                // console.log('Simulated decryption progress:', progress);
                 setDecryptionProgress(progress);
               }, 50); // Update more frequently for smoother progress
               
@@ -268,11 +308,26 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
                 clearInterval(progressInterval);
               }
               
-              console.log('Decryption successful, content length:', decryptedContent.length);
+              // Only log in development
+              if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                console.log('Decryption successful, content length:', decryptedContent.length);
+              }
               
               // Update state with decrypted content
               setContent(decryptedContent);
               setDecrypted(true);
+              
+              // Notify parent window that content is decrypted using secure event
+              if (typeof window !== 'undefined' && (window as any).pasteSessionInfo) {
+                const sessionInfo = (window as any).pasteSessionInfo;
+                const event = new CustomEvent(sessionInfo.eventName, {
+                  detail: { 
+                    content: decryptedContent,
+                    token: sessionInfo.token
+                  }
+                });
+                window.dispatchEvent(event);
+              }
               
               // Show different toast messages depending on key source
               if (savedKey && !key) {
@@ -287,13 +342,23 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
                 });
               }
               
-              // If we used a URL key, save it to localStorage for future use
+              // If we used a URL key, save it to secure storage for future use
               if (key && paste.id) {
                 try {
-                  localStorage.setItem(`paste_key_${paste.id}`, key);
-                  console.log('Saved encryption key to localStorage');
+                  const { secureStore } = await import('../lib/secureStorage');
+                  await secureStore(`paste_key_${paste.id}`, key);
+                  // Only log in development
+                  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                    console.log('Saved encryption key to secure storage');
+                  }
                 } catch (e) {
-                  console.error('Failed to save key to localStorage:', e);
+                  console.error('Failed to save key to secure storage, falling back to localStorage:', e);
+                  // Fallback to regular localStorage
+                  try {
+                    localStorage.setItem(`paste_key_${paste.id}`, key);
+                  } catch (fallbackError) {
+                    console.error('Failed to save key to localStorage:', fallbackError);
+                  }
                 }
               }
             } catch (error) {
@@ -308,10 +373,16 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
               // If we tried with a saved key and it failed, remove it
               if (savedKey && paste.id) {
                 try {
+                  const { secureRemove } = await import('../lib/secureStorage');
+                  secureRemove(`paste_key_${paste.id}`);
+                  // Also remove from regular localStorage for cleanup
                   localStorage.removeItem(`paste_key_${paste.id}`);
-                  console.log('Removed invalid saved key from localStorage');
+                  // Only log in development
+                  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+                    console.log('Removed invalid saved key from secure storage');
+                  }
                 } catch (e) {
-                  console.error('Failed to remove key from localStorage:', e);
+                  console.error('Failed to remove key from secure storage:', e);
                 }
               }
               
@@ -373,7 +444,10 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
     
     try {
       // Attempt to decrypt with password
-      console.log('Attempting to decrypt with password');
+      // Only log in development
+      if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+        console.log('Attempting to decrypt with password');
+      }
       // Check if this is a large paste that needs progress reporting
       const isLarge = paste.content.length > 10000;
       
@@ -448,7 +522,8 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
           }
         }
         
-        console.log('Simulated password decryption progress:', progress);
+        // Only log in development (removed for production)
+        // console.log('Simulated password decryption progress:', progress);
         setDecryptionProgress(progress);
       }, 50); // Update more frequently for smoother progress
       
@@ -471,6 +546,18 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
       setContent(decryptedContent);
       setDecrypted(true);
       
+      // Notify parent window that content is decrypted using secure event
+      if (typeof window !== 'undefined' && (window as any).pasteSessionInfo) {
+        const sessionInfo = (window as any).pasteSessionInfo;
+        const event = new CustomEvent(sessionInfo.eventName, {
+          detail: { 
+            content: decryptedContent,
+            token: sessionInfo.token
+          }
+        });
+        window.dispatchEvent(event);
+      }
+      
       toast({
         message: 'Content decrypted successfully',
         type: 'success',
@@ -487,17 +574,32 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
           // that will work for this specific paste
           const { key, salt } = await deriveKeyFromPassword(passwordInput);
           
-          // Use a special format to indicate this is a derived key, not a direct key
-          localStorage.setItem(`paste_key_${paste.id}`, `dk:${salt}:${key}`);
-          
-          console.log('Saved password-derived key to localStorage');
-          toast({
-            message: 'Password saved securely for this paste',
-            type: 'success',
-            duration: 2000
-          });
+          try {
+            // Use secure storage for password-derived keys
+            const { secureStore } = await import('../lib/secureStorage');
+            // Use a special format to indicate this is a derived key, not a direct key
+            await secureStore(`paste_key_${paste.id}`, `dk:${salt}:${key}`);
+            
+            // Only log in development
+            if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+              console.log('Saved password-derived key to secure storage');
+            }
+            toast({
+              message: 'Password saved securely for this paste',
+              type: 'success',
+              duration: 2000
+            });
+          } catch (secureError) {
+            console.error('Failed to save password to secure storage, falling back:', secureError);
+            // Fallback to regular localStorage
+            try {
+              localStorage.setItem(`paste_key_${paste.id}`, `dk:${salt}:${key}`);
+            } catch (e) {
+              console.error('Failed to save password to localStorage:', e);
+            }
+          }
         } catch (e) {
-          console.error('Failed to save password to localStorage:', e);
+          console.error('Failed to derive key for storage:', e);
         }
       }
     } catch (error) {
@@ -693,7 +795,7 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
             // Reload the page to try again
             window.location.reload();
           }}
-          details={error.stack}
+          details={typeof window !== 'undefined' && window.location.hostname === 'localhost' ? error.stack : undefined}
         />
       )}
       

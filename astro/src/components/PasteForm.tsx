@@ -214,12 +214,14 @@ export default function PasteForm() {
         }
       }
       
-      // Log encryption status for debugging
-      console.log('Creating paste:', {
-        isEncrypted: !!(e2eEncryption || (visibility === 'private' && isE2EEncrypted)),
-        contentLength: encryptedContent.length,
-        hasPassword: !!passwordHash
-      });
+      // Log encryption status for debugging (development only)
+      if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+        console.log('Creating paste:', {
+          isEncrypted: !!(e2eEncryption || (visibility === 'private' && isE2EEncrypted)),
+          contentLength: encryptedContent.length,
+          hasPassword: !!passwordHash
+        });
+      }
 
       // Send request to create the paste
       const response = await fetch('/pastes', {
@@ -370,23 +372,34 @@ export default function PasteForm() {
                     <div className="ml-2 flex-shrink-0">
                       <div className="relative">
                         <button
-                          onClick={() => {
-                            // Store the key in localStorage with the paste ID as the key
-                            if (typeof window !== 'undefined' && typeof localStorage !== 'undefined' && result.id && result.encryptionKey) {
+                          onClick={async () => {
+                            // Store the key in secure storage with the paste ID as the key
+                            if (typeof window !== 'undefined' && result.id && result.encryptionKey) {
                               try {
-                                localStorage.setItem(`paste_key_${result.id}`, result.encryptionKey);
+                                const { secureStore } = await import('../lib/secureStorage');
+                                await secureStore(`paste_key_${result.id}`, result.encryptionKey);
                                 toast({
-                                  message: 'Encryption key saved to browser',
+                                  message: 'Encryption key saved securely to browser',
                                   type: 'success',
                                   duration: 2000
                                 });
-                              } catch (e) {
-                                console.error('Failed to save key to localStorage:', e);
-                                toast({
-                                  message: 'Failed to save encryption key',
-                                  type: 'error',
-                                  duration: 3000
-                                });
+                              } catch (secureError) {
+                                console.error('Failed to save key to secure storage, falling back:', secureError);
+                                try {
+                                  localStorage.setItem(`paste_key_${result.id}`, result.encryptionKey);
+                                  toast({
+                                    message: 'Encryption key saved to browser',
+                                    type: 'success',
+                                    duration: 2000
+                                  });
+                                } catch (e) {
+                                  console.error('Failed to save key to localStorage:', e);
+                                  toast({
+                                    message: 'Failed to save encryption key',
+                                    type: 'error',
+                                    duration: 3000
+                                  });
+                                }
                               }
                             }
                           }}

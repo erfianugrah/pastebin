@@ -160,30 +160,60 @@ export function showConfirmModal(props: Omit<ModalProps, 'isOpen' | 'onClose'>):
       // This is a workaround - in a real app, use ReactDOM properly
       const container = document.getElementById(div.id);
       if (container) {
-        // Create the modal HTML structure manually
-        container.innerHTML = `
-          <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/25 backdrop-blur-sm">
-            <div class="fixed inset-0 z-0"></div>
-            <div class="relative z-10 w-full max-w-md overflow-hidden rounded-lg bg-background shadow-lg border border-border animate-in fade-in zoom-in-95">
-              <div class="p-6">
-                <h3 class="text-lg font-semibold">${props.title}</h3>
-                ${props.description ? `<p class="mt-2 text-sm text-muted-foreground">${props.description}</p>` : ''}
-                <div class="mt-6 flex justify-end gap-3">
-                  <button id="modal-cancel-btn" class="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm border border-border hover:bg-secondary/80 transition-colors">
-                    ${props.cancelText || 'Cancel'}
-                  </button>
-                  <button id="modal-confirm-btn" class="px-4 py-2 rounded-md text-sm ${
-                    props.isDangerous 
-                      ? "bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20"
-                      : "bg-primary text-primary-foreground hover:bg-primary/90"
-                  }">
-                    ${props.confirmText || 'Confirm'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        `;
+        // Create the modal structure safely without innerHTML to prevent XSS
+        const backdrop = document.createElement('div');
+        backdrop.className = 'fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/25 backdrop-blur-sm';
+        
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 z-0';
+        backdrop.appendChild(overlay);
+        
+        const modal = document.createElement('div');
+        modal.className = 'relative z-10 w-full max-w-md overflow-hidden rounded-lg bg-background shadow-lg border border-border animate-in fade-in zoom-in-95';
+        
+        const modalContent = document.createElement('div');
+        modalContent.className = 'p-6';
+        
+        // Title
+        const title = document.createElement('h3');
+        title.className = 'text-lg font-semibold';
+        title.textContent = props.title;
+        modalContent.appendChild(title);
+        
+        // Description (if exists)
+        if (props.description) {
+          const description = document.createElement('p');
+          description.className = 'mt-2 text-sm text-muted-foreground';
+          description.textContent = props.description;
+          modalContent.appendChild(description);
+        }
+        
+        // Button container
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'mt-6 flex justify-end gap-3';
+        
+        // Cancel button
+        const cancelBtn = document.createElement('button');
+        cancelBtn.id = 'modal-cancel-btn';
+        cancelBtn.className = 'px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm border border-border hover:bg-secondary/80 transition-colors';
+        cancelBtn.textContent = props.cancelText || 'Cancel';
+        buttonContainer.appendChild(cancelBtn);
+        
+        // Confirm button
+        const confirmBtn = document.createElement('button');
+        confirmBtn.id = 'modal-confirm-btn';
+        confirmBtn.className = `px-4 py-2 rounded-md text-sm ${
+          props.isDangerous 
+            ? "bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20"
+            : "bg-primary text-primary-foreground hover:bg-primary/90"
+        }`;
+        confirmBtn.textContent = props.confirmText || 'Confirm';
+        buttonContainer.appendChild(confirmBtn);
+        
+        modalContent.appendChild(buttonContainer);
+        modal.appendChild(modalContent);
+        backdrop.appendChild(modal);
+        container.appendChild(backdrop);
         
         // Add event listeners
         document.getElementById('modal-cancel-btn')?.addEventListener('click', handleCancel);

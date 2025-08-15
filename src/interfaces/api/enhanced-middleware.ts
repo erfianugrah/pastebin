@@ -362,11 +362,30 @@ export function securityHeadersMiddleware(): MiddlewareHandler {
 export function addSecurityHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   
-  // Add security headers
-  headers.set('Content-Security-Policy', "default-src 'self'");
+  // Add comprehensive security headers
+  const cspDirectives = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-eval'", // unsafe-eval needed for crypto workers
+    "style-src 'self' 'unsafe-inline'", // unsafe-inline needed for dynamic styles
+    "connect-src 'self'",
+    "img-src 'self' data: blob:", // data: for dynamically generated images, blob: for object URLs
+    "font-src 'self'",
+    "object-src 'none'",
+    "media-src 'self'",
+    "worker-src 'self' blob:", // blob: for Web Workers
+    "child-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'"
+  ].join('; ');
+  
+  headers.set('Content-Security-Policy', cspDirectives);
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('X-Frame-Options', 'DENY');
   headers.set('X-XSS-Protection', '1; mode=block');
+  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
   
   // Clone response with new headers
   return new Response(response.body, {

@@ -34,10 +34,22 @@ export class ApiMiddleware {
       // Check if request origin is in allowed origins
       if (origin && securityConfig.allowedOrigins.includes(origin)) {
         headers.set('Access-Control-Allow-Origin', origin);
+        headers.set('Access-Control-Allow-Credentials', 'true');
+      } else {
+        // Reject requests from unauthorized origins
+        console.warn(`CORS: Blocked request from unauthorized origin: ${origin}`);
+        // Don't set any CORS headers for unauthorized origins
       }
     } else {
-      // Otherwise allow any origin
-      headers.set('Access-Control-Allow-Origin', '*');
+      // SECURITY: Never allow wildcard CORS in production
+      // Only allow same-origin requests if no explicit allowlist is configured
+      if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+        // Allow localhost origins for development
+        headers.set('Access-Control-Allow-Origin', origin);
+      } else {
+        console.warn(`CORS: No allowlist configured, blocking origin: ${origin}`);
+        // Block all cross-origin requests when no allowlist is configured
+      }
     }
     
     headers.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -66,11 +78,30 @@ export class ApiMiddleware {
   async addResponseHeaders(response: Response): Promise<Response> {
     const headers = new Headers(response.headers);
     
-    // Add security headers
-    headers.set('Content-Security-Policy', "default-src 'self'");
+    // Add comprehensive security headers
+    const cspDirectives = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-eval'", // unsafe-eval needed for crypto workers
+      "style-src 'self' 'unsafe-inline'", // unsafe-inline needed for dynamic styles
+      "connect-src 'self'",
+      "img-src 'self' data: blob:", // data: for dynamically generated images, blob: for object URLs
+      "font-src 'self'",
+      "object-src 'none'",
+      "media-src 'self'",
+      "worker-src 'self' blob:", // blob: for Web Workers
+      "child-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'"
+    ].join('; ');
+    
+    headers.set('Content-Security-Policy', cspDirectives);
     headers.set('X-Content-Type-Options', 'nosniff');
     headers.set('X-Frame-Options', 'DENY');
     headers.set('X-XSS-Protection', '1; mode=block');
+    headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
     
     // Clone response with new headers
     return new Response(response.body, {

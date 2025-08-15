@@ -41,28 +41,65 @@ import { Debug } from 'astro:components';
 </Layout>
 
 <script>
-  // HTML template for a paste item
-  const pasteTemplate = (paste) => `
-    <div class="rounded-lg border bg-card text-card-foreground shadow-sm overflow-hidden">
-      <div class="p-4 flex flex-col md:flex-row justify-between gap-2">
-        <div>
-          <h3 class="font-medium text-lg truncate">${paste.title}</h3>
-          <div class="text-muted-foreground text-sm flex flex-wrap gap-x-4 gap-y-1 mt-1">
-            <span>Created: ${formatDate(new Date(paste.createdAt))}</span>
-            ${paste.language ? `<span>Language: ${paste.language}</span>` : ''}
-            <span>Views: ${paste.readCount}</span>
-          </div>
-        </div>
-        <div class="flex items-start gap-2">
-          <a 
-            href="/pastes/${paste.id}" 
-            class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-4 py-2">
-            View
-          </a>
-        </div>
-      </div>
-    </div>
-  `;
+  // Create a paste element safely without innerHTML to prevent XSS
+  function createPasteElement(paste) {
+    // Main container
+    const container = document.createElement('div');
+    container.className = 'rounded-lg border bg-card text-card-foreground shadow-sm overflow-hidden';
+    
+    // Inner container
+    const inner = document.createElement('div');
+    inner.className = 'p-4 flex flex-col md:flex-row justify-between gap-2';
+    
+    // Left side with paste info
+    const leftDiv = document.createElement('div');
+    
+    // Title
+    const title = document.createElement('h3');
+    title.className = 'font-medium text-lg truncate';
+    title.textContent = paste.title || 'Untitled Paste';
+    leftDiv.appendChild(title);
+    
+    // Metadata
+    const metadata = document.createElement('div');
+    metadata.className = 'text-muted-foreground text-sm flex flex-wrap gap-x-4 gap-y-1 mt-1';
+    
+    // Created date
+    const createdSpan = document.createElement('span');
+    createdSpan.textContent = `Created: ${formatDate(new Date(paste.createdAt))}`;
+    metadata.appendChild(createdSpan);
+    
+    // Language (if exists)
+    if (paste.language) {
+      const langSpan = document.createElement('span');
+      langSpan.textContent = `Language: ${paste.language}`;
+      metadata.appendChild(langSpan);
+    }
+    
+    // View count
+    const viewsSpan = document.createElement('span');
+    viewsSpan.textContent = `Views: ${paste.readCount}`;
+    metadata.appendChild(viewsSpan);
+    
+    leftDiv.appendChild(metadata);
+    
+    // Right side with button
+    const rightDiv = document.createElement('div');
+    rightDiv.className = 'flex items-start gap-2';
+    
+    const viewLink = document.createElement('a');
+    viewLink.href = `/pastes/${paste.id}`;
+    viewLink.className = 'inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-4 py-2';
+    viewLink.textContent = 'View';
+    rightDiv.appendChild(viewLink);
+    
+    // Assemble everything
+    inner.appendChild(leftDiv);
+    inner.appendChild(rightDiv);
+    container.appendChild(inner);
+    
+    return container;
+  }
 
   // Helper function to format dates nicely
   function formatDate(date) {
@@ -125,11 +162,14 @@ import { Debug } from 'astro:components';
         if (pastesContainer) {
           pastesContainer.classList.remove('hidden');
           
-          // Generate HTML for each paste
-          const pastesHtml = pastes.map(paste => pasteTemplate(paste)).join('');
+          // Clear container first
+          pastesContainer.innerHTML = '';
           
-          // Insert into container
-          pastesContainer.innerHTML = pastesHtml;
+          // Create each paste element safely
+          pastes.forEach(paste => {
+            const pasteElement = createPasteElement(paste);
+            pastesContainer.appendChild(pasteElement);
+          });
         }
       } else {
         // Show empty state
@@ -138,13 +178,16 @@ import { Debug } from 'astro:components';
         }
       }
     } catch (error) {
-      console.error('Error fetching recent pastes:', error);
-      
-      // Debug: Add console log for debugging
-      console.log('Recent pastes fetch error details:', {
-        message: error.message,
-        stack: error.stack
-      });
+      // Only log detailed error info in development
+      if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+        console.error('Error fetching recent pastes:', error);
+        console.log('Recent pastes fetch error details:', {
+          message: error.message,
+          stack: error.stack
+        });
+      } else {
+        console.error('Error fetching recent pastes');
+      }
       
       // Show empty state in case of error
       const loadingElement = document.getElementById('loading');

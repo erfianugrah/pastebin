@@ -449,13 +449,19 @@ async function encryptDataMain(
   isPasswordDerived = false, 
   saltBase64?: string
 ): Promise<string> {
-  console.log('Encrypting data of length:', data.length);
-  console.log('Using key:', keyBase64.substring(0, 5) + '...');
+  // Only log sensitive crypto operations in development
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    console.log('Encrypting data of length:', data.length);
+    console.log('Using key:', keyBase64.substring(0, 5) + '...');
+  }
   
   try {
     // Decode the key from base64
     const key = decodeBase64(keyBase64);
-    console.log('Decoded key length:', key.length);
+    // Only log in development
+    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+      console.log('Decoded key length:', key.length);
+    }
     
     if (key.length !== KEY_LENGTH) {
       console.error(`Invalid key length: ${key.length}, expected: ${KEY_LENGTH}`);
@@ -512,8 +518,11 @@ async function decryptDataMain(
   isPasswordProtected = false,
   progressCallback?: (progress: { percent: number }) => void
 ): Promise<string> {
-  console.log('Decrypting data of length:', encryptedBase64.length);
-  console.log('Using key:', keyBase64.substring(0, 5) + '...');
+  // Only log sensitive crypto operations in development
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    console.log('Decrypting data of length:', encryptedBase64.length);
+    console.log('Using key:', keyBase64.substring(0, 5) + '...');
+  }
   
   try {
     const isLargeFile = encryptedBase64.length > LARGE_FILE_THRESHOLD;
@@ -587,7 +596,10 @@ async function decryptDataMain(
       throw new Error('Decryption failed - invalid key or corrupted data');
     }
     
-    console.log('Decrypted data length:', decryptedData.length);
+    // Only log in development
+    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+      console.log('Decrypted data length:', decryptedData.length);
+    }
     
     // Convert back to string in chunks for large data
     let result = '';
@@ -665,7 +677,10 @@ export async function deriveKeyFromPassword(
   
   // Use the worker for client-side rendering
   try {
-    console.log('Deriving key from password using Web Worker');
+    // Only log in development
+    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+      console.log('Deriving key from password using Web Worker');
+    }
     
     // Wrap the progress callback to report percentage
     const onProgress = progressCallback

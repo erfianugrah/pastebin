@@ -69,6 +69,54 @@ const pasteId = id || 'placeholder';
 	// Get actual paste ID from URL
 	const realPasteId = window.location.pathname.split('/').pop();
 	let pasteData = null;
+	let decryptedContent = null;
+	
+	// Function to get decrypted content
+	function getDecryptedContent() {
+		return decryptedContent;
+	}
+	
+	// Generate a unique session token for secure communication
+	const sessionToken = crypto.getRandomValues(new Uint32Array(4)).join('-');
+	
+	// Create a secure communication channel using a unique event name
+	const secureEventName = `paste-decrypted-${sessionToken}`;
+	let contentSetPromise = null;
+	
+	// Listen for secure decryption events with session validation
+	window.addEventListener(secureEventName, (event) => {
+		// Validate event structure and token
+		if (!contentSetPromise && 
+			event.detail && 
+			event.detail.content && 
+			event.detail.token === sessionToken) {
+			
+			contentSetPromise = Promise.resolve().then(() => {
+				if (decryptedContent === null) {
+					decryptedContent = event.detail.content;
+					return true;
+				}
+				return false;
+			}).then(success => {
+				if (success) {
+					// Only log in development
+					if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+						console.log('Decrypted content received securely');
+					}
+				} else {
+					console.warn('Attempted to overwrite already set decrypted content');
+				}
+			});
+		} else if (event.detail && (!event.detail.token || event.detail.token !== sessionToken)) {
+			console.warn('Invalid or missing session token in decryption event');
+		}
+	});
+	
+	// Make session token available for CodeViewer in a secure way
+	window.pasteSessionInfo = {
+		eventName: secureEventName,
+		token: sessionToken
+	};
 
 	// Fetch paste data when the page loads
 	document.addEventListener('DOMContentLoaded', async () => {
@@ -212,17 +260,24 @@ const pasteId = id || 'placeholder';
 					
 					// Fallback if hydration fails
 					if (!success) {
+						// Create fallback container safely without innerHTML to prevent XSS
 						const fallbackContainer = document.createElement('div');
-						fallbackContainer.innerHTML = `
-							<div class="p-4 bg-card border border-border rounded-md">
-								<h2 class="text-xl font-bold mb-2">${pasteData.title || 'Untitled Paste'}</h2>
-								<pre class="p-4 bg-muted/50 dark:bg-muted rounded-md overflow-auto font-mono text-sm">${
-									pasteData.isEncrypted 
-										? '[Encrypted content - Key required to view]' 
-										: pasteData.content
-								}</pre>
-							</div>
-						`;
+						fallbackContainer.className = 'p-4 bg-card border border-border rounded-md';
+						
+						// Create title element safely
+						const titleElement = document.createElement('h2');
+						titleElement.className = 'text-xl font-bold mb-2';
+						titleElement.textContent = pasteData.title || 'Untitled Paste';
+						
+						// Create content element safely
+						const contentElement = document.createElement('pre');
+						contentElement.className = 'p-4 bg-muted/50 dark:bg-muted rounded-md overflow-auto font-mono text-sm';
+						contentElement.textContent = pasteData.isEncrypted 
+							? '[Encrypted content - Key required to view]' 
+							: pasteData.content;
+						
+						fallbackContainer.appendChild(titleElement);
+						fallbackContainer.appendChild(contentElement);
 						pasteContainer.appendChild(fallbackContainer);
 					}
 					
@@ -262,7 +317,23 @@ const pasteId = id || 'placeholder';
 		// View raw button
 		const viewRawBtn = createButton('View Raw', 'secondary');
 		viewRawBtn.addEventListener('click', () => {
-			window.open(`/pastes/raw/${pasteData.id}`, '_blank');
+			// For encrypted content, create a blob with decrypted content and open it
+			if (pasteData.isEncrypted && decryptedContent) {
+				const blob = new Blob([decryptedContent], { type: 'text/plain' });
+				const url = URL.createObjectURL(blob);
+				window.open(url, '_blank');
+				// Clean up the URL after a short delay
+				setTimeout(() => URL.revokeObjectURL(url), 1000);
+			} else if (pasteData.isEncrypted && !decryptedContent) {
+				toast({ 
+					message: 'Content is still being decrypted. Please wait.', 
+					type: 'info',
+					duration: 2000
+				});
+			} else {
+				// For non-encrypted content, use the regular raw endpoint
+				window.open(`/pastes/raw/${pasteData.id}`, '_blank');
+			}
 		});
 		leftButtons.appendChild(viewRawBtn);
 		
@@ -288,10 +359,35 @@ const pasteId = id || 'placeholder';
 		
 		// Copy to clipboard button
 		const copyBtn = createButton('Copy to Clipboard', 'secondary');
+		copyBtn.id = 'copy-content-btn';
+		
 		copyBtn.addEventListener('click', () => {
+			// Use decrypted content if available, otherwise use original content
+			const contentToCopy = (pasteData.isEncrypted && decryptedContent) ? 
+				decryptedContent : 
+				(pasteData.content || '');
+			
+			if (!contentToCopy) {
+				toast({ 
+					message: 'No content to copy.', 
+					type: 'error',
+					duration: 2000
+				});
+				return;
+			}
+			
+			if (pasteData.isEncrypted && !decryptedContent) {
+				toast({ 
+					message: 'Content is still being decrypted. Please wait.', 
+					type: 'info',
+					duration: 2000
+				});
+				return;
+			}
+				
 			if (navigator.clipboard) {
 				navigator.clipboard
-					.writeText(pasteData.content || '')
+					.writeText(contentToCopy)
 					.then(() => {
 						toast({ 
 							message: 'Copied to clipboard!', 

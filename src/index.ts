@@ -99,10 +99,14 @@ export default {
         return corsResponse;
       }
       
-      // Check if this is a static asset request that should bypass rate limiting
-      const isStaticAsset = path.match(/\.(js|css|svg|png|jpg|jpeg|gif|webp|ico|ttf|woff|woff2|eot|otf)$/);
+      // Check if this is a legitimate static asset request from expected paths
+      const isStaticAsset = path.startsWith('/_astro/') || 
+                           path.startsWith('/assets/') ||
+                           path.startsWith('/prism-components/') ||
+                           (path.match(/\.(js|css|svg|png|jpg|jpeg|gif|webp|ico|ttf|woff|woff2|eot|otf)$/) && 
+                            !path.includes('/api/') && !path.includes('/pastes/'));
       
-      // Only apply rate limiting if not a static asset
+      // Apply rate limiting to all non-static requests
       if (!isStaticAsset) {
         // Import the rate limit handler
         const { handleRateLimit } = await import('./infrastructure/security/rateLimit');
@@ -152,26 +156,51 @@ export default {
           staleWhileRevalidate: 300, // Allow stale content for 5 minutes while revalidating
         });
       } else if (path === '/api/analytics' && request.method === 'GET') {
-        // Analytics endpoint (admin only)
-        // TODO: Add actual authentication for this endpoint
-        response = await apiHandlers.handleGetAnalytics(request);
-        response = preventCaching(response); // Don't cache analytics data
+        // Analytics endpoint (admin only) - requires authentication
+        const { validateAdminAuth, createUnauthorizedResponse } = await import('./infrastructure/auth/adminAuth');
+        const authResult = validateAdminAuth(request);
+        
+        if (!authResult.success) {
+          response = createUnauthorizedResponse(authResult.error);
+        } else {
+          response = await apiHandlers.handleGetAnalytics(request);
+          response = preventCaching(response); // Don't cache analytics data
+        }
       } else if (path === '/api/logs' && request.method === 'GET') {
-        // Logs endpoint (admin only)
-        // TODO: Add actual authentication for this endpoint
-        response = await apiHandlers.handleGetLogs(request);
-        response = preventCaching(response); // Don't cache log data
+        // Logs endpoint (admin only) - requires authentication
+        const { validateAdminAuth, createUnauthorizedResponse } = await import('./infrastructure/auth/adminAuth');
+        const authResult = validateAdminAuth(request);
+        
+        if (!authResult.success) {
+          response = createUnauthorizedResponse(authResult.error);
+        } else {
+          response = await apiHandlers.handleGetLogs(request);
+          response = preventCaching(response); // Don't cache log data
+        }
       } else if (path === '/api/webhooks' && (request.method === 'GET' || request.method === 'POST')) {
-        // Webhook management endpoints
-        // TODO: Add actual authentication for this endpoint
-        response = await apiHandlers.handleWebhooks(request);
-        response = preventCaching(response); // Don't cache webhook data
+        // Webhook management endpoints (admin only) - requires authentication
+        const { validateAdminAuth, createUnauthorizedResponse } = await import('./infrastructure/auth/adminAuth');
+        const authResult = validateAdminAuth(request);
+        
+        if (!authResult.success) {
+          response = createUnauthorizedResponse(authResult.error);
+        } else {
+          response = await apiHandlers.handleWebhooks(request);
+          response = preventCaching(response); // Don't cache webhook data
+        }
       } else if (path.match(/^\/api\/webhooks\/([^\/]+)$/) && 
                 (request.method === 'GET' || request.method === 'PUT' || 
                  request.method === 'PATCH' || request.method === 'DELETE')) {
-        // Webhook operations for specific webhook ID
-        const webhookId = path.split('/')[3];
-        response = await apiHandlers.handleWebhookById(request, webhookId);
+        // Webhook operations for specific webhook ID (admin only) - requires authentication
+        const { validateAdminAuth, createUnauthorizedResponse } = await import('./infrastructure/auth/adminAuth');
+        const authResult = validateAdminAuth(request);
+        
+        if (!authResult.success) {
+          response = createUnauthorizedResponse(authResult.error);
+        } else {
+          const webhookId = path.split('/')[3];
+          response = await apiHandlers.handleWebhookById(request, webhookId);
+        }
         response = preventCaching(response); // Don't cache webhook data
       } else if (path.match(/^\/pastes\/([^\/]+)\/delete$/) && (request.method === 'DELETE' || request.method === 'POST' || request.method === 'GET')) {
         // Delete paste endpoint - supports both DELETE and POST for broader compatibility
