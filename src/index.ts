@@ -158,7 +158,7 @@ export default {
       } else if (path === '/api/analytics' && request.method === 'GET') {
         // Analytics endpoint (admin only) - requires authentication
         const { validateAdminAuth, createUnauthorizedResponse } = await import('./infrastructure/auth/adminAuth');
-        const authResult = validateAdminAuth(request);
+        const authResult = validateAdminAuth(request, env as any);
         
         if (!authResult.success) {
           response = createUnauthorizedResponse(authResult.error);
@@ -169,7 +169,7 @@ export default {
       } else if (path === '/api/logs' && request.method === 'GET') {
         // Logs endpoint (admin only) - requires authentication
         const { validateAdminAuth, createUnauthorizedResponse } = await import('./infrastructure/auth/adminAuth');
-        const authResult = validateAdminAuth(request);
+        const authResult = validateAdminAuth(request, env as any);
         
         if (!authResult.success) {
           response = createUnauthorizedResponse(authResult.error);
@@ -180,7 +180,7 @@ export default {
       } else if (path === '/api/webhooks' && (request.method === 'GET' || request.method === 'POST')) {
         // Webhook management endpoints (admin only) - requires authentication
         const { validateAdminAuth, createUnauthorizedResponse } = await import('./infrastructure/auth/adminAuth');
-        const authResult = validateAdminAuth(request);
+        const authResult = validateAdminAuth(request, env as any);
         
         if (!authResult.success) {
           response = createUnauthorizedResponse(authResult.error);
@@ -193,7 +193,7 @@ export default {
                  request.method === 'PATCH' || request.method === 'DELETE')) {
         // Webhook operations for specific webhook ID (admin only) - requires authentication
         const { validateAdminAuth, createUnauthorizedResponse } = await import('./infrastructure/auth/adminAuth');
-        const authResult = validateAdminAuth(request);
+        const authResult = validateAdminAuth(request, env as any);
         
         if (!authResult.success) {
           response = createUnauthorizedResponse(authResult.error);
@@ -371,7 +371,7 @@ export default {
       }
       
       // Add response headers
-      return apiMiddleware.addResponseHeaders(response);
+      return apiMiddleware.addResponseHeaders(response, request);
     }, logger); // Pass the logger to the error handler
   },
 };

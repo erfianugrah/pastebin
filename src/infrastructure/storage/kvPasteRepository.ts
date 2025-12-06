@@ -102,18 +102,18 @@ export class KVPasteRepository implements PasteRepository {
     let listComplete = false;
     let cursor: string | undefined;
     while (!listComplete) {
-      const { keys, list_complete, cursor: newCursor } = await this.kv.list({ prefix: 'recent:', cursor });
-      
-      for (const key of keys) {
+      const result = await this.kv.list({ prefix: 'recent:', cursor });
+
+      for (const key of result.keys) {
         if (key.name.endsWith(`:${id}`)) {
           await this.kv.delete(key.name);
         }
       }
-      
-      if (list_complete) {
+
+      if (result.list_complete) {
         listComplete = true;
       } else {
-        cursor = newCursor;
+        cursor = result.cursor;
       }
     }
   }
@@ -125,26 +125,26 @@ export class KVPasteRepository implements PasteRepository {
     let cursor: string | undefined;
 
     while (!listComplete && pasteIds.length < limit) {
-      const { keys, list_complete, cursor: newCursor } = await this.kv.list({
+      const result = await this.kv.list({
         prefix: 'recent:',
         limit: limit - pasteIds.length, // Fetch remaining needed keys
         cursor,
       });
 
       // Sort by timestamp (newest first)
-      keys.sort((a, b) => b.name.localeCompare(a.name));
+      result.keys.sort((a, b) => b.name.localeCompare(a.name));
 
-      for (const key of keys) {
+      for (const key of result.keys) {
         const id = await this.kv.get(key.name);
         if (id) {
           pasteIds.push(id);
         }
       }
 
-      if (list_complete) {
+      if (result.list_complete) {
         listComplete = true;
       } else {
-        cursor = newCursor;
+        cursor = result.cursor;
       }
     }
 

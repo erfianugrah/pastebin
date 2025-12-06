@@ -19,46 +19,30 @@ export class GetPasteQuery {
       return null;
     }
     
-    // Handle view limits
+    // If view limit already exceeded, drop the paste
     if (paste.hasViewLimit() && paste.hasReachedViewLimit()) {
-      // Paste has reached its view limit, delete it
       await this.repository.delete(paste.getId());
       return null;
     }
-    
-    // Handle burn after reading
-    if (paste.isBurnAfterReading()) {
-      // Make a copy of the paste for return before deletion
-      const pasteCopy = paste;
-      
-      // Delete the paste immediately after reading
-      await this.repository.delete(paste.getId());
-      
-      // Return the paste for this single view
-      return pasteCopy;
+
+    // Increment read count for every successful view
+    const updatedPaste = paste.incrementReadCount();
+    await this.repository.save(updatedPaste);
+
+    // Burn-after-reading: delete immediately after first view
+    if (updatedPaste.isBurnAfterReading()) {
+      await this.repository.delete(updatedPaste.getId());
+      return updatedPaste;
     }
-    
-    // Check if this view will reach the view limit
-    if (paste.hasViewLimit() && paste.getReadCount() + 1 >= (paste.getViewLimit() as number)) {
-      // This is the last allowed view, create a final copy before updating the readCount
-      const finalCopy = paste;
-      
-      // Increment the read count on the original (which will reach/exceed the limit)
-      const updatedPaste = paste.incrementReadCount();
-      
-      // Save the updated read count
-      await this.repository.save(updatedPaste);
-      
-      // Schedule deletion for after the response is sent
+
+    // If this view reached the view limit, schedule deletion
+    if (updatedPaste.hasViewLimit() && updatedPaste.hasReachedViewLimit()) {
       setTimeout(async () => {
-        await this.repository.delete(paste.getId());
+        await this.repository.delete(updatedPaste.getId());
       }, 1000);
-      
-      // Return the final copy for this last view
-      return finalCopy;
     }
-    
-    return paste;
+
+    return updatedPaste;
   }
   
   /**

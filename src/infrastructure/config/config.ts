@@ -6,6 +6,7 @@ export const ConfigSchema = z.object({
     version: z.string(),
     baseUrl: z.url(),
   }),
+  enableWebhooks: z.boolean().default(false),
   storage: z.object({
     namespace: z.string(),
     expirationStrategy: z.enum(['ttl', 'explicit', 'hybrid']).default('hybrid'),
@@ -37,6 +38,7 @@ export const defaultConfig: Config = {
     version: '1.0.0',
     baseUrl: 'https://pastebin.workers.dev',
   },
+  enableWebhooks: false,
   storage: {
     namespace: 'PASTES',
     expirationStrategy: 'hybrid',

@@ -14,6 +14,7 @@ export interface Env {
   NODE_ENV?: string;
   API_URL?: string;
   API_SECRET?: string;
+  ADMIN_API_KEY?: string;
 }
 
 // Custom fetch response extending the Response interface

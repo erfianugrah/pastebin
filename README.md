@@ -442,18 +442,35 @@ Before deployment, configure these security settings:
 ```bash
 # Generate a strong admin API key (required)
 ADMIN_API_KEY=$(openssl rand -hex 32)
-
-# Configure allowed CORS origins for production
-ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com
 ```
 
-Add these to your Cloudflare Workers environment or `wrangler.toml`:
+**Security Best Practice**: Use Wrangler secrets for sensitive values:
 
-```toml
-[env.production.vars]
-ADMIN_API_KEY = "your-generated-32-character-hex-key"
-ALLOWED_ORIGINS = "https://yourdomain.com"
+```bash
+# Add ADMIN_API_KEY as a secret (recommended for production)
+wrangler secret put ADMIN_API_KEY
+# When prompted, paste your generated key
+
+# For development/staging, you can use vars in wrangler.jsonc:
 ```
+
+```jsonc
+{
+  "vars": {
+    "ADMIN_API_KEY": "your-dev-key-here"
+  },
+  "env": {
+    "production": {
+      // Use secrets for production, not vars
+    }
+  }
+}
+```
+
+**CORS Configuration**: Configure allowed origins via the config service. The system will:
+- Mirror the `Origin` header when `*` is in the allowlist (supports credentials)
+- Fall back to `*` only when no Origin header is present
+- Validate against explicit allowlist when configured
 
 #### Admin API Usage
 
@@ -470,15 +487,28 @@ curl -H "Authorization: Bearer YOUR_API_KEY" https://yourdomain.com/api/logs
 curl -H "Authorization: Bearer YOUR_API_KEY" https://yourdomain.com/api/webhooks
 ```
 
-### Configure Cloudflare KV Namespace
+### Configure Cloudflare KV Namespaces
 
-Create a KV namespace for storing pastes:
+Create KV namespaces for storing pastes, logs, rate limiting, analytics, and webhooks:
 
 ```bash
+# Required: Main paste storage
 wrangler kv:namespace create PASTES
+
+# Required: Rate limiting
+wrangler kv:namespace create PASTE_RL
+
+# Required: Application logs
+wrangler kv:namespace create PASTE_LOGS
+
+# Optional but recommended: Analytics data
+wrangler kv:namespace create ANALYTICS
+
+# Optional: Webhook configurations
+wrangler kv:namespace create WEBHOOKS
 ```
 
-Update the `wrangler.jsonc` file with your KV namespace ID:
+Update the `wrangler.jsonc` file with your KV namespace IDs:
 
 ```jsonc
 {
@@ -486,13 +516,32 @@ Update the `wrangler.jsonc` file with your KV namespace ID:
   "kv_namespaces": [
     {
       "binding": "PASTES",
-      "id": "your-namespace-id",
-      "preview_id": "your-preview-namespace-id"
+      "id": "your-pastes-namespace-id"
+    },
+    {
+      "binding": "PASTE_RL",
+      "id": "your-ratelimit-namespace-id"
+    },
+    {
+      "binding": "PASTE_LOGS",
+      "id": "your-logs-namespace-id"
+    },
+    {
+      "binding": "ANALYTICS",
+      "id": "your-analytics-namespace-id"
+    },
+    {
+      "binding": "WEBHOOKS",
+      "id": "your-webhooks-namespace-id"
     }
   ],
   // ...
 }
 ```
+
+**Note**: If `ANALYTICS` or `WEBHOOKS` namespaces are not configured, the application will gracefully degrade:
+- Without `ANALYTICS`: Analytics tracking will be skipped with a warning log
+- Without `WEBHOOKS`: Webhook features will be disabled automatically
 
 ### Development
 
@@ -835,6 +884,107 @@ Security vulnerabilities should be reported responsibly:
 4. Allow reasonable time for fixes before public disclosure
 
 For more detailed security information, configuration guides, and security checklist, see [SECURITY.md](./SECURITY.md).
+
+## Current Deployment Status
+
+**Live Version**: `272135c9-8306-4a51-8389-94a5e713907f` (deployed Dec 6, 2025)
+**Domain**: https://paste.erfi.dev
+**Worker Startup Time**: 13 ms
+**Deployment Size**: 555.47 KiB (gzipped: 87.37 KiB)
+
+### Active KV Namespaces
+
+All 5 KV namespaces are configured and operational:
+
+| Binding | Purpose | Status |
+|---------|---------|--------|
+| PASTES | Main paste storage | ✅ Active |
+| PASTE_LOGS | Application logs | ✅ Active |
+| PASTE_RL | Rate limiting | ✅ Active |
+| ANALYTICS | Analytics data (30-day retention) | ✅ Active |
+| WEBHOOKS | Webhook configurations | ✅ Active |
+
+## Recent Updates
+
+### December 2025 - Critical Fixes & Improvements
+
+#### View Limits & Burn After Reading Enhancement
+The view limit system has been completely rewritten for correctness:
+- **Incremental Counting**: Read count now increments on every view, not just the last one
+- **Pre-check Validation**: System validates view limit before serving content
+- **Proper Deletion**: Burn-after-reading and view-limit-reached pastes are properly deleted
+- **User Impact**: View limits now work as users expect - each view counts toward the limit
+
+#### CORS Security Improvements
+CORS handling has been enhanced for better credential support:
+- **Origin Mirroring**: When using wildcard allowlist, mirrors Origin header for credentials
+- **Consistent Headers**: CORS headers applied to all responses, not just preflight
+- **Flexible Configuration**: Supports both wildcard and explicit origin allowlists
+- **Developer Experience**: Maintains request context throughout response pipeline
+
+#### Analytics Infrastructure
+Analytics system now uses dedicated storage:
+- **Separated Concerns**: Analytics data no longer mixed with paste data
+- **Graceful Degradation**: Works without ANALYTICS namespace (logs warning)
+- **30-Day Retention**: Automatic expiration of analytics events
+- **Performance**: Reduces load on main PASTES namespace
+
+#### Admin Authentication Improvements
+Admin endpoints now properly read environment configuration:
+- **Environment Variables**: Reads ADMIN_API_KEY from worker environment
+- **Type Safety**: Full TypeScript support for admin credentials
+- **Security**: Maintains timing-safe comparison for authentication
+- **Flexibility**: Supports both secrets and environment variables
+
+#### Webhook Auto-Configuration
+Webhooks now auto-enable when the binding exists:
+- **Smart Detection**: Automatically enables when WEBHOOKS KV exists
+- **Explicit Control**: Can be manually disabled via config if needed
+- **Zero Config**: Works out of the box with just the KV binding
+- **User Experience**: No manual configuration required for basic usage
+
+For detailed technical information about these changes, see [CHANGELOG.md](./CHANGELOG.md).
+
+### Verification & Testing
+
+To verify all fixes are working correctly:
+
+```bash
+# 1. Test view limits
+# Create a paste with viewLimit=2, view it twice
+# Expected: Paste deleted after second view
+
+# 2. Test burn after reading
+# Create paste with burnAfterReading=true, view once
+# Expected: Paste deleted immediately after first view
+
+# 3. Test analytics (requires ADMIN_API_KEY)
+curl -H "Authorization: Bearer YOUR_KEY" https://paste.erfi.dev/api/analytics
+# Expected: JSON response with analytics data
+
+# 4. Test CORS (if configured)
+# Make cross-origin request from allowed origin
+# Expected: Proper CORS headers including mirrored Origin
+
+# 5. Test webhooks (if configured)
+# Create webhook via admin API, trigger an event
+# Expected: Webhook receives POST with event data
+```
+
+### Next Steps for Full Admin Access
+
+Set the admin API key as a Cloudflare Worker secret:
+
+```bash
+# Generate a strong key
+openssl rand -hex 32
+
+# Add to production environment
+wrangler secret put ADMIN_API_KEY --env production
+
+# Verify admin access
+curl -H "Authorization: Bearer YOUR_KEY" https://paste.erfi.dev/api/analytics
+```
 
 ## License
 

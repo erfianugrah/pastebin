@@ -25,31 +25,20 @@ export class ApiMiddleware {
     
     const origin = request.headers.get('Origin');
     
-    // If allowed origins is configured and not wildcard
-    if (
-      securityConfig.allowedOrigins &&
-      securityConfig.allowedOrigins.length > 0 &&
-      !securityConfig.allowedOrigins.includes('*')
-    ) {
-      // Check if request origin is in allowed origins
-      if (origin && securityConfig.allowedOrigins.includes(origin)) {
+    const allowlist = securityConfig.allowedOrigins ?? [];
+    const allowAll = allowlist.includes('*');
+
+    if (allowAll) {
+      // Mirror the Origin header when present to support credentials; fall back to '*'
+      if (origin) {
         headers.set('Access-Control-Allow-Origin', origin);
         headers.set('Access-Control-Allow-Credentials', 'true');
       } else {
-        // Reject requests from unauthorized origins
-        console.warn(`CORS: Blocked request from unauthorized origin: ${origin}`);
-        // Don't set any CORS headers for unauthorized origins
+        headers.set('Access-Control-Allow-Origin', '*');
       }
-    } else {
-      // SECURITY: Never allow wildcard CORS in production
-      // Only allow same-origin requests if no explicit allowlist is configured
-      if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
-        // Allow localhost origins for development
-        headers.set('Access-Control-Allow-Origin', origin);
-      } else {
-        console.warn(`CORS: No allowlist configured, blocking origin: ${origin}`);
-        // Block all cross-origin requests when no allowlist is configured
-      }
+    } else if (origin && allowlist.length > 0 && allowlist.includes(origin)) {
+      headers.set('Access-Control-Allow-Origin', origin);
+      headers.set('Access-Control-Allow-Credentials', 'true');
     }
     
     headers.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -75,8 +64,10 @@ export class ApiMiddleware {
     return null;
   }
 
-  async addResponseHeaders(response: Response): Promise<Response> {
+  async addResponseHeaders(response: Response, request: Request): Promise<Response> {
     const headers = new Headers(response.headers);
+    const corsHeaders = this.getCorsHeaders(request);
+    corsHeaders.forEach((value, key) => headers.set(key, value));
     
     // Add comprehensive security headers
     const cspDirectives = [

@@ -24,7 +24,11 @@ export class ApiHandlers {
     this.analytics = new Analytics(env, logger);
     
     // Initialize webhook service if enabled in config
-    if (env.WEBHOOKS && this.configService.get('enableWebhooks')) {
+    const enableWebhooks =
+      this.configService.get('enableWebhooks') ??
+      (env.WEBHOOKS ? true : false);
+
+    if (env.WEBHOOKS && enableWebhooks) {
       this.webhookService = new WebhookService(logger, env.WEBHOOKS);
       // Initialize webhooks asynchronously
       this.webhookService.init().catch(error => {

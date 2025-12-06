@@ -27,6 +27,16 @@
 		{
 			"binding": "PASTE_RL",
 			"id": "5a1fb152b29e468f8bcf4b509d6726ed"
+		},
+		{
+			"binding": "ANALYTICS",
+			"id": "1aac5fa067a74e099245c20afd7d07ff",
+			"remote": true
+		},
+		{
+			"binding": "WEBHOOKS",
+			"id": "b3350bd1b44143849b7134fb5c96028f",
+			"remote": true
 		}
 	],
 	"observability": {
@@ -59,6 +69,14 @@
 				{
 					"binding": "PASTE_RL",
 					"id": "5a1fb152b29e468f8bcf4b509d6726ed"
+				},
+				{
+					"binding": "ANALYTICS",
+					"id": "1aac5fa067a74e099245c20afd7d07ff"
+				},
+				{
+					"binding": "WEBHOOKS",
+					"id": "b3350bd1b44143849b7134fb5c96028f"
 				}
 			]
 		},
@@ -82,6 +100,14 @@
 				{
 					"binding": "PASTE_RL",
 					"id": "5a1fb152b29e468f8bcf4b509d6726ed"
+				},
+				{
+					"binding": "ANALYTICS",
+					"id": "1aac5fa067a74e099245c20afd7d07ff"
+				},
+				{
+					"binding": "WEBHOOKS",
+					"id": "b3350bd1b44143849b7134fb5c96028f"
 				}
 			]
 		}

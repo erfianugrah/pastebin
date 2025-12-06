@@ -11,7 +11,7 @@ export interface AuthResult {
 /**
  * Validates admin authentication token
  */
-export function validateAdminAuth(request: Request): AuthResult {
+export function validateAdminAuth(request: Request, env?: { ADMIN_API_KEY?: string }): AuthResult {
   const authHeader = request.headers.get('Authorization');
   
   if (!authHeader) {
@@ -24,8 +24,8 @@ export function validateAdminAuth(request: Request): AuthResult {
     return { success: false, error: 'Invalid Authorization header format' };
   }
   
-  // Get admin API key from environment
-  const adminApiKey = (globalThis as any).ADMIN_API_KEY;
+  // Get admin API key from environment (prefer explicit env, fall back to global)
+  const adminApiKey = env?.ADMIN_API_KEY || (globalThis as any).ADMIN_API_KEY;
   
   if (!adminApiKey) {
     console.error('ADMIN_API_KEY environment variable not set');

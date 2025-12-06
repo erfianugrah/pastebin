@@ -40,8 +40,13 @@ export class Analytics {
       const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       const key = `analytics:${date}:${crypto.randomUUID()}`;
       
-      // Store in KV with a TTL of 30 days
-      await this.env.PASTES.put(key, JSON.stringify(event), {
+      // Store in dedicated analytics namespace with a TTL of 30 days
+      if (!this.env.ANALYTICS) {
+        this.logger.warn('ANALYTICS KV namespace not configured; skipping analytics write');
+        return;
+      }
+
+      await this.env.ANALYTICS.put(key, JSON.stringify(event), {
         expirationTtl: 60 * 60 * 24 * 30 // 30 days
       });
 
@@ -59,13 +64,18 @@ export class Analytics {
   async getDailyStats(date: string): Promise<Record<string, number>> {
     try {
       // List all analytics events for the given date
-      const { keys } = await this.env.PASTES.list({ prefix: `analytics:${date}:` });
+      if (!this.env.ANALYTICS) {
+        this.logger.warn('ANALYTICS KV namespace not configured; cannot read analytics');
+        return {};
+      }
+
+      const { keys } = await this.env.ANALYTICS.list({ prefix: `analytics:${date}:` });
       
       const stats: Record<string, number> = {};
       
       // Process each event to build statistics
       for (const key of keys) {
-        const eventData = await this.env.PASTES.get(key.name);
+        const eventData = await this.env.ANALYTICS.get(key.name);
         if (eventData) {
           const event: AnalyticsEvent = JSON.parse(eventData);
           stats[event.type] = (stats[event.type] || 0) + 1;
