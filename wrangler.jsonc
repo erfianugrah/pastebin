@@ -60,23 +60,28 @@
 			"kv_namespaces": [
 				{
 					"binding": "PASTES",
-					"id": "7ab6cc1ce0744c119c50554173707600"
+					"id": "7ab6cc1ce0744c119c50554173707600",
+					"comment": "Production namespace"
 				},
 				{
 					"binding": "PASTE_LOGS",
-					"id": "8d7f5a1c7bd641ce96f1bcd4a66045e9"
+					"id": "8d7f5a1c7bd641ce96f1bcd4a66045e9",
+					"comment": "Production namespace"
 				},
 				{
 					"binding": "PASTE_RL",
-					"id": "5a1fb152b29e468f8bcf4b509d6726ed"
+					"id": "5a1fb152b29e468f8bcf4b509d6726ed",
+					"comment": "Production namespace"
 				},
 				{
 					"binding": "ANALYTICS",
-					"id": "1aac5fa067a74e099245c20afd7d07ff"
+					"id": "1aac5fa067a74e099245c20afd7d07ff",
+					"comment": "Production namespace"
 				},
 				{
 					"binding": "WEBHOOKS",
-					"id": "b3350bd1b44143849b7134fb5c96028f"
+					"id": "b3350bd1b44143849b7134fb5c96028f",
+					"comment": "Production namespace"
 				}
 			]
 		},
@@ -91,23 +96,28 @@
 			"kv_namespaces": [
 				{
 					"binding": "PASTES",
-					"id": "7ab6cc1ce0744c119c50554173707600"
+					"id": "15f1ade337994f439f7453100bd847ea",
+					"comment": "Staging-specific namespace"
 				},
 				{
 					"binding": "PASTE_LOGS",
-					"id": "8d7f5a1c7bd641ce96f1bcd4a66045e9"
+					"id": "637fa1ffa8194886b8c73fab80536d72",
+					"comment": "Staging-specific namespace"
 				},
 				{
 					"binding": "PASTE_RL",
-					"id": "5a1fb152b29e468f8bcf4b509d6726ed"
+					"id": "6226c81b658a44bdae8918d70404654c",
+					"comment": "Staging-specific namespace"
 				},
 				{
 					"binding": "ANALYTICS",
-					"id": "1aac5fa067a74e099245c20afd7d07ff"
+					"id": "6f12963df3594645984c8189188219d7",
+					"comment": "Staging-specific namespace"
 				},
 				{
 					"binding": "WEBHOOKS",
-					"id": "b3350bd1b44143849b7134fb5c96028f"
+					"id": "c5f2d7da655f4990b01e10297f5b84fd",
+					"comment": "Staging-specific namespace"
 				}
 			]
 		}
