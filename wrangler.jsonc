@@ -30,13 +30,11 @@
 		},
 		{
 			"binding": "ANALYTICS",
-			"id": "1aac5fa067a74e099245c20afd7d07ff",
-			"remote": true
+			"id": "1aac5fa067a74e099245c20afd7d07ff"
 		},
 		{
 			"binding": "WEBHOOKS",
-			"id": "b3350bd1b44143849b7134fb5c96028f",
-			"remote": true
+			"id": "b3350bd1b44143849b7134fb5c96028f"
 		}
 	],
 	"observability": {
