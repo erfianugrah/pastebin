@@ -7,29 +7,29 @@
 
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
- 
+
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
- 
+
     --primary: 221.2 83.2% 53.3%;
     --primary-foreground: 210 40% 98%;
- 
-    --secondary: 210 40% 96.1%;
+
+    --secondary: 210 40% 93%;
     --secondary-foreground: 222.2 47.4% 11.2%;
- 
+
     --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
- 
+    --muted-foreground: 215.4 16.3% 35%;
+
     --accent: 210 40% 96.1%;
     --accent-foreground: 222.2 47.4% 11.2%;
- 
+
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
+    --border: 214.3 31.8% 85%;
+    --input: 214.3 31.8% 85%;
     --ring: 222.2 84% 4.9%;
- 
+
     --radius: 0.5rem;
   }
  
@@ -73,80 +73,12 @@
     color: hsl(var(--foreground));
   }
 
-  /* Prism.js custom styling */
+  /* Prism.js container styling only - let themes handle colors */
   pre[class*="language-"] {
-    background-color: hsl(var(--muted) / 0.5);
     border: 1px solid hsl(var(--border));
     border-radius: 0.375rem;
     margin: 0;
-  }
-
-  .dark pre[class*="language-"] {
-    background-color: hsl(var(--muted));
-  }
-  
-  /* Dark theme token colors */
-  .dark code[class*="language-"],
-  .dark pre[class*="language-"] {
-    color: #f8f8f2;
-    text-shadow: none;
-  }
-  
-  .dark .token.comment,
-  .dark .token.prolog,
-  .dark .token.doctype,
-  .dark .token.cdata {
-    color: #8292a2;
-  }
-  
-  .dark .token.punctuation {
-    color: #f8f8f2;
-  }
-  
-  .dark .token.namespace {
-    opacity: .7;
-  }
-  
-  .dark .token.property,
-  .dark .token.tag,
-  .dark .token.constant,
-  .dark .token.symbol,
-  .dark .token.deleted {
-    color: #f92672;
-  }
-  
-  .dark .token.boolean,
-  .dark .token.number {
-    color: #ae81ff;
-  }
-  
-  .dark .token.selector,
-  .dark .token.attr-name,
-  .dark .token.string,
-  .dark .token.char,
-  .dark .token.builtin,
-  .dark .token.inserted {
-    color: #a6e22e;
-  }
-  
-  .dark .token.operator,
-  .dark .token.entity,
-  .dark .token.url,
-  .dark .language-css .token.string,
-  .dark .style .token.string,
-  .dark .token.variable {
-    color: #f8f8f2;
-  }
-  
-  .dark .token.atrule,
-  .dark .token.attr-value,
-  .dark .token.function,
-  .dark .token.class-name {
-    color: #e6db74;
-  }
-  
-  .dark .token.keyword {
-    color: #66d9ef;
+    padding: 1rem;
   }
 
   /* Line numbers styling */
@@ -155,6 +87,17 @@
   }
 
   /* Copy button styling */
+  div.code-toolbar {
+    position: relative;
+  }
+
+  div.code-toolbar > .toolbar {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    opacity: 1;
+  }
+
   div.code-toolbar > .toolbar button {
     background-color: hsl(var(--secondary));
     color: hsl(var(--secondary-foreground));
@@ -162,7 +105,8 @@
     font-size: 0.875rem;
     border: 1px solid hsl(var(--border));
     transition: background-color 0.2s;
-    box-shadow: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    padding: 0.25rem 0.5rem;
   }
 
   div.code-toolbar > .toolbar button:hover {

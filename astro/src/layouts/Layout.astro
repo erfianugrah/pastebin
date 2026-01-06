@@ -28,13 +28,36 @@ const themeScript = `
   // Get theme from localStorage or default to system
   const theme = localStorage.getItem('theme') || 'system';
   const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  
+
+  // Determine if we should use dark mode
+  const isDark = theme === 'dark' || (theme === 'system' && systemTheme === 'dark');
+
   // Apply the right theme class
-  if (theme === 'dark' || (theme === 'system' && systemTheme === 'dark')) {
+  if (isDark) {
     document.documentElement.classList.add('dark');
   } else {
     document.documentElement.classList.add('light');
   }
+
+  // Function to update Prism themes
+  function updatePrismThemes() {
+    const lightTheme = document.getElementById('prism-light-theme');
+    const darkTheme = document.getElementById('prism-dark-theme');
+    const isDarkMode = document.documentElement.classList.contains('dark');
+
+    if (lightTheme) lightTheme.disabled = isDarkMode;
+    if (darkTheme) darkTheme.disabled = !isDarkMode;
+  }
+
+  // Update immediately
+  updatePrismThemes();
+
+  // Watch for theme changes
+  const observer = new MutationObserver(updatePrismThemes);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class']
+  });
 `;
 ---
 
@@ -111,13 +134,10 @@ const themeScript = `
 		
 		<!-- Accessibility Enhancements -->
 		<meta name="color-scheme" content="dark light">
-		
-		<!-- Prism.js for Syntax Highlighting - Using installed npm package -->
-		<style is:global>
-			@import 'prismjs/themes/prism.css';
-			@import 'prismjs/plugins/line-numbers/prism-line-numbers.css';
-			@import 'prismjs/plugins/toolbar/prism-toolbar.css';
-		</style>
+
+		<!-- Prism.js Themes - Load both, CSS will handle which one displays -->
+		<link rel="stylesheet" href="/prism-themes/prism-one-light.css" id="prism-light-theme" />
+		<link rel="stylesheet" href="/prism-themes/prism-okaidia.css" id="prism-dark-theme" />
 	</head>
 	<body class="min-h-screen flex flex-col bg-background text-foreground">
 		<!-- Skip to main content link for accessibility -->
@@ -214,7 +234,9 @@ const themeScript = `
 	.light [data-theme="light"] {
 		display: block;
 	}
-	
+
+	/* Prism themes are handled via JavaScript disabled attribute */
+
 	/* Additional Prism.js customizations */
 	pre[class*="language-"].line-numbers {
 		padding-left: 3.5em;

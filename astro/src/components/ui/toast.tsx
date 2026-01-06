@@ -27,15 +27,15 @@ export function Toast({
   }, [duration, onClose]);
 
   const typeClasses = {
-    success: "bg-green-100 border-green-400 text-green-800 dark:bg-green-900/30 dark:border-green-800 dark:text-green-300",
-    error: "bg-red-100 border-red-400 text-red-800 dark:bg-red-900/30 dark:border-red-800 dark:text-red-300",
-    info: "bg-blue-100 border-blue-400 text-blue-800 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300",
+    success: "bg-green-100 border-green-600 text-green-950 dark:bg-green-900/50 dark:border-green-600 dark:text-green-100",
+    error: "bg-red-100 border-red-600 text-red-950 dark:bg-red-900/50 dark:border-red-600 dark:text-red-100",
+    info: "bg-blue-100 border-blue-600 text-blue-950 dark:bg-blue-900/50 dark:border-blue-600 dark:text-blue-100",
   };
 
   return isVisible ? (
-    <div 
+    <div
       className={cn(
-        "fixed bottom-20 right-4 px-4 py-3 rounded border shadow-md z-50 max-w-md transition-all transform",
+        "fixed bottom-20 right-4 px-4 py-3 rounded border-2 shadow-lg z-50 max-w-md transition-all transform backdrop-blur-sm",
         typeClasses[type],
         isVisible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
       )}

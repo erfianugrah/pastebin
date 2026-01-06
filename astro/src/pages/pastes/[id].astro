@@ -301,11 +301,11 @@ const pasteId = id || 'placeholder';
 	function renderButtons(container) {
 		// Create button container
 		const buttonContainer = document.createElement('div');
-		buttonContainer.className = 'mt-6 border-t border-border pt-4 flex justify-between flex-wrap gap-2';
-		
+		buttonContainer.className = 'mt-6 border-t border-border pt-4 flex justify-between items-center flex-wrap gap-3';
+
 		// Left side buttons
 		const leftButtons = document.createElement('div');
-		leftButtons.className = 'space-x-2 space-y-2 sm:space-y-0';
+		leftButtons.className = 'flex flex-wrap gap-2';
 		
 		// Create new paste button
 		const createNewBtn = createButton('Create New Paste', 'secondary');
@@ -356,7 +356,8 @@ const pasteId = id || 'placeholder';
 		
 		// Right side buttons
 		const rightButtons = document.createElement('div');
-		
+		rightButtons.className = 'flex gap-2';
+
 		// Copy to clipboard button
 		const copyBtn = createButton('Copy to Clipboard', 'secondary');
 		copyBtn.id = 'copy-content-btn';

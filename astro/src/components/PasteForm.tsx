@@ -950,20 +950,21 @@ export default function PasteForm() {
             )}
             
             <CardFooter className="flex justify-between p-0 pt-4">
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
+                variant="outline"
                 disabled={isSubmitting}
               >
-                {isSubmitting ? 
-                  (encryptionProgress !== null ? 
-                    (encryptionProgress < 30 ? 
-                      `Securing (${encryptionProgress}%)` : 
-                      `Encrypting (${encryptionProgress}%)`) : 
-                    'Creating...') : 
+                {isSubmitting ?
+                  (encryptionProgress !== null ?
+                    (encryptionProgress < 30 ?
+                      `Securing (${encryptionProgress}%)` :
+                      `Encrypting (${encryptionProgress}%)`) :
+                    'Creating...') :
                   'Create Paste'}
               </Button>
-              <Button 
-                type="reset" 
+              <Button
+                type="reset"
                 variant="outline"
                 disabled={isSubmitting}
                 onClick={() => {

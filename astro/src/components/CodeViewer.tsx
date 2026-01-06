@@ -8,9 +8,6 @@ import { useAsyncEffect } from '../hooks/useAsyncEffect';
 import { ErrorDisplay } from './ui/error-display';
 import { ErrorCategory } from '../../../src/infrastructure/errors/errorHandler';
 
-// Add Prism.js theme
-import 'prismjs/themes/prism-okaidia.css';
-
 // Import Prism core and autoloader
 import Prism from 'prismjs';
 import 'prismjs/plugins/autoloader/prism-autoloader';
@@ -75,30 +72,31 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
   const [fullContentLoaded, setFullContentLoaded] = useState(false);
   const [decryptionProgress, setDecryptionProgress] = useState<number | null>(null);
   const codeRef = useRef<HTMLElement>(null);
-  
+
   // Use our error handler hook
   const { error, errorMessage, category, handleError } = useErrorHandler();
-  
+
   // Define threshold for large files (5MB)
   const largeFileThreshold = 5 * 1024 * 1024;
-  
+
   // Handle large file progressive loading
   useEffect(() => {
     const contentToProcess = decrypted ? content : paste.content;
     const isLarge = contentToProcess.length > largeFileThreshold;
+
     setIsLargeFile(isLarge);
-    
+
     if (isLarge) {
       // Initially show just the first part of the content
       const initialChunkSize = 100 * 1024; // 100KB
       setVisibleContent(contentToProcess.slice(0, initialChunkSize));
-      
+
       // Load the rest of the content after a short delay
       const loadFullContent = () => {
         setVisibleContent(contentToProcess);
         setFullContentLoaded(true);
       };
-      
+
       const timeoutId = setTimeout(loadFullContent, 100);
       return () => clearTimeout(timeoutId);
     } else {
@@ -834,7 +832,7 @@ export default function CodeViewer({ paste }: CodeViewerProps) {
       
       {/* Code content */}
       <div className={`${isDecrypting ? 'opacity-50' : ''} relative`}>
-        <pre className={`p-4 rounded-md overflow-x-auto bg-gray-100 dark:bg-gray-800 font-mono text-sm max-h-[600px] ${paste.isEncrypted && !decrypted ? 'blur-sm' : ''}`}>
+        <pre className={`p-4 rounded-md overflow-x-auto font-mono text-sm max-h-[600px] ${paste.isEncrypted && !decrypted ? 'blur-sm' : ''}`}>
           <code ref={codeRef} className={`language-${paste.language || 'plaintext'}`}>
             {visibleContent}
           </code>
