@@ -21,32 +21,32 @@ export default function Header({ title = 'Pasteriser' }: HeaderProps) {
 
   return (
     <header 
-      className={`sticky top-0 z-40 w-full border-b border-border ${
-        isScrolled ? 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-md' : 'bg-background'
+      className={`app-header sticky top-0 z-40 w-full border-b border-border/70 ${
+        isScrolled ? 'bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-lg shadow-slate-900/5' : 'bg-background/80'
       } transition-all`}
     >
       <div className="container mx-auto px-4 py-4 flex justify-between items-center">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold">
+          <h1 className="text-xl md:text-2xl font-semibold tracking-tight">
             <a href="/" className="hover:text-primary transition-colors">
               {title}
             </a>
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground/80">
             Share code snippets, notes, and more securely
           </p>
         </div>
         
-        <nav className="hidden md:flex items-center space-x-6">
+        <nav className="hidden md:flex items-center space-x-2">
           <a 
             href="/" 
-            className="text-sm font-medium transition-colors hover:text-primary"
+            className="text-sm font-medium transition-colors hover:text-primary rounded-full px-3 py-1.5 hover:bg-accent/70"
           >
             Home
           </a>
           <a 
             href="/recent" 
-            className="text-sm font-medium text-muted-foreground transition-colors hover:text-primary"
+            className="text-sm font-medium text-muted-foreground transition-colors hover:text-primary rounded-full px-3 py-1.5 hover:bg-accent/70"
           >
             Recent
           </a>
@@ -98,17 +98,17 @@ export default function Header({ title = 'Pasteriser' }: HeaderProps) {
       
       {/* Mobile menu */}
       <div className={`md:hidden ${isMenuOpen ? "block" : "hidden"}`}>
-        <nav className="px-4 py-2 pb-4 space-y-2 bg-background border-t">
+        <nav className="px-4 py-2 pb-4 space-y-2 bg-background/95 border-t border-border/70">
           <a 
             href="/" 
-            className="block py-2 px-2 rounded-lg hover:bg-muted"
+            className="block py-2 px-3 rounded-lg hover:bg-muted"
             onClick={() => setIsMenuOpen(false)}
           >
             Home
           </a>
           <a 
             href="/recent" 
-            className="block py-2 px-2 rounded-lg hover:bg-muted"
+            className="block py-2 px-3 rounded-lg hover:bg-muted"
             onClick={() => setIsMenuOpen(false)}
           >
             Recent
