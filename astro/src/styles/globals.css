@@ -1,34 +1,41 @@
 @import "tailwindcss";
+@import "@fontsource/space-grotesk/400.css";
+@import "@fontsource/space-grotesk/500.css";
+@import "@fontsource/space-grotesk/600.css";
+@import "@fontsource/space-grotesk/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/600.css";
  
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 220 16% 94%;
+    --foreground: 222 28% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 222 28% 15%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 222 28% 15%;
 
     --primary: 221.2 83.2% 53.3%;
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 210 40% 93%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 220 16% 90%;
+    --secondary-foreground: 222 28% 12%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 35%;
+    --muted: 220 16% 92%;
+    --muted-foreground: 220 10% 36%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 220 16% 90%;
+    --accent-foreground: 222 28% 12%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 214.3 31.8% 85%;
-    --input: 214.3 31.8% 85%;
-    --ring: 222.2 84% 4.9%;
+    --border: 220 16% 74%;
+    --input: 220 16% 74%;
+    --ring: 222 74% 46%;
 
     --radius: 0.5rem;
   }
@@ -71,6 +78,56 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
+    font-family: "Space Grotesk", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .font-mono,
+  code,
+  pre,
+  textarea,
+  input,
+  select {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      "Liberation Mono", "Courier New", monospace;
+  }
+
+  .light body {
+    background-color: hsl(220 16% 94%);
+  }
+
+  .light .security-panel {
+    background-color: #f8fafc;
+    border-color: #cbd5e1;
+    color: #0f172a;
+  }
+
+  .light .security-panel-title,
+  .light .security-panel-label {
+    color: #0f172a !important;
+  }
+
+  .light .security-panel-help {
+    color: #475569 !important;
+  }
+
+  .light input,
+  .light select,
+  .light textarea {
+    background-color: hsl(0 0% 100%);
+    border-color: hsl(220 16% 76%);
+    color: hsl(222 28% 15%);
+  }
+
+  .light input::placeholder,
+  .light textarea::placeholder {
+    color: hsl(220 10% 48%);
+  }
+
+  .light select:focus,
+  .light input:focus,
+  .light textarea:focus {
+    border-color: hsl(222 74% 46%);
+    box-shadow: 0 0 0 3px hsl(222 74% 46% / 0.18);
   }
 
   /* Prism.js container styling only - let themes handle colors */
