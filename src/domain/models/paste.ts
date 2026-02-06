@@ -85,17 +85,11 @@ export class Paste {
     viewLimit?: number,
     version: number = 0, // 0=plaintext, 1=server-side pw, 2=client-side encryption
   ): Paste {
-    // Infer version if not explicitly provided
-    if (version === 0) {
-      if (isEncrypted) {
-        version = 2; // Client-side encryption
-      }
-      // Otherwise remains 0 (plaintext)
-    }
-    
-    // Phase 4: All new pastes are at least version 2 (client-side encryption)
-    if (version < 2) {
-      version = 2;
+    let resolvedVersion = version;
+    if (!isEncrypted) {
+      resolvedVersion = 0;
+    } else if (resolvedVersion < 2) {
+      resolvedVersion = 2;
     }
 
     return new Paste(
@@ -111,7 +105,7 @@ export class Paste {
       0, // readCount starts at 0
       isEncrypted,
       viewLimit,
-      version,
+      resolvedVersion,
     );
   }
 

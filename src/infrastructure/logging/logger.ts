@@ -159,18 +159,25 @@ export class Logger {
         })
         .slice(0, limit);
       
-      // Retrieve log entries
+      // Retrieve log entries in bulk (up to 100 keys per request)
       const logEntries: LogEntry[] = [];
-      
-      for (const key of sortedKeys) {
-        const logJson = await this.logsKV.get(key.name);
-        if (logJson) {
+      const chunkSize = 100;
+
+      for (let i = 0; i < sortedKeys.length; i += chunkSize) {
+        const chunk = sortedKeys.slice(i, i + chunkSize).map(key => key.name);
+        const values = await this.logsKV.get(chunk);
+
+        for (const [keyName, logJson] of values.entries()) {
+          if (!logJson) {
+            continue;
+          }
+
           try {
             const entry = JSON.parse(logJson) as LogEntry;
             logEntries.push(entry);
           } catch (e) {
             // Skip invalid entries
-            this.error('Failed to parse log entry from KV', { key: key.name, error: e });
+            this.error('Failed to parse log entry from KV', { key: keyName, error: e });
           }
         }
       }

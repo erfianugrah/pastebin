@@ -65,7 +65,7 @@ export class GetPasteQuery {
     const requiresPassword = false;
     
     // All pastes are either unencrypted or use client-side E2E encryption
-    const isE2EEncrypted = paste.getIsEncrypted() || paste.getVersion() >= 2;
+    const isE2EEncrypted = paste.getIsEncrypted() && paste.getVersion() >= 2;
     
     return { 
       paste, 

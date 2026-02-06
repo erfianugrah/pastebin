@@ -28,17 +28,31 @@ export class ApiMiddleware {
     const allowlist = securityConfig.allowedOrigins ?? [];
     const allowAll = allowlist.includes('*');
 
+    const addVaryOrigin = () => {
+      const existing = headers.get('Vary');
+      if (!existing) {
+        headers.set('Vary', 'Origin');
+        return;
+      }
+      const varyValues = existing.split(',').map(value => value.trim());
+      if (!varyValues.includes('Origin')) {
+        headers.set('Vary', `${existing}, Origin`);
+      }
+    };
+
     if (allowAll) {
       // Mirror the Origin header when present to support credentials; fall back to '*'
       if (origin) {
         headers.set('Access-Control-Allow-Origin', origin);
         headers.set('Access-Control-Allow-Credentials', 'true');
+        addVaryOrigin();
       } else {
         headers.set('Access-Control-Allow-Origin', '*');
       }
     } else if (origin && allowlist.length > 0 && allowlist.includes(origin)) {
       headers.set('Access-Control-Allow-Origin', origin);
       headers.set('Access-Control-Allow-Credentials', 'true');
+      addVaryOrigin();
     }
     
     headers.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');

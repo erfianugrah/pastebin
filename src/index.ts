@@ -9,7 +9,6 @@ import { GetPasteQuery } from './application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
 import { ApiMiddleware } from './interfaces/api/middleware';
-import { HtmlRenderer } from './interfaces/ui/htmlRenderer';
 import { errorHandler } from './infrastructure/errors/AppError';
 import { initializeLogger } from './infrastructure/logging/loggerFactory';
 
@@ -88,7 +87,6 @@ export default {
       );
       
       const apiMiddleware = new ApiMiddleware(configService, logger);
-      const htmlRenderer = new HtmlRenderer();
       
       // Parse URL for use in routing and rate limiting
       const path = url.pathname;
@@ -294,13 +292,10 @@ export default {
               content: string;
               language?: string;
             };
-            const contentType = responseData.language ? 
-              `text/${responseData.language}` : 'text/plain';
-              
             response = new Response(responseData.content, {
               status: 200,
               headers: {
-                'Content-Type': contentType,
+                'Content-Type': 'text/plain; charset=utf-8',
                 'Cache-Control': 'public, max-age=3600'
               }
             });

@@ -73,11 +73,20 @@ export class Analytics {
       
       const stats: Record<string, number> = {};
       
-      // Process each event to build statistics
-      for (const key of keys) {
-        const eventData = await this.env.ANALYTICS.get(key.name);
-        if (eventData) {
-          const event: AnalyticsEvent = JSON.parse(eventData);
+      // Process events in bulk to reduce KV read requests
+      const keyNames = keys.map(key => key.name);
+      const chunkSize = 100;
+
+      for (let i = 0; i < keyNames.length; i += chunkSize) {
+        const chunk = keyNames.slice(i, i + chunkSize);
+        const values = await this.env.ANALYTICS.get(chunk);
+
+        for (const value of values.values()) {
+          if (!value) {
+            continue;
+          }
+
+          const event: AnalyticsEvent = JSON.parse(value);
           stats[event.type] = (stats[event.type] || 0) + 1;
         }
       }

@@ -4,6 +4,13 @@ import { Env } from '../../types';
  * Simple rate limiting implementation using KV storage
  * Limits requests per IP address within a specific time window
  */
+type LocalRateLimitEntry = {
+  count: number;
+  resetTime: number;
+};
+
+const localRateLimits = new Map<string, LocalRateLimitEntry>();
+
 export async function handleRateLimit(
   request: Request,
   env: Env,
@@ -40,13 +47,16 @@ export async function handleRateLimit(
 
   // Only check if the rate limit could be exceeded - optimization
   // We'll only read from KV if this isn't the first request and could potentially exceed the limit
-  const isReadNeeded = true; // Simplification: always read for rate limiting check
-  
   const now = Date.now();
+  const localEntry = localRateLimits.get(key);
+  const hasLocalEntry = localEntry && now < localEntry.resetTime;
   let count = 1; // Start with 1 (current request)
   let resetTime = now + windowSize;
 
-  if (isReadNeeded) {
+  if (hasLocalEntry) {
+    count = localEntry.count + 1;
+    resetTime = localEntry.resetTime;
+  } else {
     // Get current rate limit data from KV
     const data = await rateLimitsKV.get(key);
     
@@ -67,6 +77,9 @@ export async function handleRateLimit(
       }
     }
   }
+
+  // Update local cache
+  localRateLimits.set(key, { count, resetTime });
 
   // Only update KV if:
   // 1. This is the first request in a time window (count = 1)
