@@ -2,33 +2,33 @@
  
 @layer base {
   :root {
-    --background: 36 33% 97%;
-    --foreground: 222 28% 15%;
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222 28% 15%;
+    --card-foreground: 222.2 84% 4.9%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 28% 15%;
+    --popover-foreground: 222.2 84% 4.9%;
 
-    --primary: 222 74% 46%;
+    --primary: 221.2 83.2% 53.3%;
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 28 27% 92%;
-    --secondary-foreground: 222 28% 15%;
+    --secondary: 210 40% 93%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
 
-    --muted: 32 24% 94%;
-    --muted-foreground: 220 14% 42%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 35%;
 
-    --accent: 214 46% 92%;
-    --accent-foreground: 222 28% 15%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 220 18% 82%;
-    --input: 220 18% 82%;
-    --ring: 222 74% 46%;
+    --border: 214.3 31.8% 85%;
+    --input: 214.3 31.8% 85%;
+    --ring: 222.2 84% 4.9%;
 
     --radius: 0.5rem;
   }
@@ -71,76 +71,6 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    font-family: "Space Grotesk", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-    letter-spacing: 0.01em;
-  }
-
-  .light body {
-    background-image:
-      radial-gradient(1200px circle at top, hsl(214 60% 94%) 0%, transparent 55%),
-      linear-gradient(180deg, hsl(36 33% 98%) 0%, hsl(36 33% 96%) 65%, hsl(36 33% 95%) 100%);
-    background-attachment: fixed;
-  }
-
-  .dark body {
-    background-image:
-      radial-gradient(900px circle at top, hsl(222 36% 16%) 0%, transparent 60%),
-      linear-gradient(180deg, hsl(222 36% 10%) 0%, hsl(222 36% 8%) 100%);
-    background-attachment: fixed;
-  }
-
-  .light .app-header {
-    background: linear-gradient(120deg, rgba(255, 255, 255, 0.95), rgba(246, 247, 251, 0.85));
-    border-bottom-color: hsl(var(--border));
-  }
-
-  .dark .app-header {
-    background: linear-gradient(120deg, rgba(15, 23, 42, 0.92), rgba(17, 24, 39, 0.78));
-    border-bottom-color: hsl(var(--border));
-  }
-
-  .light footer {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(246, 247, 251, 0.92));
-  }
-
-  .dark footer {
-    background: linear-gradient(180deg, rgba(15, 23, 42, 0.6), rgba(15, 23, 42, 0.9));
-  }
-
-  input,
-  select,
-  textarea {
-    background-color: hsl(var(--card));
-    border-color: hsl(var(--border));
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  input:hover,
-  select:hover,
-  textarea:hover {
-    border-color: hsl(var(--primary) / 0.35);
-  }
-
-  ::placeholder {
-    color: hsl(var(--muted-foreground));
-  }
-
-  .light ::placeholder {
-    color: hsl(220 10% 58%);
-  }
-
-  .light select {
-    background-color: hsl(var(--card));
-    color: hsl(var(--foreground));
-  }
-
-  input:focus,
-  select:focus,
-  textarea:focus {
-    outline: none;
-    border-color: hsl(var(--primary));
-    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18);
   }
 
   /* Prism.js container styling only - let themes handle colors */

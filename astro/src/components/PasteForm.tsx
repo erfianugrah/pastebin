@@ -307,7 +307,7 @@ export default function PasteForm() {
   }
   
   return (
-    <Card className="w-full max-w-3xl mx-auto bg-white/90 dark:bg-card/95">
+    <Card className="w-full max-w-3xl mx-auto">
       <CardHeader>
         <CardTitle>Create New Paste</CardTitle>
       </CardHeader>
@@ -786,8 +786,8 @@ export default function PasteForm() {
             
             <div className="space-y-4 mt-4">
               {/* Security options section */}
-              <div className="bg-amber-50/80 dark:bg-blue-900/20 border border-amber-200/80 dark:border-blue-800 rounded-lg p-3 shadow-sm">
-                <h3 className="text-sm font-semibold text-amber-900 dark:text-blue-300 mb-2">Security Options</h3>
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 shadow-sm">
+                <h3 className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-2">Security Options</h3>
                 
                 {/* Burn after reading option */}
                 <div className="flex items-start mb-3">
@@ -800,10 +800,10 @@ export default function PasteForm() {
                     />
                   </div>
                   <div className="ml-3 text-sm">
-                    <label htmlFor="burnAfterReading" className="font-medium text-slate-700 dark:text-gray-300">
+                    <label htmlFor="burnAfterReading" className="font-medium text-gray-700 dark:text-gray-300">
                       Burn after reading
                     </label>
-                    <p className="text-slate-500 dark:text-gray-400 text-xs mt-0.5">
+                    <p className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">
                       Content will be permanently deleted after first view
                     </p>
                   </div>
@@ -831,7 +831,7 @@ export default function PasteForm() {
                     />
                   </div>
                   <div className="ml-3 text-sm flex-grow">
-                    <label htmlFor="enableViewLimit" className="font-medium text-slate-700 dark:text-gray-300">
+                    <label htmlFor="enableViewLimit" className="font-medium text-gray-700 dark:text-gray-300">
                       Limit number of views
                     </label>
                     <div className="flex items-center mt-1">
@@ -845,9 +845,9 @@ export default function PasteForm() {
                         disabled
                         className="w-16 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100" 
                       />
-                        <label htmlFor="viewLimit" className="ml-2 text-xs text-slate-500 dark:text-gray-400">
-                          views before expiration
-                        </label>
+                      <label htmlFor="viewLimit" className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                        views before expiration
+                      </label>
                     </div>
                   </div>
                 </div>
