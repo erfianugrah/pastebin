@@ -418,7 +418,7 @@ async function deriveKeyFromPasswordMain(
     const derivedBits = await crypto.subtle.deriveBits(
       {
         name: 'PBKDF2',
-        salt: salt,
+        salt: salt as unknown as BufferSource,
         iterations: iterations,
         hash: 'SHA-256'
       },
@@ -450,7 +450,7 @@ async function encryptDataMain(
   saltBase64?: string
 ): Promise<string> {
   // Only log sensitive crypto operations in development
-  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+  if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
     console.log('Encrypting data of length:', data.length);
     console.log('Using key:', keyBase64.substring(0, 5) + '...');
   }
@@ -459,7 +459,7 @@ async function encryptDataMain(
     // Decode the key from base64
     const key = decodeBase64(keyBase64);
     // Only log in development
-    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
       console.log('Decoded key length:', key.length);
     }
     
@@ -519,7 +519,7 @@ async function decryptDataMain(
   progressCallback?: (progress: { percent: number }) => void
 ): Promise<string> {
   // Only log sensitive crypto operations in development
-  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+  if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
     console.log('Decrypting data of length:', encryptedBase64.length);
     console.log('Using key:', keyBase64.substring(0, 5) + '...');
   }
@@ -597,7 +597,7 @@ async function decryptDataMain(
     }
     
     // Only log in development
-    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
       console.log('Decrypted data length:', decryptedData.length);
     }
     
@@ -678,7 +678,7 @@ export async function deriveKeyFromPassword(
   // Use the worker for client-side rendering
   try {
     // Only log in development
-    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
       console.log('Deriving key from password using Web Worker');
     }
     

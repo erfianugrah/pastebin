@@ -16,6 +16,13 @@ export class HtmlRenderer {
           .form-group { margin-bottom: 15px; }
           .form-group label { display: block; margin-bottom: 5px; }
           .button-group { display: flex; justify-content: space-between; }
+          @media (prefers-color-scheme: dark) {
+            select,
+            option {
+              background-color: #1c1f26;
+              color: #f5f7fb;
+            }
+          }
         </style>
       </head>
       <body>

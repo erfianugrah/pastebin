@@ -15,7 +15,7 @@ export function useTimeout(callback: () => void, delay: number | null) {
   // Store the callback in a ref to avoid unnecessary rerenders
   const callbackRef = useRef(callback);
   // Store the timeout ID for cleanup
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Update the callback ref when the callback changes
   useEffect(() => {
@@ -28,7 +28,7 @@ export function useTimeout(callback: () => void, delay: number | null) {
     if (delay === null) return;
 
     // Clear any existing timeout
-    if (timeoutRef.current) {
+    if (timeoutRef.current !== null) {
       clearTimeout(timeoutRef.current);
     }
 
@@ -39,7 +39,7 @@ export function useTimeout(callback: () => void, delay: number | null) {
 
     // Clean up on unmount or delay change
     return () => {
-      if (timeoutRef.current) {
+      if (timeoutRef.current !== null) {
         clearTimeout(timeoutRef.current);
       }
     };
@@ -47,9 +47,9 @@ export function useTimeout(callback: () => void, delay: number | null) {
 
   // Function to clear the timeout
   const clear = useCallback(() => {
-    if (timeoutRef.current) {
+    if (timeoutRef.current !== null) {
       clearTimeout(timeoutRef.current);
-      timeoutRef.current = undefined;
+      timeoutRef.current = null;
     }
   }, []);
 
