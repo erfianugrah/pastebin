@@ -8,6 +8,7 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2025-04-10",
 	"migrations": [],
+	"logpush": true,
 	"assets": {
 		"binding": "ASSETS",
 		"directory": "./astro/dist",
@@ -38,7 +39,10 @@
 		}
 	],
 	"observability": {
-		"enabled": true
+		"enabled": true,
+		"logs": {
+			"invocation_logs": true
+		}
 	},
 	"routes": [
 		{
