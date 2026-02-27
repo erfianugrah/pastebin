@@ -1,39 +1,59 @@
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background -->
-  <rect width="1200" height="630" fill="url(#gradient)" />
-  
-  <!-- Code brackets -->
-  <path d="M250 200L150 315L250 430" stroke="white" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M450 200L550 315L450 430" stroke="white" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" />
-  
-  <!-- Slash code -->
-  <path d="M380 160L320 460" stroke="white" stroke-width="24" stroke-linecap="round" />
-  
-  <!-- Text -->
-  <text x="600" y="270" font-size="80" font-weight="700" font-family="Inter, system-ui, sans-serif" fill="white">Erfi's Pasteriser</text>
-  <text x="600" y="350" font-size="36" font-weight="400" font-family="Inter, system-ui, sans-serif" fill="white">A modern, secure code sharing service</text>
-  
-  <!-- Feature badges -->
-  <g>
-    <rect x="600" y="380" width="160" height="40" rx="20" fill="white" fill-opacity="0.2" />
-    <text x="680" y="407" font-size="20" font-weight="500" font-family="Inter, system-ui, sans-serif" fill="white" text-anchor="middle">Syntax Highlighting</text>
-  </g>
-  
-  <g>
-    <rect x="780" y="380" width="160" height="40" rx="20" fill="white" fill-opacity="0.2" />
-    <text x="860" y="407" font-size="20" font-weight="500" font-family="Inter, system-ui, sans-serif" fill="white" text-anchor="middle">Password Protection</text>
-  </g>
-  
-  <g>
-    <rect x="960" y="380" width="160" height="40" rx="20" fill="white" fill-opacity="0.2" />
-    <text x="1040" y="407" font-size="20" font-weight="500" font-family="Inter, system-ui, sans-serif" fill="white" text-anchor="middle">Burn After Reading</text>
-  </g>
-  
-  <!-- Gradient definition -->
+  <!-- Background gradient -->
+  <rect width="1200" height="630" fill="url(#bg)" />
+
+  <!-- Subtle grid pattern for texture -->
   <defs>
-    <linearGradient id="gradient" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4F46E5" />
-      <stop offset="1" stop-color="#3B82F6" />
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" stroke-opacity="0.04" stroke-width="1" />
+    </pattern>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#312E81" />
+      <stop offset="0.5" stop-color="#4338CA" />
+      <stop offset="1" stop-color="#2563EB" />
     </linearGradient>
   </defs>
+  <rect width="1200" height="630" fill="url(#grid)" />
+
+  <!-- Decorative code bracket icon (left side) -->
+  <g transform="translate(80, 165)" opacity="0.95">
+    <rect width="200" height="200" rx="40" fill="white" fill-opacity="0.1" />
+    <path d="M85 55 L50 100 L85 145" stroke="white" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M115 55 L150 100 L115 145" stroke="white" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M108 40 L92 160" stroke="white" stroke-width="10" stroke-linecap="round" />
+  </g>
+
+  <!-- Glow behind icon -->
+  <circle cx="180" cy="265" r="80" fill="white" fill-opacity="0.05" />
+
+  <!-- Title -->
+  <text x="330" y="250" font-size="72" font-weight="800" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" letter-spacing="-1">Pasteriser</text>
+
+  <!-- Tagline -->
+  <text x="330" y="310" font-size="28" font-weight="400" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" fill-opacity="0.8">Secure code sharing with end-to-end encryption</text>
+
+  <!-- Feature pills -->
+  <g transform="translate(330, 350)">
+    <!-- E2E Encryption -->
+    <rect x="0" y="0" width="180" height="42" rx="21" fill="white" fill-opacity="0.15" />
+    <text x="90" y="27" font-size="16" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" text-anchor="middle">E2E Encryption</text>
+
+    <!-- Syntax Highlighting -->
+    <rect x="196" y="0" width="210" height="42" rx="21" fill="white" fill-opacity="0.15" />
+    <text x="301" y="27" font-size="16" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" text-anchor="middle">Syntax Highlighting</text>
+
+    <!-- Burn After Reading -->
+    <rect x="422" y="0" width="200" height="42" rx="21" fill="white" fill-opacity="0.15" />
+    <text x="522" y="27" font-size="16" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" text-anchor="middle">Burn After Reading</text>
+
+    <!-- View Limits -->
+    <rect x="638" y="0" width="150" height="42" rx="21" fill="white" fill-opacity="0.15" />
+    <text x="713" y="27" font-size="16" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" text-anchor="middle">View Limits</text>
+  </g>
+
+  <!-- URL -->
+  <text x="330" y="460" font-size="22" font-weight="500" font-family="'SF Mono', 'Cascadia Code', 'Fira Code', monospace" fill="white" fill-opacity="0.5">paste.erfi.dev</text>
+
+  <!-- Bottom decorative line -->
+  <rect x="80" y="560" width="1040" height="2" rx="1" fill="white" fill-opacity="0.1" />
 </svg>
