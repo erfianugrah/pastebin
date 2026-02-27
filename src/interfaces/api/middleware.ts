@@ -64,20 +64,6 @@ export class ApiMiddleware {
     return headers;
   }
 
-  async handleRateLimit(request: Request): Promise<Response | null> {
-    const securityConfig = this.configService.getSecurityConfig();
-    
-    // Skip rate limiting if disabled
-    if (!securityConfig.rateLimit.enabled) {
-      return null;
-    }
-    
-    // For simplicity, we're not implementing actual rate limiting in this example
-    // A real implementation would use Cloudflare Workers KV or another store to track requests
-    
-    return null;
-  }
-
   async addResponseHeaders(response: Response, request: Request): Promise<Response> {
     const headers = new Headers(response.headers);
     const corsHeaders = this.getCorsHeaders(request);
@@ -86,7 +72,7 @@ export class ApiMiddleware {
     // Add comprehensive security headers
     const cspDirectives = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-eval'", // unsafe-eval needed for crypto workers
+      "script-src 'self'", // Web Workers load via worker-src/blob: below; unsafe-eval not needed
       "style-src 'self' 'unsafe-inline'", // unsafe-inline needed for dynamic styles
       "connect-src 'self'",
       "img-src 'self' data: blob:", // data: for dynamically generated images, blob: for object URLs

@@ -64,12 +64,12 @@ export class Paste {
     private readonly title?: string,
     private readonly language?: string,
     private readonly visibility: Visibility = 'public',
-    // passwordHash field is removed in Phase 4
     private readonly burnAfterReading: boolean = false,
     private readonly readCount: number = 0,
     private readonly isEncrypted: boolean = false,
     private readonly viewLimit?: number,
-    private readonly version: number = 0, // 0=plaintext, 1=server-side password, 2=client-side encryption
+    private readonly version: number = 0, // 0=plaintext, 2=client-side encryption
+    private readonly deleteToken?: string, // token required to delete this paste
   ) {}
 
   static create(
@@ -79,11 +79,11 @@ export class Paste {
     title?: string,
     language?: string,
     visibility: Visibility = 'public',
-    // passwordHash parameter removed in Phase 4
     burnAfterReading: boolean = false,
     isEncrypted: boolean = false,
     viewLimit?: number,
-    version: number = 0, // 0=plaintext, 1=server-side pw, 2=client-side encryption
+    version: number = 0, // 0=plaintext, 2=client-side encryption
+    deleteToken?: string,
   ): Paste {
     let resolvedVersion = version;
     if (!isEncrypted) {
@@ -91,6 +91,9 @@ export class Paste {
     } else if (resolvedVersion < 2) {
       resolvedVersion = 2;
     }
+
+    // Generate a delete token if none provided
+    const token = deleteToken ?? crypto.randomUUID();
 
     return new Paste(
       id,
@@ -100,12 +103,12 @@ export class Paste {
       title,
       language,
       visibility,
-      // passwordHash parameter removed in Phase 4
       burnAfterReading,
       0, // readCount starts at 0
       isEncrypted,
       viewLimit,
       resolvedVersion,
+      token,
     );
   }
 
@@ -145,8 +148,6 @@ export class Paste {
     return this.expirationPolicy.hasExpired(this.createdAt, currentDate);
   }
   
-  // All password-related methods have been removed in the final cleanup
-  
   isBurnAfterReading(): boolean {
     return this.burnAfterReading;
   }
@@ -168,7 +169,8 @@ export class Paste {
       this.readCount + 1,
       this.isEncrypted,
       this.viewLimit,
-      this.version
+      this.version,
+      this.deleteToken,
     );
   }
   
@@ -176,17 +178,12 @@ export class Paste {
     return this.burnAfterReading && this.readCount > 0;
   }
   
-  // Password verification method has been removed in the final cleanup
-  
   // Helper method to identify client-side encrypted content
   isClientSideEncrypted(): boolean {
-    // Phase 4: Check if content is encrypted AND uses client-side encryption
     return this.isEncrypted === true && this.version >= 2;
   }
 
   getIsEncrypted(): boolean {
-    // In Phase 4, we respect the explicit isEncrypted flag
-    // Version is just metadata about the encryption method used (if any)
     return this.isEncrypted;
   }
   
@@ -208,6 +205,10 @@ export class Paste {
     }
   }
   
+  getDeleteToken(): string | undefined {
+    return this.deleteToken;
+  }
+
   getViewLimit(): number | undefined {
     return this.viewLimit;
   }
@@ -224,9 +225,8 @@ export class Paste {
     return this.readCount >= (this.viewLimit as number);
   }
 
-  toJSON(_includePasswordHash = false) {
-    // Phase 4: Password hashes are completely removed
-    const json = {
+  toJSON(includeSecrets = false) {
+    const json: Record<string, any> = {
       id: this.id.toString(),
       content: this.content,
       title: this.title,
@@ -234,17 +234,21 @@ export class Paste {
       createdAt: this.createdAt.toISOString(),
       expiresAt: this.getExpiresAt().toISOString(),
       visibility: this.visibility,
-      // isPasswordProtected field removed in final cleanup
       burnAfterReading: this.burnAfterReading,
       readCount: this.readCount,
-      isEncrypted: this.isEncrypted, // Use the explicit encryption flag
+      isEncrypted: this.isEncrypted,
       hasViewLimit: this.hasViewLimit(),
       viewLimit: this.viewLimit,
       remainingViews: this.hasViewLimit() ? Math.max(0, (this.viewLimit as number) - this.readCount) : null,
-      version: this.version, // Include encryption version
-      securityType: this.getSecurityType(), // Human-readable security description
+      version: this.version,
+      securityType: this.getSecurityType(),
     };
-    
+
+    // Only include deleteToken when persisting to storage, never in API responses
+    if (includeSecrets) {
+      json.deleteToken = this.deleteToken;
+    }
+
     return json;
   }
   
@@ -278,13 +282,13 @@ export interface PasteData {
   createdAt: string;
   expiresAt: string;
   visibility: Visibility;
-  // passwordHash and isPasswordProtected fields removed in final cleanup
   burnAfterReading?: boolean;
   readCount?: number;
   isEncrypted?: boolean;
   viewLimit?: number;
   hasViewLimit?: boolean;
   remainingViews?: number | null;
-  version?: number; // Encryption version: 0=plaintext, 1=server-side, 2=client-side
-  securityType?: string; // Human-readable security description
+  version?: number; // Encryption version: 0=plaintext, 2=client-side
+  securityType?: string;
+  deleteToken?: string;
 }

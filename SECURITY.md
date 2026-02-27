@@ -30,8 +30,14 @@ This document outlines the security measures implemented in the Pastebin applica
 
 ### 1. **Admin Endpoint Protection** ✅
 - All administrative endpoints require Bearer token authentication
-- Uses timing-safe string comparison to prevent timing attacks
+- Uses SHA-256 hashing + constant-time XOR comparison to prevent both timing and length-oracle attacks
 - Returns proper 401 responses with WWW-Authenticate header
+
+### 1b. **Paste Deletion Authorization** ✅
+- Each paste receives a unique `deleteToken` (UUID) at creation time
+- Delete operations require the token via query parameter or JSON body
+- Token is stored alongside the paste in KV but never exposed in API responses
+- Without the token, deletion returns HTTP 403 Forbidden
 
 ### 2. **CORS Security** ✅ 
 - Strict origin validation with explicit allowlist
@@ -46,7 +52,7 @@ This document outlines the security measures implemented in the Pastebin applica
 ### 4. **Content Security Policy** ✅
 ```
 default-src 'self';
-script-src 'self' 'unsafe-eval';
+script-src 'self';
 style-src 'self' 'unsafe-inline';
 connect-src 'self';
 img-src 'self' data: blob:;
@@ -60,6 +66,8 @@ base-uri 'self';
 form-action 'self'
 ```
 
+> Note: `unsafe-eval` has been removed from `script-src`. Web Workers load via `worker-src 'self' blob:` and do not require `unsafe-eval`.
+
 ### 5. **Secure Storage** ✅
 - Encryption keys stored using AES-GCM encryption in localStorage
 - Master key generated per browser session
@@ -68,8 +76,14 @@ form-action 'self'
 
 ### 6. **Rate Limiting** ✅
 - Path-based validation for static asset bypass prevention
-- Stricter limits for POST operations
+- Stricter limits for POST operations (10/min for paste creation, 60/min general)
 - IP-based tracking with Cloudflare KV
+- In-memory cache bounded at 1000 entries with automatic expired-entry eviction
+
+### 6b. **Webhook SSRF Prevention** ✅
+- Webhook URLs validated on registration and update
+- Only HTTPS URLs allowed
+- Blocked destinations: private IPs (RFC 1918), loopback addresses, link-local (169.254.x.x), `.local`/`.internal` hostnames, cloud metadata endpoints
 
 ### 7. **Information Disclosure Prevention** ✅
 - Stack traces only shown in development
@@ -118,6 +132,9 @@ Before deploying to production:
 - [ ] CSP headers tested with application functionality
 - [ ] Admin endpoints tested with authentication
 - [ ] Rate limiting tested and configured appropriately
+- [ ] Verify paste deletion requires `deleteToken` (test with and without token)
+- [ ] Verify webhook secrets are not exposed in `GET /api/webhooks` responses
+- [ ] Verify webhook registration rejects non-HTTPS and internal URLs
 
 ## Security Monitoring
 

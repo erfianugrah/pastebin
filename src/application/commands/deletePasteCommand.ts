@@ -37,13 +37,14 @@ export class DeletePasteCommand {
       };
     }
     
-    // TODO: In the future, we could implement authorization checks here
-    // if (paste.getOwnerToken() !== validParams.ownerToken) {
-    //   return {
-    //     success: false,
-    //     message: 'Unauthorized'
-    //   };
-    // }
+    // Verify the delete token matches (required for authorization)
+    const storedToken = paste.getDeleteToken();
+    if (storedToken && storedToken !== validParams.ownerToken) {
+      return {
+        success: false,
+        message: 'Unauthorized'
+      };
+    }
     
     // Delete the paste
     const deleted = await this.repository.delete(pasteId);

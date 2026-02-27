@@ -31,7 +31,8 @@ export class PasteFactory {
       data.readCount || 0,
       data.isEncrypted || false,
       data.viewLimit,
-      data.version || 0
+      data.version || 0,
+      data.deleteToken,
     );
   }
 }

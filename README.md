@@ -185,12 +185,14 @@ classDiagram
         -boolean isEncrypted
         -number? viewLimit
         -number version
+        -string? deleteToken
         +getId() PasteId
         +getContent() string
         +hasExpired() boolean
         +incrementReadCount() Paste
         +getSecurityType() string
-        +toJSON() object
+        +getDeleteToken() string?
+        +toJSON(includeSecrets) object
     }
     
     class PasteId {
@@ -348,28 +350,49 @@ The API is RESTful and follows standard HTTP conventions.
 **Request Body:**
 ```json
 {
-  "content": "string", 
+  "content": "string",
   "title": "string",
   "language": "string",
   "expiration": 86400,
   "visibility": "public",
   "password": "string",
-  "burnAfterReading": false
+  "burnAfterReading": false,
+  "isEncrypted": false,
+  "viewLimit": 10,
+  "version": 2
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content` | string | Yes | Paste content (max 25 MiB) |
+| `title` | string | No | Title (max 100 chars) |
+| `language` | string | No | Syntax highlighting language |
+| `expiration` | number | No | TTL in seconds (default: 86400) |
+| `visibility` | string | No | `"public"` or `"private"` (default: `"public"`) |
+| `password` | string | No | Triggers client-side E2E encryption |
+| `burnAfterReading` | boolean | No | Self-destruct after first view |
+| `isEncrypted` | boolean | No | Whether content is already E2E encrypted |
+| `viewLimit` | number | No | Max views before auto-deletion (1-100) |
+| `version` | number | No | Encryption version (0=plaintext, 2=client-side E2E) |
 
 **Response:**
 ```json
 {
   "id": "string",
   "url": "string",
-  "expiresAt": "string"
+  "expiresAt": "string",
+  "deleteToken": "string"
 }
 ```
+
+> **Important:** The `deleteToken` is returned only at creation time. Store it securely — it is the only way to authorize deletion of the paste.
 
 #### Get a Paste
 
 **Endpoint:** `GET /pastes/:id`
+
+Set `Accept: application/json` to receive JSON. HTML requests are served the Astro viewer page.
 
 **Response:**
 ```json
@@ -381,19 +404,14 @@ The API is RESTful and follows standard HTTP conventions.
   "createdAt": "string",
   "expiresAt": "string",
   "visibility": "public",
-  "isPasswordProtected": false,
-  "burnAfterReading": false
-}
-```
-
-#### Access a Password-Protected Paste
-
-**Endpoint:** `POST /pastes/:id`
-
-**Request Body:**
-```json
-{
-  "password": "string"
+  "burnAfterReading": false,
+  "readCount": 1,
+  "isEncrypted": false,
+  "hasViewLimit": false,
+  "viewLimit": null,
+  "remainingViews": null,
+  "version": 0,
+  "securityType": "Public"
 }
 ```
 
@@ -401,12 +419,51 @@ The API is RESTful and follows standard HTTP conventions.
 
 **Endpoint:** `GET /pastes/raw/:id`
 
+Returns the raw paste content as `text/plain`.
+
+#### Delete a Paste
+
+**Endpoint:** `DELETE /pastes/:id/delete`
+
+Deletion requires the `deleteToken` that was returned when the paste was created.
+
+**Via query parameter:**
+```bash
+curl -X DELETE "https://paste.erfi.dev/pastes/PASTE_ID/delete?token=DELETE_TOKEN"
+```
+
+**Via JSON body:**
+```bash
+curl -X DELETE "https://paste.erfi.dev/pastes/PASTE_ID/delete" \
+  -H "Content-Type: application/json" \
+  -d '{"token": "DELETE_TOKEN"}'
+```
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "message": "Paste deleted successfully"
+}
+```
+
+**Response (unauthorized):**
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Unauthorized"
+  }
+}
+```
+
 ### Rate Limiting
 
 Rate limiting is applied to protect the service:
 
 - General rate limit: 60 requests per minute
 - Paste creation: 10 pastes per minute
+- Rate limit data cached in-memory with bounded eviction (max 1000 entries) and persisted to KV
 
 ## Getting Started
 
@@ -782,8 +839,9 @@ Pasteriser implements comprehensive security measures to protect user data and s
 
 #### Authentication & Authorization ✅
 - **Admin API Protection**: All administrative endpoints (`/api/analytics`, `/api/logs`, `/api/webhooks`) require Bearer token authentication
-- **Timing-Safe Validation**: Uses constant-time string comparison to prevent timing attacks
-- **Proper Error Handling**: Returns standard HTTP 401 responses with appropriate headers
+- **Timing-Safe Validation**: Uses SHA-256 hashing with constant-time comparison to prevent both timing and length-oracle attacks
+- **Paste Deletion Authorization**: Delete operations require a `deleteToken` issued at creation time
+- **Proper Error Handling**: Returns standard HTTP 401/403 responses with appropriate headers
 
 #### Cross-Site Scripting (XSS) Prevention ✅
 - **Complete HTML Injection Prevention**: All user content uses `textContent` instead of `innerHTML`
@@ -797,13 +855,14 @@ Pasteriser implements comprehensive security measures to protect user data and s
 
 #### Content Security Policy (CSP) ✅
 - **Comprehensive Directives**: Covers all resource types with minimal permissions
-- **Web Worker Support**: Allows necessary `blob:` sources for crypto workers
+- **No unsafe-eval**: `script-src` restricted to `'self'` only; Web Workers load via `worker-src blob:`
 - **No Inline Scripts**: Prevents injection of arbitrary JavaScript
 
 #### Rate Limiting Security ✅
 - **Path-Based Validation**: Prevents bypass via crafted file extensions
 - **Static Asset Protection**: Legitimate assets exempt without security holes
 - **Granular Limits**: Different limits for different operation types
+- **Bounded Memory**: In-memory cache capped at 1000 entries with automatic eviction of expired entries
 
 #### Secure Data Storage ✅
 - **Encrypted localStorage**: AES-GCM encryption for all sensitive data
@@ -906,6 +965,36 @@ All 5 KV namespaces are configured and operational:
 
 ## Recent Updates
 
+### February 2026 - Security & Code Quality Audit
+
+A comprehensive code review identified and fixed 16 issues across security, correctness, and performance:
+
+#### Critical Fixes
+- **Burn-After-Reading Fix**: Creating a paste no longer increments its read count (previously, fetching the paste for webhook payload triggered a view, causing burn-after-reading pastes to self-destruct on creation)
+- **View Limit Deletion**: Replaced unreliable `setTimeout` with synchronous deletion — Cloudflare Workers may terminate before deferred callbacks fire
+- **Paste Deletion Authorization**: Pastes now require a `deleteToken` (returned at creation time) to delete. Previously, anyone who knew a paste ID could delete it
+
+#### Security Hardening
+- **Webhook Secret Redaction**: Webhook endpoints no longer expose their `secret` field in API responses
+- **SSRF Prevention**: Webhook registration now validates URLs — blocks private IPs, loopback addresses, non-HTTPS, and internal hostnames
+- **Timing-Safe Auth**: Admin auth now hashes both inputs with SHA-256 before constant-time comparison, eliminating the length-oracle side channel
+- **CSP Tightened**: Removed `unsafe-eval` from `script-src`; Web Workers use `worker-src blob:` instead
+
+#### Bug Fixes
+- **AppError Misuse**: Fixed all `AppError` constructor calls in `webhookService.ts` where arguments were swapped (`message` passed as `code`, string `'500'` passed as `message`)
+- **Error Handling Consistency**: API handlers now throw `AppError` and let the global error handler produce responses, eliminating ~100 lines of duplicate try/catch blocks
+
+#### Performance Improvements
+- **N+1 Query Fix**: Recent pastes are now fetched in parallel (`Promise.all`) instead of sequentially; paste IDs are extracted from KV key names instead of doing extra reads
+- **Rate Limiter Bounded Cache**: In-memory rate limit cache is now capped at 1000 entries with automatic eviction of expired entries, preventing unbounded memory growth
+
+#### Code Quality
+- **Static Imports**: All dynamic `await import()` calls replaced with static imports at the module level
+- **Admin Route Helper**: Extracted `adminRoute()` helper to deduplicate admin auth checks (was copy-pasted 4 times)
+- **Config Consistency**: Paste max size in config and Zod schema now both set to 25 MiB (matching Cloudflare KV limit)
+- **Stale Comment Cleanup**: Removed obsolete Phase 4 / password-hash comments throughout the codebase
+- **Unused Code Removal**: Removed dead `handleRateLimit` method from `ApiMiddleware`
+
 ### December 2025 - Critical Fixes & Improvements
 
 #### View Limits & Burn After Reading Enhancement
@@ -913,77 +1002,47 @@ The view limit system has been completely rewritten for correctness:
 - **Incremental Counting**: Read count now increments on every view, not just the last one
 - **Pre-check Validation**: System validates view limit before serving content
 - **Proper Deletion**: Burn-after-reading and view-limit-reached pastes are properly deleted
-- **User Impact**: View limits now work as users expect - each view counts toward the limit
 
 #### CORS Security Improvements
-CORS handling has been enhanced for better credential support:
 - **Origin Mirroring**: When using wildcard allowlist, mirrors Origin header for credentials
 - **Consistent Headers**: CORS headers applied to all responses, not just preflight
 - **Flexible Configuration**: Supports both wildcard and explicit origin allowlists
-- **Developer Experience**: Maintains request context throughout response pipeline
 
 #### Analytics Infrastructure
-Analytics system now uses dedicated storage:
-- **Separated Concerns**: Analytics data no longer mixed with paste data
+- **Separated Concerns**: Analytics data now in dedicated `ANALYTICS` KV namespace
 - **Graceful Degradation**: Works without ANALYTICS namespace (logs warning)
 - **30-Day Retention**: Automatic expiration of analytics events
-- **Performance**: Reduces load on main PASTES namespace
 
 #### Admin Authentication Improvements
-Admin endpoints now properly read environment configuration:
 - **Environment Variables**: Reads ADMIN_API_KEY from worker environment
 - **Type Safety**: Full TypeScript support for admin credentials
-- **Security**: Maintains timing-safe comparison for authentication
-- **Flexibility**: Supports both secrets and environment variables
 
 #### Webhook Auto-Configuration
-Webhooks now auto-enable when the binding exists:
 - **Smart Detection**: Automatically enables when WEBHOOKS KV exists
 - **Explicit Control**: Can be manually disabled via config if needed
-- **Zero Config**: Works out of the box with just the KV binding
-- **User Experience**: No manual configuration required for basic usage
 
 For detailed technical information about these changes, see [CHANGELOG.md](./CHANGELOG.md).
 
 ### Verification & Testing
 
-To verify all fixes are working correctly:
-
 ```bash
-# 1. Test view limits
-# Create a paste with viewLimit=2, view it twice
-# Expected: Paste deleted after second view
+# 1. Create a paste and note the deleteToken
+curl -X POST https://paste.erfi.dev/pastes \
+  -H "Content-Type: application/json" \
+  -d '{"content": "test", "viewLimit": 2}'
+# Response includes: { "id": "...", "deleteToken": "..." }
 
-# 2. Test burn after reading
-# Create paste with burnAfterReading=true, view once
-# Expected: Paste deleted immediately after first view
+# 2. Delete a paste (requires token)
+curl -X DELETE "https://paste.erfi.dev/pastes/PASTE_ID/delete?token=DELETE_TOKEN"
 
-# 3. Test analytics (requires ADMIN_API_KEY)
+# 3. Test admin endpoints (requires ADMIN_API_KEY)
 curl -H "Authorization: Bearer YOUR_KEY" https://paste.erfi.dev/api/analytics
-# Expected: JSON response with analytics data
 
-# 4. Test CORS (if configured)
-# Make cross-origin request from allowed origin
-# Expected: Proper CORS headers including mirrored Origin
-
-# 5. Test webhooks (if configured)
-# Create webhook via admin API, trigger an event
-# Expected: Webhook receives POST with event data
-```
-
-### Next Steps for Full Admin Access
-
-Set the admin API key as a Cloudflare Worker secret:
-
-```bash
-# Generate a strong key
-openssl rand -hex 32
-
-# Add to production environment
-wrangler secret put ADMIN_API_KEY --env production
-
-# Verify admin access
-curl -H "Authorization: Bearer YOUR_KEY" https://paste.erfi.dev/api/analytics
+# 4. Test burn after reading
+curl -X POST https://paste.erfi.dev/pastes \
+  -H "Content-Type: application/json" \
+  -d '{"content": "secret", "burnAfterReading": true}'
+# View once, then second view returns 404
 ```
 
 ## License

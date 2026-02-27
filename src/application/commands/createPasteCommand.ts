@@ -6,12 +6,12 @@ import { UniqueIdService } from '../../domain/services/uniqueIdService';
 
 // Using Zod 4 schema definition
 export const CreatePasteSchema = z.object({
-  content: z.string().min(1).max(25 * 1024 * 1024), // Max 25MB
+  content: z.string().min(1).max(25 * 1024 * 1024), // Max 25MiB (Cloudflare KV value limit)
   title: z.string().max(100).optional(),
   language: z.string().optional(),
   expiration: z.number().positive().default(86400), // Default 1 day
   visibility: VisibilityEnum.default('public'),
-  password: z.string().max(100).optional(), // Still needed for client-side encryption detection
+  password: z.string().max(100).optional(), // Presence triggers client-side encryption
   burnAfterReading: z.boolean().default(false),
   isEncrypted: z.boolean().default(false), // Whether the content is already encrypted client-side
   viewLimit: z.number().int().min(1).max(100).optional(), // Optional view limit
@@ -24,6 +24,7 @@ export interface CreatePasteResult {
   id: string;
   url: string;
   expiresAt: string;
+  deleteToken: string;
 }
 
 export class CreatePasteCommand {
@@ -45,9 +46,6 @@ export class CreatePasteCommand {
     const expirationPolicy = this.expirationService.createFromSeconds(
       validParams.expiration,
     );
-    
-    // Final cleanup: All password handling is client-side
-    // The server only needs to know if content is encrypted
     
     // Ensure isEncrypted is set correctly
     if (validParams.password) {
@@ -72,7 +70,6 @@ export class CreatePasteCommand {
       validParams.title,
       validParams.language,
       validParams.visibility,
-      // passwordHash parameter removed in Phase 4
       validParams.burnAfterReading,
       validParams.isEncrypted,
       validParams.viewLimit,
@@ -82,11 +79,12 @@ export class CreatePasteCommand {
     // Save to repository
     await this.repository.save(paste);
     
-    // Return result
+    // Return result (includes deleteToken so the creator can delete their paste)
     return {
       id: id.toString(),
       url: `${this.baseUrl}/pastes/${id.toString()}`,
       expiresAt: paste.getExpiresAt().toISOString(),
+      deleteToken: paste.getDeleteToken()!,
     };
   }
 }

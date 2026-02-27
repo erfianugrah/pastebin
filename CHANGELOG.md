@@ -1,6 +1,85 @@
 # Changelog
 
-## [Unreleased] - 2025-12-06
+## [2.0.0] - 2026-02-27
+
+### Security
+
+#### Paste Deletion Authorization
+- **Delete Token**: Pastes now include a `deleteToken` (UUID) generated at creation time
+- **Authorized Deletion**: `DELETE /pastes/:id/delete` requires the token via `?token=` query param or JSON body
+- **API Change**: `POST /pastes` response now includes `deleteToken` field
+- **Breaking**: Existing pastes without a `deleteToken` can still be deleted (backward compatible), but new pastes require the token
+- **Locations**: `src/domain/models/paste.ts`, `src/application/commands/createPasteCommand.ts`, `src/application/commands/deletePasteCommand.ts`
+
+#### Webhook Secret Redaction
+- **Secrets Hidden**: `GET /api/webhooks` and `GET /api/webhooks/:id` no longer expose the `secret` field
+- **Location**: `src/infrastructure/webhooks/webhookService.ts`
+
+#### SSRF Prevention for Webhooks
+- **URL Validation**: Webhook registration and updates now validate URLs
+- **Blocked**: Private IPs (10.x, 172.16-31.x, 192.168.x), loopback (127.0.0.1, ::1, localhost), metadata endpoints (169.254.169.254), non-HTTPS URLs, `.local`/`.internal` hostnames
+- **Location**: `src/infrastructure/webhooks/webhookService.ts`
+
+#### Timing-Safe Auth Hardened
+- **Length-Oracle Fix**: Admin auth now hashes both inputs with SHA-256 before constant-time XOR comparison, eliminating the early return on length mismatch
+- **Async**: `validateAdminAuth` is now `async` to support `crypto.subtle.digest`
+- **Location**: `src/infrastructure/auth/adminAuth.ts`
+
+#### CSP Tightened
+- **Removed `unsafe-eval`**: `script-src` now restricted to `'self'` only
+- **Web Workers**: Continue to work via existing `worker-src 'self' blob:` directive
+- **Location**: `src/interfaces/api/middleware.ts`
+
+### Fixed
+
+#### Critical: Burn-After-Reading Broken on Create
+- **Root Cause**: `handleCreatePaste` called `getPasteQuery.execute()` to fetch the paste for webhooks, which incremented the read count and triggered burn-after-reading deletion
+- **Fix**: Added `GetPasteQuery.findById()` — a read-only method that does not increment read count or trigger side effects
+- **Locations**: `src/application/queries/getPasteQuery.ts`, `src/interfaces/api/handlers.ts`
+
+#### Critical: View Limit Deletion Unreliable
+- **Root Cause**: Used `setTimeout` to schedule deletion after view limit reached, but Cloudflare Workers may terminate the isolate before the timeout fires
+- **Fix**: Deletion now happens synchronously before returning the response
+- **Location**: `src/application/queries/getPasteQuery.ts`
+
+#### AppError Constructor Arguments Swapped
+- **Root Cause**: All `AppError` calls in `webhookService.ts` passed `(message, statusCodeString)` instead of `(code, message, statusCode)`
+- **Fix**: Corrected all 7 call sites to use `(code, message, numericStatus)` format
+- **Location**: `src/infrastructure/webhooks/webhookService.ts`
+
+### Improved
+
+#### Performance: N+1 Query for Recent Pastes
+- **Before**: Sequential KV `get()` for each recent paste + extra read to get paste ID from value
+- **After**: Paste IDs extracted from key names (`recent:{timestamp}:{id}`), all pastes fetched in parallel with `Promise.all()`
+- **Location**: `src/infrastructure/storage/kvPasteRepository.ts`
+
+#### Performance: Rate Limiter Memory Leak
+- **Before**: Module-level `Map` grew unbounded across requests within an isolate
+- **After**: Capped at 1000 entries; expired entries evicted when limit reached; oldest entries removed as fallback
+- **Location**: `src/infrastructure/security/rateLimit.ts`
+
+#### Code Quality: Error Handling Consistency
+- **Before**: Every handler had its own try/catch returning manual JSON error responses (~100 lines of duplicated boilerplate)
+- **After**: Handlers throw `AppError` (or rethrow Zod errors as `ValidationError`); global `errorHandler` in `index.ts` produces all error responses
+- **Location**: `src/interfaces/api/handlers.ts`
+
+#### Code Quality: Routing Deduplication
+- **Before**: Admin auth logic copy-pasted 4 times; dynamic `await import()` on every request; duplicate `/pastes` and `/pastes/` handlers
+- **After**: `adminRoute()` helper function; all imports static at module level; consolidated paste index handler
+- **Location**: `src/index.ts`
+
+#### Code Quality: Config Consistency
+- **Before**: Zod schema allowed 25 MiB content, config default said 1 MB
+- **After**: Both set to 25 MiB, matching Cloudflare KV's actual value limit
+- **Locations**: `src/application/commands/createPasteCommand.ts`, `src/infrastructure/config/config.ts`
+
+#### Code Quality: Stale Comments & Dead Code
+- **Removed**: Obsolete Phase 4 / password-hash comments throughout domain model and commands
+- **Removed**: Unused `handleRateLimit()` method from `ApiMiddleware`
+- **Locations**: Various files across `src/domain/`, `src/application/`, `src/interfaces/`
+
+## [1.0.0] - 2025-12-06
 
 ### Fixed
 
@@ -8,7 +87,6 @@
 - **Incremental Read Count**: View limits now properly increment on every successful read, not just the final view
 - **Pre-check Enforcement**: System now checks if view limit is already exceeded before serving content
 - **Burn After Reading**: Properly deletes pastes immediately after first view
-- **Scheduled Deletion**: When view limit is reached, paste is scheduled for deletion (1 second delay)
 - **Location**: `src/application/queries/getPasteQuery.ts`
 
 #### CORS Handling

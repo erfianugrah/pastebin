@@ -50,13 +50,65 @@ export class WebhookService {
       }
     } catch (error) {
       this.logger.error('Failed to initialize webhook service', { error });
-      throw new AppError('Failed to initialize webhook service', '500');
+      throw new AppError('webhook_init_failed', 'Failed to initialize webhook service', 500);
+    }
+  }
+
+  /**
+   * Validate that a webhook URL is safe to call (SSRF prevention).
+   * Rejects private/loopback IPs and non-HTTPS URLs.
+   */
+  private validateWebhookUrl(url: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new AppError('invalid_webhook_url', 'Invalid webhook URL', 400);
+    }
+
+    // Only allow HTTPS
+    if (parsed.protocol !== 'https:') {
+      throw new AppError('invalid_webhook_url', 'Webhook URL must use HTTPS', 400);
+    }
+
+    // Block obviously internal hostnames
+    const hostname = parsed.hostname.toLowerCase();
+    const blocked = [
+      'localhost',
+      '127.0.0.1',
+      '0.0.0.0',
+      '::1',
+      '[::1]',
+      'metadata.google.internal',
+      '169.254.169.254',
+    ];
+
+    if (blocked.includes(hostname) || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
+      throw new AppError('invalid_webhook_url', 'Webhook URL must not point to internal addresses', 400);
+    }
+
+    // Block RFC-1918 / private IP ranges
+    const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+    if (ipv4Match) {
+      const [, a, b] = ipv4Match.map(Number);
+      if (
+        a === 10 ||
+        a === 127 ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        a === 0
+      ) {
+        throw new AppError('invalid_webhook_url', 'Webhook URL must not point to private IP addresses', 400);
+      }
     }
   }
 
   // Register a new webhook endpoint
   public async registerEndpoint(endpoint: Omit<WebhookEndpoint, 'id' | 'createdAt'>): Promise<WebhookEndpoint> {
     try {
+      // Validate URL to prevent SSRF
+      this.validateWebhookUrl(endpoint.url);
+
       // Generate a unique ID for the endpoint
       const id = crypto.randomUUID();
       
@@ -83,17 +135,22 @@ export class WebhookService {
       return newEndpoint;
     } catch (error) {
       this.logger.error('Failed to register webhook endpoint', { error });
-      throw new AppError('Failed to register webhook endpoint', '500');
+      throw new AppError('webhook_register_failed', 'Failed to register webhook endpoint', 500);
     }
   }
 
   // Update an existing webhook endpoint
   public async updateEndpoint(id: string, update: Partial<Omit<WebhookEndpoint, 'id' | 'createdAt'>>): Promise<WebhookEndpoint> {
     try {
+      // Validate new URL if provided
+      if (update.url) {
+        this.validateWebhookUrl(update.url);
+      }
+
       const index = this.endpoints.findIndex(e => e.id === id);
       
       if (index === -1) {
-        throw new AppError('Webhook endpoint not found', '404');
+        throw new AppError('webhook_not_found', 'Webhook endpoint not found', 404);
       }
       
       // Update the endpoint
@@ -110,7 +167,7 @@ export class WebhookService {
       return this.endpoints[index];
     } catch (error) {
       this.logger.error('Failed to update webhook endpoint', { error, id });
-      throw error instanceof AppError ? error : new AppError('Failed to update webhook endpoint', '500');
+      throw error instanceof AppError ? error : new AppError('webhook_update_failed', 'Failed to update webhook endpoint', 500);
     }
   }
 
@@ -121,7 +178,7 @@ export class WebhookService {
       this.endpoints = this.endpoints.filter(e => e.id !== id);
       
       if (this.endpoints.length === initialLength) {
-        throw new AppError('Webhook endpoint not found', '404');
+        throw new AppError('webhook_not_found', 'Webhook endpoint not found', 404);
       }
       
       // Persist to KV
@@ -130,18 +187,25 @@ export class WebhookService {
       this.logger.info('Deleted webhook endpoint', { id });
     } catch (error) {
       this.logger.error('Failed to delete webhook endpoint', { error, id });
-      throw error instanceof AppError ? error : new AppError('Failed to delete webhook endpoint', '500');
+      throw error instanceof AppError ? error : new AppError('webhook_delete_failed', 'Failed to delete webhook endpoint', 500);
     }
   }
 
-  // Get all webhook endpoints
-  public async getEndpoints(): Promise<WebhookEndpoint[]> {
-    return this.endpoints;
+  // Strip secret from endpoint before returning to API consumers
+  private sanitizeEndpoint(endpoint: WebhookEndpoint): Omit<WebhookEndpoint, 'secret'> & { secret?: never } {
+    const { secret, ...safe } = endpoint;
+    return safe;
   }
 
-  // Get a webhook endpoint by ID
-  public async getEndpoint(id: string): Promise<WebhookEndpoint | null> {
-    return this.endpoints.find(e => e.id === id) || null;
+  // Get all webhook endpoints (secrets redacted)
+  public async getEndpoints(): Promise<Omit<WebhookEndpoint, 'secret'>[]> {
+    return this.endpoints.map(e => this.sanitizeEndpoint(e));
+  }
+
+  // Get a webhook endpoint by ID (secret redacted)
+  public async getEndpoint(id: string): Promise<Omit<WebhookEndpoint, 'secret'> | null> {
+    const endpoint = this.endpoints.find(e => e.id === id);
+    return endpoint ? this.sanitizeEndpoint(endpoint) : null;
   }
 
   // Trigger a webhook event for paste creation
@@ -313,7 +377,7 @@ export class WebhookService {
       await this.kvNamespace.put('webhook_endpoints', JSON.stringify(this.endpoints));
     } catch (error) {
       this.logger.error('Failed to persist webhook endpoints', { error });
-      throw new AppError('Failed to persist webhook endpoints', '500');
+      throw new AppError('webhook_persist_failed', 'Failed to persist webhook endpoints', 500);
     }
   }
 }

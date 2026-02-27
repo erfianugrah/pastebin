@@ -9,7 +9,30 @@ type LocalRateLimitEntry = {
   resetTime: number;
 };
 
+const MAX_LOCAL_ENTRIES = 1000;
 const localRateLimits = new Map<string, LocalRateLimitEntry>();
+
+/**
+ * Evict expired entries from the local cache to prevent unbounded growth.
+ * Called periodically when the cache exceeds its size limit.
+ */
+function evictExpiredEntries(): void {
+  const now = Date.now();
+  for (const [key, entry] of localRateLimits) {
+    if (now >= entry.resetTime) {
+      localRateLimits.delete(key);
+    }
+  }
+  // If still over limit after eviction, remove oldest entries
+  if (localRateLimits.size > MAX_LOCAL_ENTRIES) {
+    const excess = localRateLimits.size - MAX_LOCAL_ENTRIES;
+    const keys = localRateLimits.keys();
+    for (let i = 0; i < excess; i++) {
+      const { value } = keys.next();
+      if (value) localRateLimits.delete(value);
+    }
+  }
+}
 
 export async function handleRateLimit(
   request: Request,
@@ -76,6 +99,11 @@ export async function handleRateLimit(
         console.error('Error parsing rate limit data:', error);
       }
     }
+  }
+
+  // Evict expired entries if cache is getting large
+  if (localRateLimits.size >= MAX_LOCAL_ENTRIES) {
+    evictExpiredEntries();
   }
 
   // Update local cache

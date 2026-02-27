@@ -4,6 +4,15 @@ import { PasteRepository } from '../../domain/repositories/pasteRepository';
 export class GetPasteQuery {
   constructor(private readonly repository: PasteRepository) {}
 
+  /**
+   * Read-only fetch of a paste without incrementing read count or triggering side effects.
+   * Use this for internal lookups (e.g. webhook payloads) where a "view" should not be recorded.
+   */
+  async findById(id: string): Promise<Paste | null> {
+    const pasteId = PasteId.create(id);
+    return this.repository.findById(pasteId);
+  }
+
   async execute(id: string): Promise<Paste | null> {
     const pasteId = PasteId.create(id);
     const paste = await this.repository.findById(pasteId);
@@ -35,11 +44,9 @@ export class GetPasteQuery {
       return updatedPaste;
     }
 
-    // If this view reached the view limit, schedule deletion
+    // If this view reached the view limit, delete immediately
     if (updatedPaste.hasViewLimit() && updatedPaste.hasReachedViewLimit()) {
-      setTimeout(async () => {
-        await this.repository.delete(updatedPaste.getId());
-      }, 1000);
+      await this.repository.delete(updatedPaste.getId());
     }
 
     return updatedPaste;

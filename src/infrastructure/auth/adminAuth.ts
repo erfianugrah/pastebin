@@ -11,7 +11,7 @@ export interface AuthResult {
 /**
  * Validates admin authentication token
  */
-export function validateAdminAuth(request: Request, env?: { ADMIN_API_KEY?: string }): AuthResult {
+export async function validateAdminAuth(request: Request, env?: { ADMIN_API_KEY?: string }): Promise<AuthResult> {
   const authHeader = request.headers.get('Authorization');
   
   if (!authHeader) {
@@ -33,7 +33,7 @@ export function validateAdminAuth(request: Request, env?: { ADMIN_API_KEY?: stri
   }
   
   // Use timing-safe comparison to prevent timing attacks
-  if (!timingSafeEquals(token, adminApiKey)) {
+  if (!(await timingSafeEquals(token, adminApiKey))) {
     return { success: false, error: 'Invalid API key' };
   }
   
@@ -41,18 +41,24 @@ export function validateAdminAuth(request: Request, env?: { ADMIN_API_KEY?: stri
 }
 
 /**
- * Timing-safe string comparison to prevent timing attacks
+ * Timing-safe string comparison to prevent timing attacks.
+ * Hashes both inputs with SHA-256 first so that length differences
+ * do not leak through an early return.
  */
-function timingSafeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  
+async function timingSafeEquals(a: string, b: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [hashA, hashB] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(a)),
+    crypto.subtle.digest('SHA-256', encoder.encode(b)),
+  ]);
+  const viewA = new Uint8Array(hashA);
+  const viewB = new Uint8Array(hashB);
+
+  // Constant-time comparison of the fixed-length hashes
   let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (let i = 0; i < viewA.length; i++) {
+    result |= viewA[i] ^ viewB[i];
   }
-  
   return result === 0;
 }
 

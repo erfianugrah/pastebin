@@ -19,7 +19,7 @@ export const ConfigSchema = z.object({
     allowedOrigins: z.array(z.string()).optional(),
   }),
   paste: z.object({
-    maxSize: z.number().default(1024 * 1024), // 1MB
+    maxSize: z.number().default(25 * 1024 * 1024), // 25MiB (Cloudflare KV value limit)
     defaultExpiration: z.number().default(86400), // 1 day
     allowedLanguages: z.array(z.string()).optional(),
     maxRecentLimit: z.number().default(100),
@@ -51,7 +51,7 @@ export const defaultConfig: Config = {
     allowedOrigins: ['*'],
   },
   paste: {
-    maxSize: 1024 * 1024, // 1MB
+    maxSize: 25 * 1024 * 1024, // 25MiB (Cloudflare KV value limit)
     defaultExpiration: 86400, // 1 day
     allowedLanguages: undefined,
     maxRecentLimit: 100,

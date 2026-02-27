@@ -11,7 +11,7 @@ export class KVPasteRepository implements PasteRepository {
 
   async save(paste: Paste): Promise<void> {
     const id = paste.getId().toString();
-    // Pass true to include password hash in the stored data
+    // Pass true to include secrets (deleteToken) in stored data
     const data = paste.toJSON(true);
     
     this.logger.debug('Saving paste', { pasteId: id });
@@ -74,16 +74,13 @@ export class KVPasteRepository implements PasteRepository {
     this.logger.debug('Finding recent public pastes', { limit });
     
     const recentIds = await this.getRecentList(limit);
-    const pastes: Paste[] = [];
     
-    for (const id of recentIds) {
-      const paste = await this.findById(PasteId.create(id));
-      if (paste) {
-        pastes.push(paste);
-      }
-    }
+    // Fetch all pastes in parallel instead of sequentially (N+1 fix)
+    const results = await Promise.all(
+      recentIds.map(id => this.findById(PasteId.create(id)))
+    );
     
-    return pastes;
+    return results.filter((paste): paste is Paste => paste !== null);
   }
 
   private async addToRecentList(id: string, expiresAt: Date): Promise<void> {
@@ -120,6 +117,7 @@ export class KVPasteRepository implements PasteRepository {
 
   private async getRecentList(limit: number): Promise<string[]> {
     // List keys with recent prefix, sorted by timestamp (newest first)
+    // Key format is "recent:{timestamp}:{id}" so we can extract the ID directly
     const pasteIds: string[] = [];
     let listComplete = false;
     let cursor: string | undefined;
@@ -127,7 +125,7 @@ export class KVPasteRepository implements PasteRepository {
     while (!listComplete && pasteIds.length < limit) {
       const result = await this.kv.list({
         prefix: 'recent:',
-        limit: limit - pasteIds.length, // Fetch remaining needed keys
+        limit: limit - pasteIds.length,
         cursor,
       });
 
@@ -135,9 +133,10 @@ export class KVPasteRepository implements PasteRepository {
       result.keys.sort((a, b) => b.name.localeCompare(a.name));
 
       for (const key of result.keys) {
-        const id = await this.kv.get(key.name);
-        if (id) {
-          pasteIds.push(id);
+        // Extract paste ID from key name: "recent:{timestamp}:{id}"
+        const parts = key.name.split(':');
+        if (parts.length >= 3) {
+          pasteIds.push(parts.slice(2).join(':'));
         }
       }
 

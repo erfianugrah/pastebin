@@ -75,11 +75,14 @@ describe('CreatePasteCommand', () => {
     expect(savedPaste.getVisibility()).toBe('public');
     
     // Verify command result
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       id: 'abc123',
       url: 'https://pastebin.example.com/pastes/abc123',
       expiresAt: savedPaste.getExpiresAt().toISOString(),
     });
+    // deleteToken should be a UUID string
+    expect(result.deleteToken).toBeDefined();
+    expect(typeof result.deleteToken).toBe('string');
   });
   
   it('should create a paste with minimal parameters', async () => {
@@ -118,11 +121,13 @@ describe('CreatePasteCommand', () => {
     expect(savedPaste.getVisibility()).toBe('public');
     
     // Verify command result
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       id: 'abc123',
       url: 'https://pastebin.example.com/pastes/abc123',
       expiresAt: savedPaste.getExpiresAt().toISOString(),
     });
+    expect(result.deleteToken).toBeDefined();
+    expect(typeof result.deleteToken).toBe('string');
   });
   
   it('should throw an error if content is empty', async () => {
