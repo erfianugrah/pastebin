@@ -1,39 +1,25 @@
-import pino from 'pino';
-import { ConfigurationService } from '../config/config';
+/**
+ * Structured logger for Cloudflare Workers.
+ *
+ * Uses console.log / console.warn / console.error with JSON objects so that
+ * Workers Logs automatically indexes every field for filtering & querying.
+ * See: https://developers.cloudflare.com/workers/observability/logs/workers-logs/
+ */
 
 export interface LoggerContext {
 	requestId?: string;
 	pasteId?: string;
 	url?: string;
 	method?: string;
-	cf?: any;
+	path?: string;
+	cf?: Record<string, unknown>;
 	[key: string]: unknown;
 }
 
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
 export class Logger {
-	private logger: pino.Logger;
 	private context: LoggerContext = {};
-
-	constructor(configService: ConfigurationService) {
-		const loggingConfig = configService.getLoggingConfig();
-
-		this.logger = pino({
-			level: loggingConfig.level,
-			timestamp: () => `,"time":"${new Date().toISOString()}"`,
-			base: {
-				env: configService.getConfig().application.name,
-				version: configService.getConfig().application.version,
-			},
-			transport: loggingConfig.pretty
-				? {
-						target: 'pino-pretty',
-						options: {
-							colorize: true,
-						},
-					}
-				: undefined,
-		});
-	}
 
 	setContext(context: LoggerContext): void {
 		this.context = { ...this.context, ...context };
@@ -43,36 +29,19 @@ export class Logger {
 		this.context = {};
 	}
 
-	trace(msg: string, obj: object = {}): void {
-		this.logger.trace({ ...this.context, ...obj }, msg);
+	debug(msg: string, data: Record<string, unknown> = {}): void {
+		console.log({ level: 'debug', msg, ...this.context, ...data });
 	}
 
-	debug(msg: string, obj: object = {}): void {
-		this.logger.debug({ ...this.context, ...obj }, msg);
+	info(msg: string, data: Record<string, unknown> = {}): void {
+		console.log({ level: 'info', msg, ...this.context, ...data });
 	}
 
-	info(msg: string, obj: object = {}): void {
-		this.logger.info({ ...this.context, ...obj }, msg);
+	warn(msg: string, data: Record<string, unknown> = {}): void {
+		console.warn({ level: 'warn', msg, ...this.context, ...data });
 	}
 
-	warn(msg: string, obj: object = {}): void {
-		this.logger.warn({ ...this.context, ...obj }, msg);
+	error(msg: string, data: Record<string, unknown> = {}): void {
+		console.error({ level: 'error', msg, ...this.context, ...data });
 	}
-
-	error(msg: string, obj: object = {}): void {
-		this.logger.error({ ...this.context, ...obj }, msg);
-	}
-
-	fatal(msg: string, obj: object = {}): void {
-		this.logger.fatal({ ...this.context, ...obj }, msg);
-	}
-}
-
-export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
-
-export interface LogEntry {
-	level: LogLevel;
-	message: string;
-	context: LoggerContext;
-	timestamp: string;
 }

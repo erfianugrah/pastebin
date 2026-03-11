@@ -45,7 +45,7 @@ export default {
 			},
 		});
 
-		const logger = initializeLogger(configService);
+		const logger = initializeLogger();
 
 		// Gather request details for logging context
 		const requestId = crypto.randomUUID();
@@ -96,14 +96,7 @@ export default {
 				const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
 
 				// Create handlers and middleware
-				const apiHandlers = new ApiHandlers(
-					createPasteCommand,
-					deletePasteCommand,
-					getPasteQuery,
-					getRecentPastesQuery,
-					configService,
-					logger,
-				);
+				const apiHandlers = new ApiHandlers(createPasteCommand, deletePasteCommand, getPasteQuery, getRecentPastesQuery, logger);
 
 				const apiMiddleware = new ApiMiddleware(configService, logger);
 

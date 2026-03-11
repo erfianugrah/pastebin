@@ -2,7 +2,6 @@ import { CreatePasteCommand, CreatePasteParams } from '../../application/command
 import { DeletePasteCommand } from '../../application/commands/deletePasteCommand';
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../application/queries/getRecentPastesQuery';
-import { ConfigurationService } from '../../infrastructure/config/config';
 import { Logger } from '../../infrastructure/logging/logger';
 import { AppError, ValidationError, NotFoundError } from '../../infrastructure/errors/AppError';
 
@@ -27,7 +26,6 @@ export class ApiHandlers {
 		private readonly deletePasteCommand: DeletePasteCommand,
 		private readonly getPasteQuery: GetPasteQuery,
 		private readonly getRecentPastesQuery: GetRecentPastesQuery,
-		private readonly configService: ConfigurationService,
 		private readonly logger: Logger,
 	) {}
 

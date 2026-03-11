@@ -21,7 +21,6 @@
 	},
 	"dependencies": {
 		"@astrojs/check": "^0.9.6",
-		"pino": "^10.3.0",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
