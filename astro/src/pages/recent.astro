@@ -1,20 +1,14 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { Debug } from 'astro:components';
 ---
 
 <Layout title="Recent Pastes - Pasteriser">
   <div class="container mx-auto px-4 py-8">
     <h1 class="text-3xl font-bold mb-6">Recent Public Pastes</h1>
     
-    <!-- Debug component to help troubleshoot -->
-    <div class="hidden debug-only">
-      <Debug data-from-server="Recent pastes page is rendering" />
-    </div>
-    
     <!-- Spinner shown while loading -->
     <div id="loading" class="py-12 text-center">
-      <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary" role="status" aria-label="Loading"></div>
       <p class="mt-4">Loading recent pastes...</p>
     </div>
     
@@ -141,14 +135,13 @@ import { Debug } from 'astro:components';
       const data = await response.json();
       const pastes = data.pastes || [];
       
-      // Debug: Add more comprehensive data logging
-      console.log('Recent pastes data:', {
-        pasteCount: pastes.length,
-        pastesData: pastes,
-        rawResponse: data,
-        timestamp: new Date().toISOString(),
-        source: 'After fetch with cache-buster'
-      });
+      // Debug logging only in development
+      if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+        console.log('Recent pastes data:', {
+          pasteCount: pastes.length,
+          timestamp: new Date().toISOString(),
+        });
+      }
       
       // Elements were already fetched at the beginning of this function
       
@@ -163,7 +156,7 @@ import { Debug } from 'astro:components';
           pastesContainer.classList.remove('hidden');
           
           // Clear container first
-          pastesContainer.innerHTML = '';
+          pastesContainer.replaceChildren();
           
           // Create each paste element safely
           pastes.forEach(paste => {

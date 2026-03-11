@@ -102,6 +102,10 @@ const themeScript = `
 		<meta name="theme-color" content="#4F46E5" />
 
 		
+		<!-- Security Headers -->
+		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';" />
+		<meta http-equiv="X-Frame-Options" content="DENY" />
+		
 		<!-- Generator Info -->
 		<meta name="generator" content={Astro.generator} />
 		
@@ -150,7 +154,7 @@ const themeScript = `
 		<main id="main-content" class="flex-grow">
 			<slot />
 		</main>
-		{!hideFooter && <Footer />}
+		{!hideFooter && <Footer client:load />}
 		
 		<ToastContainer client:load />
 		<DelayedServiceWorker client:load />

@@ -30,7 +30,7 @@ const pasteId = id || 'placeholder';
 		</div>
 
 		<div id="loading-container" class="text-center py-8">
-			<div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+			<div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary" role="status" aria-label="Loading"></div>
 			<p class="mt-4">Loading paste...</p>
 		</div>
 
@@ -112,10 +112,10 @@ const pasteId = id || 'placeholder';
 		}
 	});
 	
-	// Make session token available for CodeViewer in a secure way
-	window.pasteSessionInfo = {
+	// Session info is passed as a prop to CodeViewer instead of using a global
+	const sessionInfo = {
 		eventName: secureEventName,
-		token: sessionToken
+		token: sessionToken,
 	};
 
 	// Fetch paste data when the page loads
@@ -256,7 +256,7 @@ const pasteId = id || 'placeholder';
 				// Create client-side React component for the paste
 				import('../../components/CodeViewer').then(({ default: CodeViewer }) => {
 					// Try to hydrate the React component
-					const success = hydrateReactComponent(CodeViewer, { paste: pasteData }, pasteContainer);
+					const success = hydrateReactComponent(CodeViewer, { paste: pasteData, sessionInfo }, pasteContainer);
 					
 					// Fallback if hydration fails
 					if (!success) {
