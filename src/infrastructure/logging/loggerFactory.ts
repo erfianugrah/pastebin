@@ -1,16 +1,15 @@
 import { ConfigurationService } from '../config/config';
 import { Logger } from './logger';
-import { Env } from '../../types';
 
 // Singleton instance of the logger
 let loggerInstance: Logger | null = null;
 
 /**
- * Initialize the logger with configuration and environment
+ * Initialize the logger with configuration
  */
-export function initializeLogger(configService: ConfigurationService, env?: Env): Logger {
-  loggerInstance = new Logger(configService, env);
-  return loggerInstance;
+export function initializeLogger(configService: ConfigurationService): Logger {
+	loggerInstance = new Logger(configService);
+	return loggerInstance;
 }
 
 /**
@@ -18,12 +17,11 @@ export function initializeLogger(configService: ConfigurationService, env?: Env)
  * If the logger hasn't been initialized, it will create one with default configuration
  */
 export function getLogger(): Logger {
-  if (!loggerInstance) {
-    // Create a default logger if one hasn't been initialized
-    const defaultConfigService = new ConfigurationService();
-    loggerInstance = new Logger(defaultConfigService);
-  }
-  return loggerInstance;
+	if (!loggerInstance) {
+		const defaultConfigService = new ConfigurationService();
+		loggerInstance = new Logger(defaultConfigService);
+	}
+	return loggerInstance;
 }
 
 // Export a default logger instance for convenience
