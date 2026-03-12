@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Moon, Sun } from 'lucide-react';
+import { Moon, Sun, Monitor } from 'lucide-react';
 import { Button } from './ui/button';
 
 type Theme = 'light' | 'dark' | 'system';
+
+const THEME_ORDER: Theme[] = ['light', 'dark', 'system'];
 
 export default function ThemeToggle() {
 	const [theme, setTheme] = useState<Theme>('system');
 	const [mounted, setMounted] = useState(false);
 
-	// When mounted on client, get initial theme from localStorage or system preference
 	useEffect(() => {
 		setMounted(true);
 		const savedTheme = localStorage.getItem('theme') as Theme | null;
@@ -16,14 +17,13 @@ export default function ThemeToggle() {
 
 		if (savedTheme) {
 			setTheme(savedTheme);
-			document.documentElement.classList.add(savedTheme);
+			document.documentElement.classList.add(savedTheme === 'system' ? systemTheme : savedTheme);
 		} else {
 			setTheme('system');
 			document.documentElement.classList.add(systemTheme);
 		}
 	}, []);
 
-	// When theme changes, update localStorage and document class
 	useEffect(() => {
 		if (!mounted) return;
 
@@ -40,7 +40,6 @@ export default function ThemeToggle() {
 		}
 	}, [theme, mounted]);
 
-	// Handle system appearance change
 	useEffect(() => {
 		if (!mounted) return;
 
@@ -57,64 +56,30 @@ export default function ThemeToggle() {
 		return () => mediaQuery.removeEventListener('change', handleChange);
 	}, [theme, mounted]);
 
-	// We've simplified the approach with direct setTheme calls on each button
-	// No need for the toggleTheme function anymore
+	const cycleTheme = () => {
+		const currentIndex = THEME_ORDER.indexOf(theme);
+		const nextTheme = THEME_ORDER[(currentIndex + 1) % THEME_ORDER.length];
+		setTheme(nextTheme);
+	};
 
-	// This function is not currently used
-	/*
-  const getThemeLabel = () => {
-    switch(theme) {
-      case 'light': return 'Light';
-      case 'dark': return 'Dark';
-      default: return 'System';
-    }
-  };
-  */
-
-	// Render a placeholder with matching dimensions to prevent layout shift
 	if (!mounted) {
-		return (
-			<div className="flex items-center gap-2" aria-hidden="true">
-				<div className="h-8 w-16 rounded-md bg-muted animate-pulse" />
-				<div className="h-8 w-16 rounded-md bg-muted animate-pulse" />
-				<div className="h-8 w-16 rounded-md bg-muted animate-pulse" />
-			</div>
-		);
+		return <div className="h-9 w-9 rounded-md bg-muted animate-pulse" aria-hidden="true" />;
 	}
 
+	const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor;
+	const label = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'System';
+
 	return (
-		<div className="flex items-center gap-2">
-			<Button
-				variant={theme === 'light' ? 'default' : 'outline'}
-				size="sm"
-				onClick={() => setTheme('light')}
-				className={`px-2 ${theme === 'light' ? 'ring-2 ring-primary/50' : ''}`}
-				aria-label="Light theme"
-			>
-				<Sun className="h-4 w-4 mr-1" />
-				<span className="sr-only sm:not-sr-only sm:text-xs">Light</span>
-			</Button>
-
-			<Button
-				variant={theme === 'dark' ? 'default' : 'outline'}
-				size="sm"
-				onClick={() => setTheme('dark')}
-				className={`px-2 ${theme === 'dark' ? 'ring-2 ring-primary/50' : ''}`}
-				aria-label="Dark theme"
-			>
-				<Moon className="h-4 w-4 mr-1" />
-				<span className="sr-only sm:not-sr-only sm:text-xs">Dark</span>
-			</Button>
-
-			<Button
-				variant={theme === 'system' ? 'default' : 'outline'}
-				size="sm"
-				onClick={() => setTheme('system')}
-				className={`px-2 ${theme === 'system' ? 'ring-2 ring-primary/50' : ''}`}
-				aria-label="System theme"
-			>
-				<span className="text-xs">System</span>
-			</Button>
-		</div>
+		<Button
+			variant="outline"
+			size="sm"
+			onClick={cycleTheme}
+			className="gap-1.5 px-2.5"
+			aria-label={`Theme: ${label}. Click to change.`}
+			title={`Theme: ${label}`}
+		>
+			<Icon className="h-4 w-4" />
+			<span className="hidden sm:inline text-xs">{label}</span>
+		</Button>
 	);
 }

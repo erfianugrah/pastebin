@@ -44,7 +44,7 @@ export function PasswordStrengthMeter({
       </div>
       
       {/* Progress bar */}
-      <div className="h-1 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+      <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
         <div 
           className="h-full rounded-full transition-all duration-300 ease-in-out"
           style={{ 

@@ -12,7 +12,7 @@ export default function DelayedServiceWorker() {
       const timer = setTimeout(() => {
         navigator.serviceWorker.register('/service-worker.js')
           .then(registration => {
-            console.log('Service Worker registered with scope:', registration.scope);
+            if (window.location.hostname === 'localhost') console.log('Service Worker registered with scope:', registration.scope);
           })
           .catch(error => {
             console.warn('Service Worker registration failed:', error);

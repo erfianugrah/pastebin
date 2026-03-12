@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './ui/card';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
 import { toast } from './ui/toast';
 import { Tooltip } from './ui/tooltip';
@@ -8,6 +9,8 @@ import { PasswordStrengthMeter } from './ui/password-strength';
 import { generateEncryptionKey, encryptData, deriveKeyFromPassword } from '../lib/crypto';
 import { validatePasteForm } from '../lib/validation';
 import { useErrorHandler } from '../hooks/useErrorHandler';
+
+const isDev = typeof window !== 'undefined' && window.location?.hostname === 'localhost';
 
 export default function PasteForm() {
 	const [isSubmitting, setIsSubmitting] = useState(false);
@@ -17,6 +20,9 @@ export default function PasteForm() {
 	const [passwordValue, setPasswordValue] = useState('');
 	const [securityMethod, setSecurityMethod] = useState<'none' | 'password' | 'key'>('none');
 	const [encryptionProgress, setEncryptionProgress] = useState<number | null>(null);
+	const [language, setLanguage] = useState('');
+	const [expiration, setExpiration] = useState('86400');
+	const [visibility, setVisibility] = useState('public');
 
 	// Use our error handler hook
 	const { handleError } = useErrorHandler();
@@ -100,11 +106,11 @@ export default function PasteForm() {
 						// Password-based encryption
 						// Step 1: Derive key from password using PBKDF2
 						const { key: derivedKey, salt } = await deriveKeyFromPassword(password);
-						console.log('Derived key from password with salt');
+						if (isDev) console.log('Derived key from password with salt');
 
 						// Step 2: Encrypt content with password-derived key
 						encryptedContent = await encryptData(content, derivedKey, true, salt);
-						console.log('Content encrypted with password-derived key');
+						if (isDev) console.log('Content encrypted with password-derived key');
 
 						// We don't need to send a password to the server at all
 						// Just mark that this content is encrypted
@@ -113,7 +119,7 @@ export default function PasteForm() {
 						// Random key encryption
 						// Step 1: Generate a secure random key
 						encryptionKey = generateEncryptionKey();
-						console.log('Generated random encryption key');
+						if (isDev) console.log('Generated random encryption key');
 
 						// Step 2: Encrypt the content with this key
 						setEncryptionProgress(0); // Start encryption progress
@@ -121,7 +127,7 @@ export default function PasteForm() {
 						try {
 							// Do the actual encryption with progress tracking
 							encryptedContent = await encryptData(content, encryptionKey, false, undefined, (progress) => {
-								console.log('Real encryption progress:', progress.percent);
+								if (isDev) console.log('Real encryption progress:', progress.percent);
 								setEncryptionProgress(progress.percent);
 							});
 
@@ -132,8 +138,8 @@ export default function PasteForm() {
 							throw error;
 						}
 
-						// We already set progress to 100% inside the try block
-						console.log('Content encrypted successfully with random key');
+					// We already set progress to 100% inside the try block
+					if (isDev) console.log('Content encrypted successfully with random key');
 					}
 				} catch (error) {
 					console.error('Encryption error:', error);
@@ -147,7 +153,7 @@ export default function PasteForm() {
 			} else if (password) {
 				// In Phase 3, all passwords must use client-side encryption
 				// Auto-convert any password to client-side encryption
-				console.info('Using client-side encryption with password protection (required in Phase 3)');
+				if (isDev) console.info('Using client-side encryption with password protection (required in Phase 3)');
 
 				try {
 					// Use client-side encryption by default
@@ -160,16 +166,16 @@ export default function PasteForm() {
 						const { key: derivedKey, salt } = await deriveKeyFromPassword(password, undefined, (keyProgress) => {
 							// Scale key derivation progress to 0-30% range
 							const scaledProgress = Math.floor(keyProgress.percent * 0.3);
-							console.log('Key derivation progress:', scaledProgress);
+							if (isDev) console.log('Key derivation progress:', scaledProgress);
 							setEncryptionProgress(scaledProgress);
 						});
-						console.log('Derived key from password with salt');
+						if (isDev) console.log('Derived key from password with salt');
 
 						// Second phase: Encrypt with the derived key (30-100%)
 						encryptedContent = await encryptData(content, derivedKey, true, salt, (encryptProgress) => {
 							// Scale encryption progress to 30-100% range
 							const scaledProgress = 30 + Math.floor(encryptProgress.percent * 0.7);
-							console.log('Password encryption progress:', scaledProgress);
+							if (isDev) console.log('Password encryption progress:', scaledProgress);
 							setEncryptionProgress(scaledProgress);
 						});
 
@@ -180,8 +186,8 @@ export default function PasteForm() {
 						throw error;
 					}
 
-					// We already set progress to 100% inside the try block
-					console.log('Content encrypted with password-derived key');
+				// We already set progress to 100% inside the try block
+				if (isDev) console.log('Content encrypted with password-derived key');
 
 					// Set encryption flag for response
 					// We can't modify e2eEncryption directly as it's a function parameter
@@ -200,7 +206,7 @@ export default function PasteForm() {
 			}
 
 			// Log encryption status for debugging (development only)
-			if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+			if (isDev) {
 				console.log('Creating paste:', {
 					isEncrypted: !!(e2eEncryption || (visibility === 'private' && isE2EEncrypted)),
 					contentLength: encryptedContent.length,
@@ -252,7 +258,7 @@ export default function PasteForm() {
 				// Note: Base64 characters "+", "/" and "=" need to be properly handled in URLs
 				const encodedKey = encryptionKey ? encryptionKey.replace(/\+/g, '%2B').replace(/\//g, '%2F').replace(/=/g, '%3D') : '';
 				resultUrl = `${data.url}#key=${encodedKey}`;
-				console.log('Added encryption key to URL fragment');
+				if (isDev) console.log('Added encryption key to URL fragment');
 			}
 
 			// Handle the encryptionKey prop to avoid type issues with undefined
@@ -332,7 +338,7 @@ export default function PasteForm() {
 											});
 									}
 								}}
-								className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-gray-400 hover:text-primary hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+								className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-muted transition-colors"
 								title="Copy URL to clipboard"
 								aria-label="Copy URL to clipboard"
 							>
@@ -496,100 +502,111 @@ export default function PasteForm() {
 								<label htmlFor="language" className="block text-sm font-medium mb-1">
 									Language (optional)
 								</label>
-								<select
-									id="language"
-									name="language"
-									className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
-								>
-									<option value="">Plain Text</option>
+							<Select value={language} onValueChange={setLanguage}>
+								<SelectTrigger className="w-full">
+									<SelectValue placeholder="Plain Text" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="plaintext">Plain Text</SelectItem>
+									<SelectSeparator />
 
 									{/* Web Development */}
-									<optgroup label="Web Development">
-										<option value="markup">HTML</option>
-										<option value="css">CSS</option>
-										<option value="javascript">JavaScript</option>
-										<option value="typescript">TypeScript</option>
-										<option value="jsx">JSX</option>
-										<option value="tsx">TSX</option>
-										<option value="php">PHP</option>
-									</optgroup>
+									<SelectGroup>
+										<SelectLabel>Web Development</SelectLabel>
+										<SelectItem value="markup">HTML</SelectItem>
+										<SelectItem value="css">CSS</SelectItem>
+										<SelectItem value="javascript">JavaScript</SelectItem>
+										<SelectItem value="typescript">TypeScript</SelectItem>
+										<SelectItem value="jsx">JSX</SelectItem>
+										<SelectItem value="tsx">TSX</SelectItem>
+										<SelectItem value="php">PHP</SelectItem>
+									</SelectGroup>
 
 									{/* Data Formats */}
-									<optgroup label="Data Formats">
-										<option value="json">JSON</option>
-										<option value="xml-doc">XML</option>
-										<option value="yaml">YAML</option>
-										<option value="toml">TOML</option>
-										<option value="ini">INI</option>
-										<option value="csv">CSV</option>
-									</optgroup>
+									<SelectGroup>
+										<SelectLabel>Data Formats</SelectLabel>
+										<SelectItem value="json">JSON</SelectItem>
+										<SelectItem value="xml-doc">XML</SelectItem>
+										<SelectItem value="yaml">YAML</SelectItem>
+										<SelectItem value="toml">TOML</SelectItem>
+										<SelectItem value="ini">INI</SelectItem>
+										<SelectItem value="csv">CSV</SelectItem>
+									</SelectGroup>
 
 									{/* Infrastructure & DevOps */}
-									<optgroup label="Infrastructure & DevOps">
-										<option value="hcl">HCL (Terraform)</option>
-										<option value="docker">Dockerfile</option>
-										<option value="bash">Bash</option>
-										<option value="shell-session">Shell</option>
-										<option value="powershell">PowerShell</option>
-										<option value="nginx">Nginx</option>
-									</optgroup>
+									<SelectGroup>
+										<SelectLabel>Infrastructure & DevOps</SelectLabel>
+										<SelectItem value="hcl">HCL (Terraform)</SelectItem>
+										<SelectItem value="docker">Dockerfile</SelectItem>
+										<SelectItem value="bash">Bash</SelectItem>
+										<SelectItem value="shell-session">Shell</SelectItem>
+										<SelectItem value="powershell">PowerShell</SelectItem>
+										<SelectItem value="nginx">Nginx</SelectItem>
+									</SelectGroup>
 
 									{/* Programming Languages */}
-									<optgroup label="Programming Languages">
-										<option value="python">Python</option>
-										<option value="java">Java</option>
-										<option value="csharp">C#</option>
-										<option value="c">C</option>
-										<option value="cpp">C++</option>
-										<option value="go">Go</option>
-										<option value="rust">Rust</option>
-										<option value="ruby">Ruby</option>
-										<option value="kotlin">Kotlin</option>
-										<option value="swift">Swift</option>
-										<option value="scala">Scala</option>
-										<option value="perl">Perl</option>
-										<option value="r">R</option>
-									</optgroup>
+									<SelectGroup>
+										<SelectLabel>Programming Languages</SelectLabel>
+										<SelectItem value="python">Python</SelectItem>
+										<SelectItem value="java">Java</SelectItem>
+										<SelectItem value="csharp">C#</SelectItem>
+										<SelectItem value="c">C</SelectItem>
+										<SelectItem value="cpp">C++</SelectItem>
+										<SelectItem value="go">Go</SelectItem>
+										<SelectItem value="rust">Rust</SelectItem>
+										<SelectItem value="ruby">Ruby</SelectItem>
+										<SelectItem value="kotlin">Kotlin</SelectItem>
+										<SelectItem value="swift">Swift</SelectItem>
+										<SelectItem value="scala">Scala</SelectItem>
+										<SelectItem value="perl">Perl</SelectItem>
+										<SelectItem value="r">R</SelectItem>
+									</SelectGroup>
 
 									{/* Database */}
-									<optgroup label="Database">
-										<option value="sql">SQL</option>
-										<option value="mongodb">MongoDB</option>
-										<option value="graphql">GraphQL</option>
-									</optgroup>
+									<SelectGroup>
+										<SelectLabel>Database</SelectLabel>
+										<SelectItem value="sql">SQL</SelectItem>
+										<SelectItem value="mongodb">MongoDB</SelectItem>
+										<SelectItem value="graphql">GraphQL</SelectItem>
+									</SelectGroup>
 
 									{/* Markup & Style */}
-									<optgroup label="Markup & Style">
-										<option value="markdown">Markdown</option>
-										<option value="latex">LaTeX</option>
-										<option value="scss">SCSS</option>
-										<option value="less">LESS</option>
-									</optgroup>
+									<SelectGroup>
+										<SelectLabel>Markup & Style</SelectLabel>
+										<SelectItem value="markdown">Markdown</SelectItem>
+										<SelectItem value="latex">LaTeX</SelectItem>
+										<SelectItem value="scss">SCSS</SelectItem>
+										<SelectItem value="less">LESS</SelectItem>
+									</SelectGroup>
 
 									{/* Configuration */}
-									<optgroup label="Configuration">
-										<option value="apache">Apache</option>
-										<option value="properties">Properties</option>
-									</optgroup>
-								</select>
+									<SelectGroup>
+										<SelectLabel>Configuration</SelectLabel>
+										<SelectItem value="apache">Apache</SelectItem>
+										<SelectItem value="properties">Properties</SelectItem>
+									</SelectGroup>
+								</SelectContent>
+							</Select>
+							<input type="hidden" name="language" value={language} />
 							</div>
 
 							<div>
 								<label htmlFor="expiration" className="block text-sm font-medium mb-1">
 									Expiration
 								</label>
-								<select
-									id="expiration"
-									name="expiration"
-									defaultValue="86400"
-									className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
-								>
-									<option value="3600">1 hour</option>
-									<option value="86400">1 day</option>
-									<option value="604800">1 week</option>
-									<option value="2592000">30 days</option>
-									<option value="31536000">1 year</option>
-								</select>
+							<Select value={expiration} onValueChange={setExpiration}>
+								<SelectTrigger className="w-full">
+									<SelectValue placeholder="Select expiration" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="3600">1 hour</SelectItem>
+									<SelectItem value="86400">1 day</SelectItem>
+									<SelectItem value="604800">1 week</SelectItem>
+									<SelectItem value="2592000">30 days</SelectItem>
+									<SelectItem value="31536000">1 year</SelectItem>
+								</SelectContent>
+							</Select>
+							<input type="hidden" name="expiration" value={expiration} />
 							</div>
 						</div>
 
@@ -598,29 +615,31 @@ export default function PasteForm() {
 								<label htmlFor="visibility" className="block text-sm font-medium mb-1">
 									Visibility
 								</label>
-								<select
-									id="visibility"
-									name="visibility"
-									className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
-									onChange={(e) => {
-										if (e.target.value === 'private') {
-											// Suggest encryption for private pastes but don't force it
-											// Only set E2E encryption if a security method is already chosen
-											if (securityMethod !== 'none') {
-												setIsE2EEncrypted(true);
-											}
-											// Inform the user that encryption is recommended for private pastes
-											toast({
-												message: 'Encryption is recommended for private pastes',
-												type: 'info',
-												duration: 3000,
-											});
-										}
-									}}
-								>
-									<option value="public">Public</option>
-									<option value="private">Private</option>
-								</select>
+							<Select value={visibility} onValueChange={(value) => {
+								setVisibility(value);
+								if (value === 'private') {
+									// Suggest encryption for private pastes but don't force it
+									// Only set E2E encryption if a security method is already chosen
+									if (securityMethod !== 'none') {
+										setIsE2EEncrypted(true);
+									}
+									// Inform the user that encryption is recommended for private pastes
+									toast({
+										message: 'Encryption is recommended for private pastes',
+										type: 'info',
+										duration: 3000,
+									});
+								}
+							}}>
+								<SelectTrigger className="w-full">
+									<SelectValue placeholder="Select visibility" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="public">Public</SelectItem>
+									<SelectItem value="private">Private</SelectItem>
+								</SelectContent>
+							</Select>
+							<input type="hidden" name="visibility" value={visibility} />
 							</div>
 
 							<div>
@@ -648,46 +667,49 @@ export default function PasteForm() {
 										}
 										position="top"
 									>
-										<span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-bold cursor-help">
+										<span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-muted text-muted-foreground text-xs font-bold cursor-help">
 											?
 										</span>
 									</Tooltip>
 								</div>
 
-								<select
-									id="securityMethod"
-									name="securityMethod"
-									className="w-full rounded-md border border-input px-3 py-2 bg-background text-foreground"
-									onChange={(e) => {
-										const value = e.target.value as 'none' | 'password' | 'key';
-										setSecurityMethod(value);
+							<Select
+								value={!isE2EEncrypted ? 'none' : securityMethod === 'none' ? (passwordValue ? 'password' : 'key') : securityMethod}
+								onValueChange={(value: string) => {
+									const method = value as 'none' | 'password' | 'key';
+									setSecurityMethod(method);
 
-										if (value === 'none') {
-											setIsE2EEncrypted(false);
-											// Clear password field
+									if (method === 'none') {
+										setIsE2EEncrypted(false);
+										// Clear password field
+										setPasswordValue('');
+									} else if (method === 'password' || method === 'key') {
+										setIsE2EEncrypted(true);
+
+										// If switching to key mode, clear any existing password
+										if (method === 'key') {
 											setPasswordValue('');
-										} else if (value === 'password' || value === 'key') {
-											setIsE2EEncrypted(true);
-
-											// If switching to key mode, clear any existing password
-											if (value === 'key') {
-												setPasswordValue('');
-											}
 										}
-									}}
-									value={!isE2EEncrypted ? 'none' : securityMethod === 'none' ? (passwordValue ? 'password' : 'key') : securityMethod}
-								>
-									<option value="none">None (Plaintext)</option>
-									<option value="password">Password Protection (E2EE) - Recommended</option>
-									<option value="key">Key Protection (E2EE)</option>
-								</select>
+									}
+								}}
+							>
+								<SelectTrigger className="w-full">
+									<SelectValue placeholder="Select security method" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="none">None (Plaintext)</SelectItem>
+									<SelectItem value="password">Password Protection (E2EE) - Recommended</SelectItem>
+									<SelectItem value="key">Key Protection (E2EE)</SelectItem>
+								</SelectContent>
+							</Select>
+							<input type="hidden" name="securityMethod" value={!isE2EEncrypted ? 'none' : securityMethod === 'none' ? (passwordValue ? 'password' : 'key') : securityMethod} />
 
 								<div className="text-xs text-muted-foreground mt-1 flex items-start">
 									<div className="mt-0.5 mr-1 flex-shrink-0">
 										{!isE2EEncrypted ? (
 											<svg
 												xmlns="http://www.w3.org/2000/svg"
-												className="w-3 h-3 text-gray-400"
+												className="w-3 h-3 text-muted-foreground"
 												fill="none"
 												viewBox="0 0 24 24"
 												stroke="currentColor"
@@ -750,7 +772,7 @@ export default function PasteForm() {
 										}
 										position="top"
 									>
-										<span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-bold cursor-help">
+										<span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-muted text-muted-foreground text-xs font-bold cursor-help">
 											?
 										</span>
 									</Tooltip>
@@ -844,7 +866,7 @@ export default function PasteForm() {
 											type="checkbox"
 											id="burnAfterReading"
 											name="burnAfterReading"
-											className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-primary dark:text-primary focus:ring-primary dark:focus:ring-primary focus:ring-offset-0 bg-white dark:bg-gray-800 checked:bg-primary dark:checked:bg-primary form-checkbox"
+											className="h-4 w-4 rounded border-input text-primary focus:ring-primary focus:ring-offset-0 bg-background checked:bg-primary form-checkbox"
 										/>
 									</div>
 									<div className="ml-3 text-sm">
@@ -862,7 +884,7 @@ export default function PasteForm() {
 											type="checkbox"
 											id="enableViewLimit"
 											name="enableViewLimit"
-											className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-primary dark:text-primary focus:ring-primary dark:focus:ring-primary focus:ring-offset-0 bg-white dark:bg-gray-800 checked:bg-primary dark:checked:bg-primary form-checkbox"
+											className="h-4 w-4 rounded border-input text-primary focus:ring-primary focus:ring-offset-0 bg-background checked:bg-primary form-checkbox"
 											onChange={(e) => {
 												if (typeof document !== 'undefined') {
 													const viewLimitInput = document.getElementById('viewLimit') as HTMLInputElement;
@@ -889,7 +911,7 @@ export default function PasteForm() {
 												max="100"
 												defaultValue="1"
 												disabled
-												className="w-16 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+												className="w-16 px-2 py-1 text-xs rounded border border-input bg-background text-foreground"
 											/>
 											<label htmlFor="viewLimit" className="security-panel-help ml-2 text-xs">
 												views before expiration
@@ -975,7 +997,7 @@ export default function PasteForm() {
 									<span className="text-sm font-medium">{encryptionProgress}%</span>
 								</div>
 								<div
-									className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700"
+									className="w-full bg-muted rounded-full h-2.5"
 									role="progressbar"
 									aria-valuenow={encryptionProgress}
 									aria-valuemin={0}
@@ -991,7 +1013,7 @@ export default function PasteForm() {
 										}}
 									></div>
 								</div>
-								<p className="text-xs text-gray-500 mt-1">
+								<p className="text-xs text-muted-foreground mt-1">
 									{encryptionProgress === 0
 										? 'Preparing...'
 										: encryptionProgress < 15
@@ -1023,12 +1045,15 @@ export default function PasteForm() {
 								type="reset"
 								variant="outline"
 								disabled={isSubmitting}
-								onClick={() => {
-									setFormErrors({});
-									setIsE2EEncrypted(false);
-									setSecurityMethod('none');
-									setPasswordValue('');
-								}}
+							onClick={() => {
+								setFormErrors({});
+								setIsE2EEncrypted(false);
+								setSecurityMethod('none');
+								setPasswordValue('');
+								setLanguage('');
+								setExpiration('86400');
+								setVisibility('public');
+							}}
 							>
 								Clear
 							</Button>

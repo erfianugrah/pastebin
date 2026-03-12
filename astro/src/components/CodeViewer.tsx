@@ -840,7 +840,7 @@ export default function CodeViewer({ paste, sessionInfo }: CodeViewerProps) {
 								<span className="text-sm font-medium">Decrypting ({decryptionProgress}%)</span>
 							</div>
 							<div
-								className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700"
+								className="w-full bg-muted rounded-full h-2.5"
 								role="progressbar"
 								aria-valuenow={decryptionProgress}
 								aria-valuemin={0}
@@ -852,7 +852,7 @@ export default function CodeViewer({ paste, sessionInfo }: CodeViewerProps) {
 									style={{ width: `${decryptionProgress}%` }}
 								></div>
 							</div>
-							<p className="text-xs text-gray-500 mt-2 text-center">
+							<p className="text-xs text-muted-foreground mt-2 text-center">
 								{decryptionProgress === 0
 									? 'Preparing decryption...'
 									: decryptionProgress < 10
@@ -970,7 +970,7 @@ export default function CodeViewer({ paste, sessionInfo }: CodeViewerProps) {
 								<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
 									<svg
 										xmlns="http://www.w3.org/2000/svg"
-										className="h-4 w-4 text-gray-400"
+										className="h-4 w-4 text-muted-foreground"
 										fill="none"
 										viewBox="0 0 24 24"
 										stroke="currentColor"
