@@ -1,15 +1,14 @@
 import { Logger } from './logger';
 
-let loggerInstance: Logger | null = null;
-
-export function initializeLogger(): Logger {
-	loggerInstance = new Logger();
-	return loggerInstance;
+/**
+ * Create a fresh Logger instance.
+ *
+ * Each request should get its own logger so that context (requestId, path,
+ * etc.) never leaks between concurrent requests sharing the same isolate.
+ */
+export function createLogger(): Logger {
+	return new Logger();
 }
 
-export function getLogger(): Logger {
-	if (!loggerInstance) {
-		loggerInstance = new Logger();
-	}
-	return loggerInstance;
-}
+/** @deprecated Use createLogger() instead. Kept for backward compatibility. */
+export const initializeLogger = createLogger;

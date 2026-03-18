@@ -13,6 +13,17 @@ export class GetPasteQuery {
 		return this.repository.findById(pasteId);
 	}
 
+	/**
+	 * Fetch a paste, increment its read count, and enforce burn-after-reading
+	 * and view-limit policies.
+	 *
+	 * **Concurrency caveat:** Cloudflare KV is eventually-consistent, so
+	 * concurrent requests may each read the *same* readCount before either
+	 * write lands. This means burn-after-reading pastes could be served to
+	 * more than one simultaneous viewer, and view-limited pastes may slightly
+	 * exceed their limit. For stronger guarantees, consider Durable Objects
+	 * with an input gate for the critical section.
+	 */
 	async execute(id: string): Promise<Paste | null> {
 		const pasteId = PasteId.create(id);
 		const paste = await this.repository.findById(pasteId);

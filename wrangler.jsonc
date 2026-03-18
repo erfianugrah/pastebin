@@ -50,20 +50,5 @@
 				},
 			],
 		},
-		"staging": {
-			"name": "pastebin-staging",
-			"routes": [
-				{
-					"pattern": "paste-staging.erfi.dev",
-					"custom_domain": true,
-				},
-			],
-			"kv_namespaces": [
-				{
-					"binding": "PASTES",
-					"id": "7ab6cc1ce0744c119c50554173707600",
-				},
-			],
-		},
 	},
 }

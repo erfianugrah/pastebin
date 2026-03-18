@@ -4,61 +4,69 @@ import { PasteRepository } from '../../domain/repositories/pasteRepository';
 
 // Using Zod 4 schema definition
 export const DeletePasteSchema = z.object({
-  id: z.string(),
-  // Optional owner token for authorization (future enhancement)
-  ownerToken: z.string().optional(),
+	id: z.string(),
+	ownerToken: z.string().optional(),
 });
 
 export type DeletePasteParams = z.infer<typeof DeletePasteSchema>;
 
+/** Structured error codes so callers never match on raw message strings. */
+export enum DeleteErrorCode {
+	NOT_FOUND = 'not_found',
+	UNAUTHORIZED = 'unauthorized',
+	FAILED = 'delete_failed',
+}
+
 export interface DeletePasteResult {
-  success: boolean;
-  message: string;
+	success: boolean;
+	errorCode?: DeleteErrorCode;
+	message: string;
 }
 
 export class DeletePasteCommand {
-  constructor(
-    private readonly repository: PasteRepository,
-  ) {}
+	constructor(private readonly repository: PasteRepository) {}
 
-  async execute(params: DeletePasteParams): Promise<DeletePasteResult> {
-    // Validate input
-    const validParams = DeletePasteSchema.parse(params);
-    
-    // Create a paste ID from the string parameter
-    const pasteId = PasteId.create(validParams.id);
-    
-    // Check if the paste exists first
-    const paste = await this.repository.findById(pasteId);
-    if (!paste) {
-      return {
-        success: false,
-        message: 'Paste not found'
-      };
-    }
-    
-    // Verify the delete token matches (required for authorization)
-    const storedToken = paste.getDeleteToken();
-    if (storedToken && storedToken !== validParams.ownerToken) {
-      return {
-        success: false,
-        message: 'Unauthorized'
-      };
-    }
-    
-    // Delete the paste
-    const deleted = await this.repository.delete(pasteId);
-    
-    if (deleted) {
-      return {
-        success: true,
-        message: 'Paste deleted successfully'
-      };
-    } else {
-      return {
-        success: false,
-        message: 'Failed to delete paste'
-      };
-    }
-  }
+	async execute(params: DeletePasteParams): Promise<DeletePasteResult> {
+		// Validate input
+		const validParams = DeletePasteSchema.parse(params);
+
+		// Create a paste ID from the string parameter
+		const pasteId = PasteId.create(validParams.id);
+
+		// Check if the paste exists first
+		const paste = await this.repository.findById(pasteId);
+		if (!paste) {
+			return {
+				success: false,
+				errorCode: DeleteErrorCode.NOT_FOUND,
+				message: 'Paste not found',
+			};
+		}
+
+		// Verify the delete token matches (required for authorization)
+		const storedToken = paste.getDeleteToken();
+		if (storedToken && storedToken !== validParams.ownerToken) {
+			return {
+				success: false,
+				errorCode: DeleteErrorCode.UNAUTHORIZED,
+				message: 'Unauthorized',
+			};
+		}
+
+		// Delete the paste
+		const deleted = await this.repository.delete(pasteId);
+
+		if (deleted) {
+			return {
+				success: true,
+				message: 'Paste deleted successfully',
+			};
+		} else {
+			return {
+				success: false,
+				errorCode: DeleteErrorCode.FAILED,
+				message: 'Failed to delete paste',
+			};
+		}
+	}
 }

@@ -3,10 +3,14 @@ import Layout from '../layouts/Layout.astro';
 import PasteForm from '../components/PasteForm';
 ---
 
-<Layout title="Pasteriser - Create New Paste">
-	<div class="container mx-auto px-4 py-8">
-		<section class="max-w-3xl mx-auto">
-			<PasteForm client:load />
-		</section>
+<Layout title="Pasteriser">
+	<div class="max-w-4xl mx-auto px-4 py-8">
+		<div class="text-center mb-8">
+			<h1 class="text-2xl font-bold tracking-tight mb-1">New Paste</h1>
+			<p class="text-sm text-muted-foreground">
+				Share code and text with end-to-end encryption, expiration, and burn-after-reading.
+			</p>
+		</div>
+		<PasteForm client:load />
 	</div>
 </Layout>

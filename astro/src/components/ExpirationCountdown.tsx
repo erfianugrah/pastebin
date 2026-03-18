@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { Clock } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 interface ExpirationCountdownProps {
 	expiresAt: string;
@@ -6,116 +8,57 @@ interface ExpirationCountdownProps {
 }
 
 export function ExpirationCountdown({ expiresAt, className = '' }: ExpirationCountdownProps) {
-	const [timeLeft, setTimeLeft] = useState<{
-		days: number;
-		hours: number;
-		minutes: number;
-		seconds: number;
-		expired: boolean;
-	}>({
-		days: 0,
-		hours: 0,
-		minutes: 0,
-		seconds: 0,
-		expired: false,
-	});
-
+	const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0, expired: false });
 	const [isNearExpiry, setIsNearExpiry] = useState(false);
 
-	// Calculate time left
 	useEffect(() => {
-		const calculateTimeLeft = () => {
-			const now = new Date();
-			const expiration = new Date(expiresAt);
-			const diff = expiration.getTime() - now.getTime();
+		const calculate = () => {
+			const diff = new Date(expiresAt).getTime() - Date.now();
+			if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0, expired: true };
 
-			if (diff <= 0) {
-				// Already expired
-				return {
-					days: 0,
-					hours: 0,
-					minutes: 0,
-					seconds: 0,
-					expired: true,
-				};
-			}
-
-			// Check if near expiry (less than 1 hour)
 			setIsNearExpiry(diff < 60 * 60 * 1000);
-
-			// Calculate time units
-			const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-			const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-			const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-			const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
 			return {
-				days,
-				hours,
-				minutes,
-				seconds,
+				days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+				hours: Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+				minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)),
+				seconds: Math.floor((diff % (1000 * 60)) / 1000),
 				expired: false,
 			};
 		};
 
-		// Initialize
-		setTimeLeft(calculateTimeLeft());
-
-		// Update every second
+		setTimeLeft(calculate());
 		const timer = setInterval(() => {
-			const newTimeLeft = calculateTimeLeft();
-			setTimeLeft(newTimeLeft);
-
-			// Clear interval if expired
-			if (newTimeLeft.expired) {
-				clearInterval(timer);
-			}
+			const t = calculate();
+			setTimeLeft(t);
+			if (t.expired) clearInterval(timer);
 		}, 1000);
-
-		// Clear on unmount
 		return () => clearInterval(timer);
 	}, [expiresAt]);
 
-	// Format as readable text
-	const formatTimeLeft = () => {
-		if (timeLeft.expired) {
-			return 'Expired';
-		}
-
-		if (timeLeft.days > 0) {
-			return `Expires in ${timeLeft.days}d ${timeLeft.hours}h`;
-		}
-
-		if (timeLeft.hours > 0) {
-			return `Expires in ${timeLeft.hours}h ${timeLeft.minutes}m`;
-		}
-
-		if (timeLeft.minutes > 0) {
-			return `Expires in ${timeLeft.minutes}m ${timeLeft.seconds}s`;
-		}
-
-		return `Expires in ${timeLeft.seconds}s`;
+	const format = () => {
+		if (timeLeft.expired) return 'Expired';
+		if (timeLeft.days > 0) return `${timeLeft.days}d ${timeLeft.hours}h`;
+		if (timeLeft.hours > 0) return `${timeLeft.hours}h ${timeLeft.minutes}m`;
+		if (timeLeft.minutes > 0) return `${timeLeft.minutes}m ${timeLeft.seconds}s`;
+		return `${timeLeft.seconds}s`;
 	};
 
 	return (
-		<div
-			className={`${className} 
-      ${
+		<span
+			className={cn(
+				'inline-flex items-center gap-1',
 				timeLeft.expired
 					? 'text-red-600 dark:text-red-400 font-bold'
 					: isNearExpiry
-						? 'text-red-600 dark:text-red-400 font-medium'
+						? 'text-red-600 dark:text-red-400'
 						: timeLeft.days > 1
 							? 'text-muted-foreground'
-							: 'text-amber-600 dark:text-amber-400'
-			}`}
+							: 'text-amber-600 dark:text-amber-400',
+				className,
+			)}
 		>
-			<div className="flex items-center">
-				<svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-				</svg>
-				{formatTimeLeft()}
-			</div>
-		</div>
+			<Clock className="h-3.5 w-3.5" />
+			{timeLeft.expired ? 'Expired' : `Expires in ${format()}`}
+		</span>
 	);
 }

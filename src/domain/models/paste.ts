@@ -56,6 +56,12 @@ export class ExpirationPolicy {
 }
 
 export class Paste {
+  /**
+   * @internal — prefer {@link Paste.create} for new pastes and
+   * {@link PasteFactory.fromData} for rehydration from storage.
+   * The constructor is only public because TypeScript has no
+   * package-private visibility and the factory lives in a separate file.
+   */
   constructor(
     private readonly id: PasteId,
     private readonly content: string,

@@ -4,100 +4,16 @@
  * Optimized for chunked processing of large files
  */
 import nacl from 'tweetnacl';
-import util from 'tweetnacl-util';
-
-// Extract functions from the CommonJS module
-const { encodeBase64, decodeBase64: originalDecodeBase64 } = util;
-
-// Constants
-const PBKDF2_ITERATIONS = 300000; // High iteration count for better security
-const LARGE_FILE_THRESHOLD = 1000000; // 1MB
-const SALT_LENGTH = 16; // 16 bytes salt
-const KEY_LENGTH = nacl.secretbox.keyLength; // 32 bytes for NaCl secretbox
-const CHUNK_SIZE = 1024 * 1024; // 1MB chunk size for processing
-
-// Create a safe decodeBase64 function that handles missing padding
-function safeDecodeBase64(input: string): Uint8Array {
-	// Reject inputs with invalid characters rather than silently corrupting data
-	if (/[^A-Za-z0-9+/=]/.test(input)) {
-		throw new Error(
-			'Invalid Base64 input: contains characters outside the Base64 alphabet. The encryption key may be invalid or the data is corrupted.',
-		);
-	}
-
-	// Add missing padding (common when keys are copied from URLs)
-	let padded = input;
-	while (padded.length % 4 !== 0) {
-		padded += '=';
-	}
-
-	try {
-		return originalDecodeBase64(padded);
-	} catch (error) {
-		throw new Error('Unable to decode Base64 data. The encryption key may be invalid or the data is corrupted.');
-	}
-}
-
-// Replace all uses of originalDecodeBase64 with safeDecodeBase64
-const decodeBase64 = safeDecodeBase64;
-
-/**
- * Incrementally decode Base64 string in chunks
- * @param input The Base64 string to decode
- * @param chunkSize Size of each chunk to process
- * @param onProgress Callback for progress reporting
- */
-async function incrementalBase64Decode(
-	input: string,
-	chunkSize: number = CHUNK_SIZE,
-	onProgress?: (processed: number, total: number) => void,
-): Promise<Uint8Array> {
-	const total = input.length;
-	const numChunks = Math.ceil(total / chunkSize);
-	let processedBytes = 0;
-
-	// First, calculate the exact length of the output buffer
-	// Base64 decoding: 4 chars → 3 bytes (with padding)
-	const outputLength = Math.floor((input.length * 3) / 4);
-	const result = new Uint8Array(outputLength);
-
-	let resultOffset = 0;
-
-	for (let i = 0; i < numChunks; i++) {
-		// Get next chunk
-		const start = i * chunkSize;
-		const end = Math.min(start + chunkSize, total);
-		const chunk = input.slice(start, end);
-
-		// Ensure chunk is valid base64 (multiple of 4)
-		let paddedChunk = chunk;
-		// Only add padding if this is the last chunk
-		if (i === numChunks - 1) {
-			while (paddedChunk.length % 4 !== 0) {
-				paddedChunk += '=';
-			}
-		}
-
-		// Decode chunk
-		const decodedChunk = decodeBase64(paddedChunk);
-
-		// Copy to result buffer
-		result.set(decodedChunk, resultOffset);
-		resultOffset += decodedChunk.length;
-
-		// Report progress
-		processedBytes += end - start;
-		if (onProgress) {
-			onProgress(processedBytes, total);
-		}
-
-		// Allow UI to update
-		await new Promise((resolve) => setTimeout(resolve, 0));
-	}
-
-	// Return the actual data (might be slightly smaller than allocated due to padding)
-	return result.slice(0, resultOffset);
-}
+import {
+	encodeBase64,
+	decodeBase64,
+	incrementalBase64Decode,
+	PBKDF2_ITERATIONS,
+	SALT_LENGTH,
+	KEY_LENGTH,
+	LARGE_FILE_THRESHOLD,
+	CHUNK_SIZE,
+} from './crypto-shared';
 
 /**
  * Derive an encryption key from a password using PBKDF2

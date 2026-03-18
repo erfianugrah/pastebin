@@ -5,7 +5,7 @@
 
 import { encryptData, decryptData, generateEncryptionKey } from './crypto';
 
-const STORAGE_PREFIX = '__secure_pasterisr_';
+const STORAGE_PREFIX = '__secure_pasteriser_';
 const MASTER_KEY_NAME = `${STORAGE_PREFIX}mk`;
 
 /**

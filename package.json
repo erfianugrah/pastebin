@@ -5,7 +5,6 @@
 	"scripts": {
 		"deploy": "npm run build:ui && wrangler deploy",
 		"deploy:prod": "npm run build:ui && wrangler deploy --env production",
-		"deploy:staging": "npm run build:ui && wrangler deploy --env staging",
 		"dev": "wrangler dev",
 		"dev:ui": "cd astro && npm run dev -- --port 3000",
 		"dev:all": "concurrently \"npm run dev:ui\" \"npm run dev\"",
@@ -21,6 +20,7 @@
 	},
 	"dependencies": {
 		"@astrojs/check": "^0.9.6",
+		"hono": "^4.12.8",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {

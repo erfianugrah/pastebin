@@ -55,11 +55,6 @@ export const defaultConfig: Config = {
 export class ConfigurationService {
 	private config: Config;
 
-	// Add get method to fix the property access error
-	get(key: string): any {
-		return (this.config as any)[key];
-	}
-
 	constructor(customConfig: Partial<Config> = {}) {
 		// Merge default config with custom config
 		const mergedConfig = this.mergeConfigs(defaultConfig, customConfig);
@@ -68,29 +63,29 @@ export class ConfigurationService {
 		this.config = ConfigSchema.parse(mergedConfig);
 	}
 
-	private mergeConfigs(defaultConfig: Config, customConfig: Partial<Config>): Config {
+	private mergeConfigs(defaultCfg: Config, customCfg: Partial<Config>): Config {
 		return {
-			...defaultConfig,
-			...customConfig,
+			...defaultCfg,
+			...customCfg,
 			application: {
-				...defaultConfig.application,
-				...customConfig.application,
+				...defaultCfg.application,
+				...customCfg.application,
 			},
 			storage: {
-				...defaultConfig.storage,
-				...customConfig.storage,
+				...defaultCfg.storage,
+				...customCfg.storage,
 			},
 			security: {
-				...defaultConfig.security,
-				...customConfig.security,
+				...defaultCfg.security,
+				...customCfg.security,
 			},
 			paste: {
-				...defaultConfig.paste,
-				...customConfig.paste,
+				...defaultCfg.paste,
+				...customCfg.paste,
 			},
 			logging: {
-				...defaultConfig.logging,
-				...customConfig.logging,
+				...defaultCfg.logging,
+				...customCfg.logging,
 			},
 		};
 	}

@@ -1,3 +1,5 @@
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { Env } from './types';
 import { ConfigurationService } from './infrastructure/config/config';
 import { KVPasteRepository } from './infrastructure/storage/kvPasteRepository';
@@ -8,204 +10,234 @@ import { DeletePasteCommand } from './application/commands/deletePasteCommand';
 import { GetPasteQuery } from './application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
-import { ApiMiddleware } from './interfaces/api/middleware';
-import { errorHandler } from './infrastructure/errors/AppError';
-import { initializeLogger } from './infrastructure/logging/loggerFactory';
+import { securityHeaders } from './interfaces/api/middleware';
+import { AppError } from './infrastructure/errors/AppError';
+import { Logger } from './infrastructure/logging/logger';
 import { addCacheHeaders, cacheStaticAsset, cachePasteView, preventCaching } from './infrastructure/caching/cacheControl';
 
-/**
- * Handle GET /pastes or /pastes/ without a paste ID.
- */
-function handlePastesIndex(request: Request): Response {
-	const acceptHeader = request.headers.get('Accept') || '';
-	const wantsJson = acceptHeader.includes('application/json');
+// ---------- Stateless singletons (safe to reuse across requests) ----------
+
+const uniqueIdService = new CloudflareUniqueIdService();
+const expirationService = new DefaultExpirationService();
+
+// ---------- Hono app ----------
+
+type AppEnv = {
+	Bindings: Env;
+	Variables: {
+		requestId: string;
+		logger: Logger;
+		handlers: ApiHandlers;
+	};
+};
+
+const app = new Hono<AppEnv>();
+
+// ---- Global middleware ----
+
+// 1. Request logging & dependency injection
+app.use('*', async (c, next) => {
+	const logger = new Logger();
+	const requestId = crypto.randomUUID();
+	const url = new URL(c.req.url);
+	const cfData = (c.req.raw as any).cf || {};
+
+	logger.setContext({
+		requestId,
+		url: c.req.url,
+		method: c.req.method,
+		path: url.pathname,
+		cf: {
+			country: cfData.country,
+			colo: cfData.colo,
+			asn: cfData.asn,
+			clientTcpRtt: cfData.clientTcpRtt,
+		},
+	});
+
+	logger.info(`${c.req.method} ${url.pathname}`, {
+		queryParams: Object.fromEntries(url.searchParams),
+		headers: {
+			'user-agent': c.req.header('user-agent'),
+			'content-type': c.req.header('content-type'),
+			accept: c.req.header('accept'),
+		},
+	});
+
+	c.set('requestId', requestId);
+	c.set('logger', logger);
+
+	// Create request-scoped services
+	const configService = new ConfigurationService({
+		application: {
+			name: 'pastebin',
+			version: '1.0.0',
+			baseUrl: url.origin,
+		},
+	});
+
+	const pasteRepository = new KVPasteRepository(c.env.PASTES, logger);
+
+	const createPasteCommand = new CreatePasteCommand(
+		pasteRepository,
+		uniqueIdService,
+		expirationService,
+		configService.getApplicationConfig().baseUrl,
+	);
+	const deletePasteCommand = new DeletePasteCommand(pasteRepository);
+	const getPasteQuery = new GetPasteQuery(pasteRepository);
+	const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
+
+	const apiHandlers = new ApiHandlers(createPasteCommand, deletePasteCommand, getPasteQuery, getRecentPastesQuery, logger);
+
+	c.set('handlers', apiHandlers);
+
+	await next();
+});
+
+// 2. CORS — origin '*' WITHOUT credentials (fixes the open-CORS-with-credentials bug)
+app.use(
+	'*',
+	cors({
+		origin: '*',
+		allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+		allowHeaders: ['Content-Type', 'Authorization'],
+	}),
+);
+
+// 3. Security headers (runs after handler, adds headers to every response)
+app.use('*', securityHeaders);
+
+// ---- Error handler ----
+
+app.onError((err, c) => {
+	const logger = c.get('logger');
+
+	if (err instanceof AppError) {
+		logger?.warn(`AppError: ${err.code}`, {
+			statusCode: err.statusCode,
+			message: err.message,
+			details: err.details,
+		});
+		return err.toResponse();
+	}
+
+	if (logger) {
+		logger.error('Unhandled error', {
+			error: err.message,
+			stack: err.stack,
+			url: c.req.url,
+			method: c.req.method,
+		});
+	} else {
+		console.error('Unhandled error:', err);
+	}
+
+	return c.json({ error: { code: 'internal_server_error', message: 'An unexpected error occurred' } }, 500);
+});
+
+// ---- API routes ----
+
+// POST /pastes — create paste
+app.post('/pastes', async (c) => {
+	return preventCaching(await c.get('handlers').handleCreatePaste(c.req.raw));
+});
+
+// GET /api/recent — recent public pastes
+app.get('/api/recent', async (c) => {
+	return addCacheHeaders(await c.get('handlers').handleGetRecentPastes(c.req.raw), {
+		maxAge: 60,
+		staleWhileRevalidate: 300,
+	});
+});
+
+// DELETE|POST /pastes/:id/delete — delete paste (API)
+app.on(['DELETE', 'POST'], '/pastes/:id/delete', async (c) => {
+	const pasteId = c.req.param('id');
+	return preventCaching(await c.get('handlers').handleDeletePaste(c.req.raw, pasteId));
+});
+
+// GET /pastes/:id/delete — serve the delete confirmation HTML page
+// (token is NOT accepted via GET query params to avoid leaking in logs/referer)
+app.get('/pastes/:id/delete', async (c) => {
+	const accept = c.req.header('accept') || '';
+	if (accept.includes('text/html')) {
+		const url = new URL(c.req.url);
+		const assetRequest = new Request(url.origin + '/pastes/index/delete/index.html', c.req.raw);
+		return cacheStaticAsset(await c.env.ASSETS.fetch(assetRequest), 'html');
+	}
+	return c.json({ error: { code: 'method_not_allowed', message: 'Use DELETE or POST to delete a paste' } }, 405);
+});
+
+// GET /pastes — index without an ID
+app.get('/pastes', async (c) => {
+	const accept = c.req.header('accept') || '';
+	if (accept.includes('application/json')) {
+		return c.json({ message: 'Paste ID is required', publicPastes: [] }, 400);
+	}
+	return c.redirect(new URL(c.req.url).origin, 302);
+});
+
+// GET /pastes/raw/:id — raw content
+app.get('/pastes/raw/:id', async (c) => {
+	const pasteId = c.req.param('id');
+	const response = await c.get('handlers').handleGetPaste(c.req.raw, pasteId);
+
+	if (response.status === 200) {
+		const responseData = (await response.json()) as { content: string };
+		return new Response(responseData.content, {
+			status: 200,
+			headers: {
+				'Content-Type': 'text/plain; charset=utf-8',
+				'Cache-Control': 'public, max-age=3600',
+			},
+		});
+	}
+	return response;
+});
+
+// GET|POST /pastes/:id — view paste (JSON or HTML page)
+app.on(['GET', 'POST'], '/pastes/:id', async (c) => {
+	const pasteId = c.req.param('id');
+	const accept = c.req.header('accept') || '';
+	const wantsJson = accept.includes('application/json');
 
 	if (wantsJson) {
-		return new Response(
-			JSON.stringify({
-				message: 'Paste ID is required',
-				publicPastes: [],
-			}),
-			{
-				status: 400,
-				headers: { 'Content-Type': 'application/json' },
-			},
-		);
+		const response = await c.get('handlers').handleGetPaste(c.req.raw, pasteId);
+		return response.status === 200 ? cachePasteView(response) : preventCaching(response);
 	}
-	return Response.redirect(new URL(request.url).origin, 302);
-}
 
-export default {
-	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		const configService = new ConfigurationService({
-			application: {
-				name: 'pastebin',
-				version: '1.0.0',
-				baseUrl: new URL(request.url).origin,
-			},
-		});
+	// Serve the Astro-generated viewer page
+	const url = new URL(c.req.url);
+	const assetRequest = new Request(url.origin + '/pastes/index/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(assetRequest), 'html');
+});
 
-		const logger = initializeLogger();
+// ---- Static pages ----
 
-		// Gather request details for logging context
-		const requestId = crypto.randomUUID();
-		const url = new URL(request.url);
-		const cfData = request.cf || {};
+app.get('/recent', async (c) => {
+	const url = new URL(c.req.url);
+	const req = new Request(url.origin + '/recent/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
+});
 
-		logger.setContext({
-			requestId,
-			url: request.url,
-			method: request.method,
-			path: url.pathname,
-			cf: {
-				country: cfData.country,
-				colo: cfData.colo,
-				asn: cfData.asn,
-				clientTcpRtt: cfData.clientTcpRtt,
-			},
-		});
+app.get('/', async (c) => {
+	const url = new URL(c.req.url);
+	const req = new Request(url.origin + '/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
+});
 
-		logger.info(`${request.method} ${url.pathname}`, {
-			queryParams: Object.fromEntries(url.searchParams),
-			headers: {
-				'user-agent': request.headers.get('user-agent'),
-				'content-type': request.headers.get('content-type'),
-				accept: request.headers.get('accept'),
-			},
-		});
+// ---- Static assets / 404 catch-all ----
 
-		return errorHandler(
-			request,
-			ctx,
-			async () => {
-				// Create repository and services
-				const pasteRepository = new KVPasteRepository(env.PASTES, logger);
-				const uniqueIdService = new CloudflareUniqueIdService();
-				const expirationService = new DefaultExpirationService();
+app.all('*', async (c) => {
+	const path = new URL(c.req.url).pathname;
 
-				// Create commands and queries
-				const createPasteCommand = new CreatePasteCommand(
-					pasteRepository,
-					uniqueIdService,
-					expirationService,
-					configService.getApplicationConfig().baseUrl,
-				);
+	if (path.match(/\.(js|css|svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|eot)$/)) {
+		const extension = path.split('.').pop();
+		return cacheStaticAsset(await c.env.ASSETS.fetch(c.req.raw), extension);
+	}
 
-				const deletePasteCommand = new DeletePasteCommand(pasteRepository);
-				const getPasteQuery = new GetPasteQuery(pasteRepository);
-				const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
+	return c.json({ error: { code: 'not_found', message: 'The requested resource was not found' } }, 404);
+});
 
-				// Create handlers and middleware
-				const apiHandlers = new ApiHandlers(createPasteCommand, deletePasteCommand, getPasteQuery, getRecentPastesQuery, logger);
-
-				const apiMiddleware = new ApiMiddleware(configService, logger);
-
-				const path = url.pathname;
-
-				// Handle CORS preflight
-				const corsResponse = await apiMiddleware.handleCors(request);
-				if (corsResponse) {
-					return corsResponse;
-				}
-
-				// ---------- Routing ----------
-
-				let response: Response;
-
-				// POST /pastes — create paste
-				if (path === '/pastes' && request.method === 'POST') {
-					response = preventCaching(await apiHandlers.handleCreatePaste(request));
-
-					// GET /api/recent
-				} else if (path === '/api/recent' && request.method === 'GET') {
-					response = addCacheHeaders(await apiHandlers.handleGetRecentPastes(request), {
-						maxAge: 60,
-						staleWhileRevalidate: 300,
-					});
-
-					// Delete paste
-				} else if (
-					path.match(/^\/pastes\/([^\/]+)\/delete$/) &&
-					(request.method === 'DELETE' || request.method === 'POST' || request.method === 'GET')
-				) {
-					const pasteId = path.split('/')[2];
-					const acceptHeader = request.headers.get('Accept') || '';
-
-					if (acceptHeader.includes('text/html') && request.method === 'GET') {
-						const assetRequest = new Request(url.origin + '/pastes/index/delete/index.html', request);
-						return cacheStaticAsset(await env.ASSETS.fetch(assetRequest), 'html');
-					}
-					response = preventCaching(await apiHandlers.handleDeletePaste(request, pasteId));
-
-					// GET /pastes or /pastes/ without ID
-				} else if ((path === '/pastes' || path === '/pastes/') && request.method === 'GET') {
-					return handlePastesIndex(request);
-
-					// GET|POST /pastes/:id or /pastes/raw/:id
-				} else if (path.startsWith('/pastes/') && (request.method === 'GET' || request.method === 'POST')) {
-					const isRawView = path.includes('/raw/');
-					const pasteId = isRawView ? path.split('/')[3] : path.split('/')[2];
-					const acceptHeader = request.headers.get('Accept') || '';
-					const wantsJson = acceptHeader.includes('application/json');
-
-					if (wantsJson || isRawView) {
-						response = await apiHandlers.handleGetPaste(request, pasteId);
-
-						if (isRawView && response.status === 200) {
-							const responseData = (await response.json()) as { content: string };
-							response = new Response(responseData.content, {
-								status: 200,
-								headers: {
-									'Content-Type': 'text/plain; charset=utf-8',
-									'Cache-Control': 'public, max-age=3600',
-								},
-							});
-						}
-
-						if (response.status === 200 && !isRawView) {
-							response = cachePasteView(response);
-						} else if (!isRawView) {
-							response = preventCaching(response);
-						}
-					} else {
-						const assetRequest = new Request(url.origin + '/pastes/index/index.html', request);
-						return cacheStaticAsset(await env.ASSETS.fetch(assetRequest), 'html');
-					}
-
-					// Static assets
-				} else if (path.match(/\.(js|css|svg|png|jpg|jpeg|gif|webp|ico)$/)) {
-					const extension = path.split('.').pop();
-					return cacheStaticAsset(await env.ASSETS.fetch(request), extension);
-
-					// Recent page
-				} else if (path === '/recent') {
-					const req = new Request(url.origin + '/recent/index.html', request);
-					return cacheStaticAsset(await env.ASSETS.fetch(req), 'html');
-
-					// Home page
-				} else if (path === '/') {
-					const req = new Request(url.origin + '/index.html', request);
-					return cacheStaticAsset(await env.ASSETS.fetch(req), 'html');
-
-					// 404
-				} else {
-					response = new Response(
-						JSON.stringify({
-							error: {
-								code: 'not_found',
-								message: 'The requested resource was not found',
-							},
-						}),
-						{
-							status: 404,
-							headers: { 'Content-Type': 'application/json' },
-						},
-					);
-				}
-
-				return apiMiddleware.addResponseHeaders(response, request);
-			},
-			logger,
-		);
-	},
-};
+export default app;

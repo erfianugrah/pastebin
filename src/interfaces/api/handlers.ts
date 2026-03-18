@@ -1,5 +1,5 @@
 import { CreatePasteCommand, CreatePasteParams } from '../../application/commands/createPasteCommand';
-import { DeletePasteCommand } from '../../application/commands/deletePasteCommand';
+import { DeletePasteCommand, DeleteErrorCode } from '../../application/commands/deletePasteCommand';
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../application/queries/getRecentPastesQuery';
 import { Logger } from '../../infrastructure/logging/logger';
@@ -19,6 +19,16 @@ function rethrowIfZodError(error: unknown): void {
 		throw ValidationError('Invalid request data', { issues: (error as any).issues });
 	}
 }
+
+/** Map DeleteErrorCode to HTTP status codes */
+const DELETE_STATUS_MAP: Record<DeleteErrorCode, number> = {
+	[DeleteErrorCode.NOT_FOUND]: 404,
+	[DeleteErrorCode.UNAUTHORIZED]: 403,
+	[DeleteErrorCode.FAILED]: 400,
+};
+
+/** Maximum number of recent pastes that can be requested */
+const MAX_RECENT_LIMIT = 100;
 
 export class ApiHandlers {
 	constructor(
@@ -105,9 +115,10 @@ export class ApiHandlers {
 				return json(result);
 			}
 
-			const status = result.message === 'Paste not found' ? 404 : result.message === 'Unauthorized' ? 403 : 400;
+			// Use structured error code for status mapping
+			const status = result.errorCode ? DELETE_STATUS_MAP[result.errorCode] : 400;
 
-			return json({ error: { code: result.message.toLowerCase().replace(/ /g, '_'), message: result.message } }, status);
+			return json({ error: { code: result.errorCode || 'unknown_error', message: result.message } }, status);
 		} catch (error) {
 			rethrowIfZodError(error);
 			throw error;
@@ -117,7 +128,11 @@ export class ApiHandlers {
 	async handleGetRecentPastes(request: Request): Promise<Response> {
 		this.logger.debug('Handling get recent pastes request');
 		const url = new URL(request.url);
-		const limit = parseInt(url.searchParams.get('limit') || '10', 10);
+		const rawLimit = parseInt(url.searchParams.get('limit') || '10', 10);
+
+		// Clamp limit to [1, MAX_RECENT_LIMIT]
+		const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 10 : rawLimit, MAX_RECENT_LIMIT));
+
 		const results = await this.getRecentPastesQuery.execute(limit);
 		return json({ pastes: results });
 	}

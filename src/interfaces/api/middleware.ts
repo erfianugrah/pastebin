@@ -1,104 +1,43 @@
-import { ConfigurationService } from '../../infrastructure/config/config';
-import { Logger } from '../../infrastructure/logging/logger';
+import { createMiddleware } from 'hono/factory';
 
-export class ApiMiddleware {
-  constructor(
-    private readonly configService: ConfigurationService,
-    private readonly logger: Logger,
-  ) {}
+/** Content Security Policy directives */
+const CSP_DIRECTIVES = [
+	"default-src 'self'",
+	"script-src 'self'",
+	"style-src 'self' 'unsafe-inline'",
+	"connect-src 'self'",
+	"img-src 'self' data: blob:",
+	"font-src 'self'",
+	"object-src 'none'",
+	"media-src 'self'",
+	"worker-src 'self' blob:",
+	"child-src 'self'",
+	"frame-ancestors 'none'",
+	"base-uri 'self'",
+	"form-action 'self'",
+].join('; ');
 
-  async handleCors(request: Request): Promise<Response | null> {
-    // Handle preflight request
-    if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: this.getCorsHeaders(request),
-      });
-    }
-    
-    // For actual requests, just add CORS headers
-    return null;
-  }
+/**
+ * Hono middleware that adds security headers to every response.
+ */
+export const securityHeaders = createMiddleware(async (c, next) => {
+	await next();
 
-  getCorsHeaders(request: Request): Headers {
-    const headers = new Headers();
-    const securityConfig = this.configService.getSecurityConfig();
-    
-    const origin = request.headers.get('Origin');
-    
-    const allowlist = securityConfig.allowedOrigins ?? [];
-    const allowAll = allowlist.includes('*');
+	// Clone the response so we can safely mutate headers
+	const original = c.res;
+	const headers = new Headers(original.headers);
 
-    const addVaryOrigin = () => {
-      const existing = headers.get('Vary');
-      if (!existing) {
-        headers.set('Vary', 'Origin');
-        return;
-      }
-      const varyValues = existing.split(',').map(value => value.trim());
-      if (!varyValues.includes('Origin')) {
-        headers.set('Vary', `${existing}, Origin`);
-      }
-    };
+	headers.set('Content-Security-Policy', CSP_DIRECTIVES);
+	headers.set('X-Content-Type-Options', 'nosniff');
+	headers.set('X-Frame-Options', 'DENY');
+	headers.set('X-XSS-Protection', '1; mode=block');
+	headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+	headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+	headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
 
-    if (allowAll) {
-      // Mirror the Origin header when present to support credentials; fall back to '*'
-      if (origin) {
-        headers.set('Access-Control-Allow-Origin', origin);
-        headers.set('Access-Control-Allow-Credentials', 'true');
-        addVaryOrigin();
-      } else {
-        headers.set('Access-Control-Allow-Origin', '*');
-      }
-    } else if (origin && allowlist.length > 0 && allowlist.includes(origin)) {
-      headers.set('Access-Control-Allow-Origin', origin);
-      headers.set('Access-Control-Allow-Credentials', 'true');
-      addVaryOrigin();
-    }
-    
-    headers.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    headers.set(
-      'Access-Control-Allow-Headers',
-      'Content-Type, Authorization',
-    );
-    
-    return headers;
-  }
-
-  async addResponseHeaders(response: Response, request: Request): Promise<Response> {
-    const headers = new Headers(response.headers);
-    const corsHeaders = this.getCorsHeaders(request);
-    corsHeaders.forEach((value, key) => headers.set(key, value));
-    
-    // Add comprehensive security headers
-    const cspDirectives = [
-      "default-src 'self'",
-      "script-src 'self'", // Web Workers load via worker-src/blob: below; unsafe-eval not needed
-      "style-src 'self' 'unsafe-inline'", // unsafe-inline needed for dynamic styles
-      "connect-src 'self'",
-      "img-src 'self' data: blob:", // data: for dynamically generated images, blob: for object URLs
-      "font-src 'self'",
-      "object-src 'none'",
-      "media-src 'self'",
-      "worker-src 'self' blob:", // blob: for Web Workers
-      "child-src 'self'",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'"
-    ].join('; ');
-    
-    headers.set('Content-Security-Policy', cspDirectives);
-    headers.set('X-Content-Type-Options', 'nosniff');
-    headers.set('X-Frame-Options', 'DENY');
-    headers.set('X-XSS-Protection', '1; mode=block');
-    headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-    headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-    headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
-    
-    // Clone response with new headers
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
-  }
-}
+	c.res = new Response(original.body, {
+		status: original.status,
+		statusText: original.statusText,
+		headers,
+	});
+});

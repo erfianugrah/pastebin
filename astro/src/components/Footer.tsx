@@ -6,54 +6,33 @@ export default function Footer() {
 	const [showAbout, setShowAbout] = useState(false);
 
 	return (
-		<footer className="border-t border-border bg-background mt-8">
-			<div className="container mx-auto px-4 py-6">
-				<div className="flex flex-col sm:flex-row justify-between items-center">
-					<div className="text-sm text-muted-foreground">© {year} Erfi Anugrah</div>
-					<div className="text-sm text-muted-foreground mt-2 sm:mt-0">
-						<ul className="flex space-x-4">
-							<li>
-								<a href="/" className="hover:text-foreground transition-colors">
-									Home
-								</a>
-							</li>
-							<li>
-								<a
-									href="https://github.com/erfianugrah"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="hover:text-foreground transition-colors"
-								>
-									GitHub
-								</a>
-							</li>
-							<li>
-								<button
-									onClick={() => setShowAbout(true)}
-									className="hover:text-foreground transition-colors cursor-pointer bg-transparent border-none p-0 m-0"
-								>
-									About
-								</button>
-							</li>
-						</ul>
-					</div>
-				</div>
+		<footer className="border-t border-border mt-auto">
+			<div className="max-w-4xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-2 text-sm text-muted-foreground">
+				<span>&copy; {year} Erfi Anugrah</span>
+				<nav className="flex items-center gap-4">
+					<a href="/" className="hover:text-foreground transition-colors">Home</a>
+					<a href="https://github.com/erfianugrah" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
+						GitHub
+					</a>
+					<button onClick={() => setShowAbout(true)} className="hover:text-foreground transition-colors">
+						About
+					</button>
+				</nav>
 			</div>
 
 			<Modal
 				title="About Pasteriser"
-				description="A modern, secure code sharing service"
+				description="A modern, secure code sharing service."
 				isOpen={showAbout}
 				onClose={() => setShowAbout(false)}
 				cancelText="Close"
 			>
 				<ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-					<li>Enhanced syntax highlighting with line numbers</li>
-					<li>Code formatting and auto-indentation</li>
-					<li>Password protection</li>
-					<li>Burn after reading</li>
-					<li>Custom expiration times</li>
-					<li>Dark mode support</li>
+					<li>End-to-end encryption (XSalsa20-Poly1305)</li>
+					<li>Syntax highlighting for 30+ languages</li>
+					<li>Password &amp; key-based protection</li>
+					<li>Burn-after-reading &amp; view limits</li>
+					<li>Custom expiration (1 hour to 1 year)</li>
 				</ul>
 			</Modal>
 		</footer>

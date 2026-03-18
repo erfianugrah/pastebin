@@ -201,7 +201,7 @@ describe('KVPasteRepository', () => {
     it('should delete the paste and return true if it exists', async () => {
       // Setup mock to return a paste
       mockKV.get.mockResolvedValue('{}');
-      mockKV.list.mockResolvedValue({ keys: [] });
+      mockKV.list.mockResolvedValue({ keys: [], list_complete: true });
       
       const result = await repository.delete(PasteId.create('abc123'));
       
@@ -217,6 +217,7 @@ describe('KVPasteRepository', () => {
           { name: 'recent:1672574400000:abc123' },
           { name: 'recent:1672574500000:def456' },
         ],
+        list_complete: true,
       });
       
       await repository.delete(PasteId.create('abc123'));

@@ -1,33 +1,32 @@
 import { useState, useEffect, useRef } from 'react';
+import { Lock, Unlock, Flame, Eye, Clock, KeyRound, ShieldCheck } from 'lucide-react';
 import { decryptData, deriveKeyFromPassword } from '../lib/crypto';
 import { toast } from './ui/toast';
+import { Button } from './ui/button';
 import util from 'tweetnacl-util';
 import { ExpirationCountdown } from './ExpirationCountdown';
 import { useErrorHandler } from '../hooks/useErrorHandler';
-import { useAsyncEffect } from '../hooks/useAsyncEffect';
 import { ErrorDisplay } from './ui/error-display';
 import { ErrorCategory } from '../lib/errorTypes';
+import { cn } from '../lib/utils';
+import { T } from '../lib/typography';
 
-// Import Prism core and autoloader
+// Import Prism core (autoloader configured lazily to avoid SSG crash)
 import Prism from 'prismjs';
-import 'prismjs/plugins/autoloader/prism-autoloader';
 
-// Configure the autoloader to use our local copy of components in public directory
-// This path is relative to the site root
-Prism.plugins.autoloader.languages_path = '/prism-components/';
+if (typeof window !== 'undefined') {
+	// @ts-expect-error -- prism autoloader plugin has no type declarations
+	import('prismjs/plugins/autoloader/prism-autoloader').then(() => {
+		Prism.plugins.autoloader.languages_path = '/prism-components/';
+	});
+}
 
-// Extract decodeBase64 from the CommonJS module
 const { decodeBase64 } = util;
-
-// Development mode check - gates all console output
 const isDev = typeof window !== 'undefined' && window.location?.hostname === 'localhost';
 
-// Add Prism type declaration
 declare global {
 	interface Window {
-		Prism: {
-			highlightElement: (element: HTMLElement) => void;
-		};
+		Prism: { highlightElement: (element: HTMLElement) => void };
 	}
 }
 
@@ -49,1078 +48,356 @@ interface PasteData {
 	remainingViews?: number;
 }
 
-interface SessionInfo {
-	eventName: string;
-	token: string;
-}
-
+interface SessionInfo { eventName: string; token: string }
 interface CodeViewerProps {
 	paste: PasteData;
+	/** @deprecated Use onDecrypted instead. Kept for legacy [id].astro compat. */
 	sessionInfo?: SessionInfo;
+	/** Called when content has been successfully decrypted. */
+	onDecrypted?: (content: string) => void;
 }
 
-export default function CodeViewer({ paste, sessionInfo }: CodeViewerProps) {
-	// Add debugging info to console only in development
-	if (isDev) {
-		console.log('CodeViewer: Paste data received:', {
-			id: paste.id,
-			isEncrypted: paste.isEncrypted,
-			isPasswordProtected: paste.isPasswordProtected,
-			visibility: paste.visibility,
-			contentLength: paste.content?.length || 0,
-			version: paste.version,
-			securityType: paste.securityType,
-		});
-	}
+// ── Helpers ──────────────────────────────────────────────────────────
 
+function formatDate(dateString: string) {
+	return new Date(dateString).toLocaleDateString('en-US', {
+		year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+	});
+}
+
+function Badge({ className, children }: { className?: string; children: React.ReactNode }) {
+	return <span className={cn('badge', className)}>{children}</span>;
+}
+
+// ── Component ────────────────────────────────────────────────────────
+
+export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeViewerProps) {
 	const [content, setContent] = useState<string>(paste.content);
 	const [isDecrypting, setIsDecrypting] = useState(false);
 	const [decrypted, setDecrypted] = useState(false);
-	const [isLargeFile, setIsLargeFile] = useState(false);
-	const [visibleContent, setVisibleContent] = useState<string>('');
-	const [fullContentLoaded, setFullContentLoaded] = useState(false);
 	const [decryptionProgress, setDecryptionProgress] = useState<number | null>(null);
+	const [passwordInput, setPasswordInput] = useState('');
+	const [showPasswordForm, setShowPasswordForm] = useState(false);
 	const codeRef = useRef<HTMLElement>(null);
 
-	// Use our error handler hook
 	const { error, errorMessage, category, handleError } = useErrorHandler();
 
-	// Notify parent Astro page of decrypted content via session event
+	// ── Notify parent ────────────────────────────────────────────────
 	const notifyDecrypted = (decryptedContent: string) => {
+		onDecrypted?.(decryptedContent);
+		// Legacy event for [id].astro backward compat
 		if (sessionInfo) {
-			const event = new CustomEvent(sessionInfo.eventName, {
-				detail: {
-					content: decryptedContent,
-					token: sessionInfo.token,
-				},
-			});
-			window.dispatchEvent(event);
+			window.dispatchEvent(new CustomEvent(sessionInfo.eventName, {
+				detail: { content: decryptedContent, token: sessionInfo.token },
+			}));
 		}
 	};
 
-	// Define threshold for large files (5MB)
-	const largeFileThreshold = 5 * 1024 * 1024;
-
-	// Handle large file progressive loading
+	// ── Syntax highlighting ──────────────────────────────────────────
 	useEffect(() => {
-		const contentToProcess = decrypted ? content : paste.content;
-		const isLarge = contentToProcess.length > largeFileThreshold;
-
-		setIsLargeFile(isLarge);
-
-		if (isLarge) {
-			// Initially show just the first part of the content
-			const initialChunkSize = 100 * 1024; // 100KB
-			setVisibleContent(contentToProcess.slice(0, initialChunkSize));
-
-			// Load the rest of the content after a short delay
-			const loadFullContent = () => {
-				setVisibleContent(contentToProcess);
-				setFullContentLoaded(true);
-			};
-
-			const timeoutId = setTimeout(loadFullContent, 100);
-			return () => clearTimeout(timeoutId);
-		} else {
-			// For smaller files, show everything immediately
-			setVisibleContent(contentToProcess);
-			setFullContentLoaded(true);
-			return undefined; // Explicit return for TypeScript
-		}
-	}, [content, paste.content, decrypted, largeFileThreshold]);
-
-	// Syntax highlighting effect
-	useEffect(() => {
-		if (fullContentLoaded && codeRef.current) {
-			// Apply syntax highlighting using our imported Prism instance
+		if ((!paste.isEncrypted || decrypted) && codeRef.current) {
 			Prism.highlightElement(codeRef.current);
 		}
-	}, [fullContentLoaded, paste.language, visibleContent]);
+	}, [content, decrypted, paste.language, paste.isEncrypted]);
 
-	const [passwordInput, setPasswordInput] = useState<string>('');
-	const [showPasswordForm, setShowPasswordForm] = useState<boolean>(false);
-
+	// ── Auto-decryption on mount ─────────────────────────────────────
 	useEffect(() => {
-		// Check for encryption key in URL fragment, localStorage, or prompt for password
+		if (!paste.isEncrypted || decrypted) return;
+
 		async function attemptDecryption() {
-			// Only skip decryption if the paste is not encrypted
-			if (!paste.isEncrypted) {
-				// Only log in development
-				if (isDev) {
-					console.log('CodeViewer: Non-encrypted paste - skipping decryption');
-				}
-				return;
-			}
+			try {
+				setIsDecrypting(true);
 
-			if (!decrypted) {
-				// Only log in development
-				if (isDev) {
-					console.log(`CodeViewer: Encrypted ${paste.visibility} paste detected, attempting decryption`);
-				}
-				try {
-					setIsDecrypting(true);
+				// 1. Try URL fragment key
+				let key = extractKeyFromUrl();
 
-					// Get key from URL fragment
-					const urlHash = window.location.hash.substring(1);
-					if (isDev) console.log('URL fragment:', urlHash);
-
-					// Handle both URL query param style (?key=xxx) and direct fragment (#key=xxx)
-					let key;
+				// 2. Try saved key
+				let savedKey: string | null = null;
+				if (!key && paste.id) {
 					try {
-						// First try to extract the key with regex to preserve the exact encoding
-						const directMatch = urlHash.match(/key=([^&]+)/);
-						if (directMatch && directMatch[1]) {
-							// Use the raw match to preserve '+' and other special characters
-							key = directMatch[1];
-							// Only log in development
-							if (isDev) {
-								console.log('Found key with regex match');
-							}
-						} else {
-							// If regex fails, try URLSearchParams
-							const hashParams = new URLSearchParams(urlHash);
-							key = hashParams.get('key');
-
-							if (key) {
-								// URLSearchParams converts '+' to space, so convert spaces back to '+'
-								key = key.replace(/ /g, '+');
-								// Only log in development
-								if (isDev) {
-									console.log('Found key with URLSearchParams, fixed spaces');
-								}
-							}
-						}
-
-						// Apply decoding to handle URL-encoded characters, especially for Base64 special chars
-						if (key) {
-							try {
-								// First check for percent-encoded characters
-								if (key.includes('%')) {
-									key = decodeURIComponent(key);
-									// Only log in development
-									if (isDev) {
-										console.log('Decoded URI-encoded key');
-									}
-								}
-
-								// Handle the special case of the older format where + might have been encoded as %2B
-								// and then decoded to a space by URLSearchParams
-								if (key.includes(' ')) {
-									key = key.replace(/ /g, '+');
-									// Only log in development
-									if (isDev) {
-										console.log('Replaced spaces with plus signs in key');
-									}
-								}
-
-								// Recover any potentially encoded Base64 special characters
-								key = key.replace(/%2B/g, '+').replace(/%2F/g, '/').replace(/%3D/g, '=');
-
-								// Only log in development
-								if (isDev) {
-									console.log('Key prepared for decryption');
-								}
-							} catch (decodeError) {
-								if (isDev) console.warn('Error processing encryption key:', decodeError);
-								// Keep using the original key if processing fails
-							}
-						}
-					} catch (e) {
-						if (isDev) console.warn('Error parsing URL fragment:', e);
+						const { secureRetrieve } = await import('../lib/secureStorage');
+						savedKey = await secureRetrieve(`paste_key_${paste.id}`);
+					} catch {
+						savedKey = localStorage.getItem(`paste_key_${paste.id}`);
 					}
-
-					// Check secure storage for saved key if not in URL
-					let savedKey = null;
-					if (!key && paste.id) {
-						try {
-							const { secureRetrieve } = await import('../lib/secureStorage');
-							savedKey = await secureRetrieve(`paste_key_${paste.id}`);
-						} catch (error) {
-							if (isDev) console.warn('Failed to retrieve key from secure storage:', error);
-							// Fallback to regular localStorage for backward compatibility
-							savedKey = localStorage.getItem(`paste_key_${paste.id}`);
-						}
-					}
-
-					// Only log in development
-					if (isDev) {
-						console.log('isEncrypted:', paste.isEncrypted);
-						console.log('Encryption key found:', key ? 'URL' : savedKey ? 'Local Storage' : 'No');
-						console.log('Content length:', paste.content.length);
-					}
-
-					// If we have either a URL key or a saved key
-					if (key || savedKey) {
-						const keyToUse = key || savedKey;
-
-						try {
-							// Only log in development
-							if (isDev) {
-								console.log('Attempting to decrypt content with key');
-							}
-							// Check if this is a large paste that needs progress reporting
-							const isLarge = paste.content.length > 10000;
-
-							if (isLarge) {
-								setDecryptionProgress(0);
-							}
-
-							// Attempt decryption with the key
-							// Set initial progress explicitly to ensure UI updates
-							setDecryptionProgress(0);
-
-							// Setup a realistic progress simulation
-							// For very large files (5MB+), use a much longer simulation time
-							const baseEstimatedTime = Math.max(2000, Math.min(paste.content.length / 1000, 60000)); // 2-60 seconds based on content size
-
-							// For extremely large files (>10MB), add extra time to ensure simulation doesn't finish before actual decryption
-							const estimatedTime =
-								paste.content.length > 10 * 1024 * 1024
-									? baseEstimatedTime * 1.5 // 50% longer for extremely large files
-									: baseEstimatedTime;
-							const startTime = Date.now();
-							let decryptedContent: string;
-
-							// Progress interval that simulates decryption progress
-							const progressInterval = setInterval(() => {
-								const elapsed = Date.now() - startTime;
-
-								// For large files (>5MB), use a more detailed progress simulation
-								let progress;
-								if (paste.content.length > 5 * 1024 * 1024) {
-									// Use a delayed approach for very large files to better match actual processing time
-									const progressPercentage = Math.min(1, elapsed / estimatedTime);
-
-									// Create a curve that moves faster at start and middle, slower at end
-									if (progressPercentage < 0.1) {
-										// First 10% of time: move to 20% progress quickly (initial setup)
-										progress = Math.floor(progressPercentage * 200);
-									} else if (progressPercentage < 0.9) {
-										// Next 80% of time: move from 20% to 85% progress (main decryption work)
-										const adjustedPercentage = (progressPercentage - 0.1) / 0.8;
-										progress = Math.floor(20 + adjustedPercentage * 65);
-									} else {
-										// Final 10% of time: move from 85% to 95% progress (slow final phase)
-										const adjustedPercentage = (progressPercentage - 0.9) / 0.1;
-										progress = Math.floor(85 + adjustedPercentage * 10);
-									}
-								} else {
-									// For smaller files, use linear progress
-									progress = Math.min(95, Math.floor((elapsed / estimatedTime) * 100));
-								}
-
-								// Only log in development (removed for production)
-								// console.log('Simulated decryption progress:', progress);
-								setDecryptionProgress(progress);
-							}, 50); // Update more frequently for smoother progress
-
-							try {
-								// Perform the actual decryption
-								decryptedContent = await decryptData(paste.content, keyToUse || '', false);
-
-								// Ensure 100% is shown at the end
-								setDecryptionProgress(100);
-							} finally {
-								// Always clear the interval
-								clearInterval(progressInterval);
-							}
-
-							// Only log in development
-							if (isDev) {
-								console.log('Decryption successful, content length:', decryptedContent.length);
-							}
-
-							// Update state with decrypted content
-							setContent(decryptedContent);
-							setDecrypted(true);
-
-							// Notify parent Astro page that content is decrypted
-							notifyDecrypted(decryptedContent);
-
-							// Show different toast messages depending on key source
-							if (savedKey && !key) {
-								toast({
-									message: 'Content decrypted with saved key',
-									type: 'success',
-								});
-							} else {
-								toast({
-									message: 'Content decrypted successfully',
-									type: 'success',
-								});
-							}
-
-							// If we used a URL key, save it to secure storage for future use
-							if (key && paste.id) {
-								try {
-									const { secureStore } = await import('../lib/secureStorage');
-									await secureStore(`paste_key_${paste.id}`, key);
-									// Only log in development
-									if (isDev) {
-										console.log('Saved encryption key to secure storage');
-									}
-								} catch (e) {
-									if (isDev) console.error('Failed to save key to secure storage:', e);
-								}
-							}
-						} catch (error) {
-							// Use our error handler to process the error
-							handleError(error, {
-								location: 'CodeViewer.attemptDecryption',
-								pasteId: paste.id,
-								keySource: savedKey ? 'localStorage' : 'url',
-								contentLength: paste.content.length,
-							});
-
-							// If we tried with a saved key and it failed, remove it
-							if (savedKey && paste.id) {
-								try {
-									const { secureRemove } = await import('../lib/secureStorage');
-									secureRemove(`paste_key_${paste.id}`);
-									// Also remove from regular localStorage for cleanup
-									localStorage.removeItem(`paste_key_${paste.id}`);
-									// Only log in development
-									if (isDev) {
-										console.log('Removed invalid saved key from secure storage');
-									}
-								} catch (e) {
-									if (isDev) console.error('Failed to remove key from secure storage:', e);
-								}
-							}
-
-							// Key failed, might be a password-protected paste
-							setShowPasswordForm(true);
-
-							toast({
-								message: 'Failed to decrypt with key. This paste may require a password.',
-								type: 'error',
-							});
-						}
-					} else {
-						// No key available, check if this looks like a password-protected paste
-						try {
-							// Peek at the encrypted data to see if it has the salt+nonce+ciphertext format
-							const encryptedData = decodeBase64(paste.content);
-
-							// If the length is at least SALT_LENGTH + nonceLength (16 + 24), it might be password-protected
-							if (encryptedData.length > 40) {
-								setShowPasswordForm(true);
-								toast({
-									message: 'This content is password-protected. Please enter the password.',
-									type: 'info',
-									duration: 5000,
-								});
-							} else {
-								toast({
-									message: 'This content is encrypted. You need the decryption key to view it.',
-									type: 'info',
-									duration: 5000,
-								});
-							}
-						} catch (e) {
-							toast({
-								message: 'This content is encrypted. You need the decryption key to view it.',
-								type: 'info',
-								duration: 5000,
-							});
-						}
-					}
-				} catch (error) {
-					if (isDev) console.error('Error during decryption process:', error);
-				} finally {
-					setIsDecrypting(false);
 				}
+
+				const keyToUse = key || savedKey;
+
+				if (keyToUse) {
+					await performDecryption(keyToUse, false);
+
+					if (key && paste.id) {
+						try {
+							const { secureStore } = await import('../lib/secureStorage');
+							await secureStore(`paste_key_${paste.id}`, key);
+						} catch { /* ignore storage failures */ }
+					}
+				} else {
+					// No key — check if password-protected
+					try {
+						const data = decodeBase64(paste.content);
+						if (data.length > 40) {
+							setShowPasswordForm(true);
+							toast({ message: 'This paste is password-protected.', type: 'info', duration: 4000 });
+						} else {
+							toast({ message: 'Decryption key required.', type: 'info', duration: 4000 });
+						}
+					} catch {
+						toast({ message: 'Decryption key required.', type: 'info', duration: 4000 });
+					}
+				}
+			} catch (error) {
+				if (isDev) console.error('Decryption error:', error);
+			} finally {
+				setIsDecrypting(false);
 			}
 		}
 
 		attemptDecryption();
 	}, [paste.content, paste.id, paste.isEncrypted, decrypted]);
 
-	// Handle password form submission
-	const handlePasswordSubmit = async (e: React.FormEvent) => {
+	// ── Extract key from URL #key=... ────────────────────────────────
+	function extractKeyFromUrl(): string | null {
+		const hash = window.location.hash.substring(1);
+		if (!hash) return null;
+
+		const match = hash.match(/key=([^&]+)/);
+		let key = match?.[1] ?? null;
+		if (!key) {
+			const params = new URLSearchParams(hash);
+			key = params.get('key');
+			if (key) key = key.replace(/ /g, '+');
+		}
+		if (!key) return null;
+
+		try {
+			if (key.includes('%')) key = decodeURIComponent(key);
+			if (key.includes(' ')) key = key.replace(/ /g, '+');
+			key = key.replace(/%2B/g, '+').replace(/%2F/g, '/').replace(/%3D/g, '=');
+		} catch { /* keep original */ }
+
+		return key;
+	}
+
+	// ── Core decryption logic ────────────────────────────────────────
+	async function performDecryption(keyOrPassword: string, isPassword: boolean) {
+		setDecryptionProgress(0);
+
+		const estimatedTime = Math.max(2000, Math.min(paste.content.length / 1000, 30000));
+		const startTime = Date.now();
+		const progressInterval = setInterval(() => {
+			const elapsed = Date.now() - startTime;
+			const progress = Math.min(95, Math.floor((elapsed / estimatedTime) * 100));
+			setDecryptionProgress(progress);
+		}, 50);
+
+		try {
+			const decryptedContent = await decryptData(paste.content, keyOrPassword, isPassword);
+			setDecryptionProgress(100);
+			setContent(decryptedContent);
+			setDecrypted(true);
+			notifyDecrypted(decryptedContent);
+			toast({ message: 'Decrypted successfully', type: 'success' });
+		} catch (error) {
+			handleError(error, { location: 'CodeViewer.performDecryption', pasteId: paste.id });
+
+			if (!isPassword) {
+				// Key failed — might need password
+				setShowPasswordForm(true);
+				toast({ message: 'Key failed. Try a password instead.', type: 'error' });
+			} else {
+				toast({ message: 'Invalid password.', type: 'error' });
+				setShowPasswordForm(true);
+			}
+
+			// Remove invalid saved key
+			if (!isPassword && paste.id) {
+				try {
+					const { secureRemove } = await import('../lib/secureStorage');
+					secureRemove(`paste_key_${paste.id}`);
+					localStorage.removeItem(`paste_key_${paste.id}`);
+				} catch { /* ignore */ }
+			}
+		} finally {
+			clearInterval(progressInterval);
+			setDecryptionProgress(null);
+		}
+	}
+
+	// ── Password submit ──────────────────────────────────────────────
+	async function handlePasswordSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!passwordInput.trim()) return;
-
 		setIsDecrypting(true);
 		setShowPasswordForm(false);
 
 		try {
-			// Attempt to decrypt with password
-			// Only log in development
-			if (isDev) {
-				console.log('Attempting to decrypt with password');
-			}
-			// Check if this is a large paste that needs progress reporting
-			const isLarge = paste.content.length > 10000;
+			await performDecryption(passwordInput, true);
 
-			if (isLarge) {
-				setDecryptionProgress(0);
-			}
-
-			// Decrypt with progress reporting
-			// Set initial progress explicitly
-			setDecryptionProgress(0);
-
-			// Setup a realistic progress simulation with two phases (key derivation and decryption)
-			// For very large files, use a much longer simulation time
-			const baseTotalTime = Math.max(3000, Math.min(paste.content.length / 1000, 60000)); // 3-60 seconds based on content size
-
-			// For extremely large files (>10MB), add extra time to ensure simulation doesn't finish before actual decryption
-			const totalTime =
-				paste.content.length > 10 * 1024 * 1024
-					? baseTotalTime * 1.5 // 50% longer for extremely large files
-					: baseTotalTime;
-			const keyDerivationTime = totalTime * 0.4; // 40% of the time for key derivation
-			const decryptionTime = totalTime * 0.6; // 60% of the time for actual decryption
-			const startTime = Date.now();
-			let decryptedContent: string;
-
-			// Progress interval that handles both phases with more granular updates
-			const progressInterval = setInterval(() => {
-				const elapsed = Date.now() - startTime;
-				let progress;
-
-				// For large files (>5MB), adjust the progress simulation for better UX
-				if (paste.content.length > 5 * 1024 * 1024) {
-					if (elapsed < keyDerivationTime) {
-						// Phase 1: Key derivation with special handling for very large files
-						// For files >5MB, use a more detailed progression
-						const progressPercentage = Math.min(1, elapsed / keyDerivationTime);
-						if (progressPercentage < 0.2) {
-							// First 20% of derivation time: quick progress to 20%
-							progress = Math.floor(progressPercentage * 100);
-						} else {
-							// Remaining 80% of derivation time: progress from 20% to 40%
-							const adjustedPercentage = (progressPercentage - 0.2) / 0.8;
-							progress = Math.floor(20 + adjustedPercentage * 20);
-						}
-					} else {
-						// Phase 2: Decryption (40-95%) with multi-stage approach for large files
-						const decryptElapsed = elapsed - keyDerivationTime;
-						const progressPercentage = Math.min(1, decryptElapsed / decryptionTime);
-
-						// Create a curve with three segments for very large files
-						if (progressPercentage < 0.3) {
-							// First 30% of decryption time: quick progress from 40% to 60%
-							progress = 40 + Math.floor((progressPercentage * 20) / 0.3);
-						} else if (progressPercentage < 0.8) {
-							// Next 50% of decryption time: moderate progress from 60% to 85%
-							const adjustedPercentage = (progressPercentage - 0.3) / 0.5;
-							progress = 60 + Math.floor(adjustedPercentage * 25);
-						} else {
-							// Final 20% of decryption time: slow progress from 85% to 95%
-							const adjustedPercentage = (progressPercentage - 0.8) / 0.2;
-							progress = 85 + Math.floor(adjustedPercentage * 10);
-						}
-					}
-				} else {
-					// For smaller files, use standard progress reporting
-					if (elapsed < keyDerivationTime) {
-						// Phase 1: Key derivation (0-40%)
-						progress = Math.floor((elapsed / keyDerivationTime) * 40);
-					} else {
-						// Phase 2: Decryption (40-95%)
-						const decryptElapsed = elapsed - keyDerivationTime;
-						progress = 40 + Math.min(55, Math.floor((decryptElapsed / decryptionTime) * 55));
-					}
-				}
-
-				// Only log in development (removed for production)
-				// console.log('Simulated password decryption progress:', progress);
-				setDecryptionProgress(progress);
-			}, 50); // Update more frequently for smoother progress
-
-			try {
-				// Perform the actual decryption
-				decryptedContent = await decryptData(paste.content, passwordInput, true);
-
-				// Ensure 100% is shown at the end (only once)
-				setDecryptionProgress(100);
-			} finally {
-				// Always clear the interval
-				clearInterval(progressInterval);
-			}
-
-			// We already set progress to 100% inside the try block
-			setContent(decryptedContent);
-			setDecrypted(true);
-
-			// Notify parent Astro page that content is decrypted
-			notifyDecrypted(decryptedContent);
-
-			toast({
-				message: 'Content decrypted successfully',
-				type: 'success',
-			});
-
-			// Get user permission to remember password
+			// Offer to save password-derived key
 			const { showConfirmModal } = await import('./ui/modal');
-			const rememberPassword = await showConfirmModal({
-				title: 'Save Password?',
-				description: 'Would you like to save this password securely in your browser for future visits to this paste?',
-				confirmText: 'Save Password',
-				cancelText: 'No Thanks',
+			const save = await showConfirmModal({
+				title: 'Save password?',
+				description: 'Save the decryption key in your browser for future visits?',
+				confirmText: 'Save',
+				cancelText: 'No thanks',
 			});
 
-			if (rememberPassword && paste.id) {
+			if (save && paste.id) {
 				try {
-					// We don't store the actual password, but we can derive and store a key
-					// that will work for this specific paste
 					const { key, salt } = await deriveKeyFromPassword(passwordInput);
-
-					try {
-						// Use secure storage for password-derived keys
-						const { secureStore } = await import('../lib/secureStorage');
-						// Use a special format to indicate this is a derived key, not a direct key
-						await secureStore(`paste_key_${paste.id}`, `dk:${salt}:${key}`);
-
-						// Only log in development
-						if (isDev) {
-							console.log('Saved password-derived key to secure storage');
-						}
-						toast({
-							message: 'Password saved securely for this paste',
-							type: 'success',
-							duration: 2000,
-						});
-					} catch (secureError) {
-						if (isDev) console.error('Failed to save password to secure storage:', secureError);
-						toast({
-							message: 'Could not save password to browser storage.',
-							type: 'error',
-							duration: 3000,
-						});
-					}
-				} catch (e) {
-					if (isDev) console.error('Failed to derive key for storage:', e);
-				}
+					const { secureStore } = await import('../lib/secureStorage');
+					await secureStore(`paste_key_${paste.id}`, `dk:${salt}:${key}`);
+					toast({ message: 'Password saved for this paste.', type: 'success', duration: 2000 });
+				} catch { /* ignore */ }
 			}
-		} catch (error) {
-			if (isDev) console.error('Password decryption failed:', error);
-
-			// Use our error handler with context
-			handleError(error, {
-				location: 'CodeViewer.handlePasswordSubmit',
-				pasteId: paste.id,
-				authType: 'password',
-				contentLength: paste.content.length,
-			});
-
-			toast({
-				message: 'Invalid password. Please try again.',
-				type: 'error',
-			});
-
-			// Show the password form again
-			setShowPasswordForm(true);
 		} finally {
 			setIsDecrypting(false);
 		}
-	};
-
-	// Format the date
-	function formatDate(dateString: string) {
-		const date = new Date(dateString);
-		return date.toLocaleString();
 	}
+
+	// ── Render ────────────────────────────────────────────────────────
 
 	return (
 		<div className="w-full">
-			{/* Paste metadata */}
-			<div className="mb-4 border-b pb-4">
-				<h2 className="text-2xl font-bold mb-2">{paste.title || `Untitled Paste`}</h2>
+			{/* ── Metadata ───────────────────────────────────────── */}
+			<div className="mb-4 pb-4 border-b border-border">
+				<h2 className={cn(T.pasteTitle, 'mb-2')}>{paste.title || 'Untitled Paste'}</h2>
 
-				<div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-					<span>Created: {formatDate(paste.createdAt)}</span>
-					<span className="hidden sm:inline">•</span>
-
-					{/* ExpirationCountdown instead of static expires text */}
-					<span className="flex items-center">
-						<ExpirationCountdown expiresAt={paste.expiresAt} />
-					</span>
+				<div className={T.metaRow}>
+					<span>{formatDate(paste.createdAt)}</span>
+					<span className="text-border">|</span>
+					<ExpirationCountdown expiresAt={paste.expiresAt} />
 
 					{paste.language && (
-						<>
-							<span className="hidden sm:inline">•</span>
-							<span>Language: {paste.language}</span>
-						</>
+						<Badge className="bg-muted text-muted-foreground">{paste.language}</Badge>
 					)}
-					<span className="hidden sm:inline">•</span>
-					<span>Visibility: {paste.visibility}</span>
 
 					{paste.isEncrypted && (
-						<>
-							<span className="hidden sm:inline">•</span>
-							<span
-								className={`flex items-center font-medium ${
-									decrypted ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'
-								}`}
-							>
-								{decrypted ? (
-									<>
-										<svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												strokeWidth={2}
-												d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"
-											/>
-										</svg>
-										<span>E2E Decrypted</span>
-									</>
-								) : (
-									<>
-										<svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												strokeWidth={2}
-												d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-											/>
-										</svg>
-										<span>E2E Encrypted</span>
-									</>
-								)}
-							</span>
-						</>
+						<Badge className={decrypted
+							? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
+							: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+						}>
+							{decrypted ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+							{decrypted ? 'Decrypted' : 'Encrypted'}
+						</Badge>
 					)}
 
 					{paste.burnAfterReading && (
-						<>
-							<span className="hidden sm:inline">•</span>
-							<span className="flex items-center text-red-600 dark:text-red-400 font-medium">
-								<svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"
-									/>
-								</svg>
-								<span>Self-destruct</span>
-							</span>
-						</>
+						<Badge className="bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">
+							<Flame className="h-3 w-3" /> Self-destruct
+						</Badge>
 					)}
 
-					{/* View limit indicator */}
 					{paste.hasViewLimit && (
-						<>
-							<span className="hidden sm:inline">•</span>
-							<span className="flex items-center text-amber-600 dark:text-amber-400 font-medium">
-								<svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-									/>
-								</svg>
-								<span>
-									{paste.remainingViews === 1
-										? 'Final view'
-										: `${paste.remainingViews} view${paste.remainingViews !== 1 ? 's' : ''} remaining`}
-								</span>
-							</span>
-						</>
+						<Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+							<Eye className="h-3 w-3" />
+							{paste.remainingViews === 1 ? 'Final view' : `${paste.remainingViews} views left`}
+						</Badge>
 					)}
 				</div>
 			</div>
 
-			{/* Success notification after decryption - only for private pastes */}
-			{paste.isEncrypted && decrypted && (
-				<div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4 rounded-md mb-4 flex items-start">
-					<div className="flex-shrink-0">
-						<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
-							<path
-								fillRule="evenodd"
-								d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-								clipRule="evenodd"
-							/>
-						</svg>
-					</div>
-					<div className="ml-3">
-						<h3 className="text-sm font-medium text-green-800 dark:text-green-300">Successfully decrypted</h3>
-						<div className="mt-1 text-xs text-green-700 dark:text-green-400">
-							<p>This content was decrypted in your browser using end-to-end encryption.</p>
-						</div>
-					</div>
+			{/* ── Single warning bar (burn OR view limit, not both boxes) */}
+			{(paste.burnAfterReading || (paste.hasViewLimit && paste.remainingViews && paste.remainingViews <= 3)) && (
+				<div className={cn(
+					'flex items-center gap-2 rounded-lg p-3 mb-4 text-sm',
+					paste.remainingViews === 1 || paste.burnAfterReading
+						? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
+						: 'bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+				)}>
+					{paste.burnAfterReading
+						? <><Flame className="h-4 w-4 shrink-0" /> This paste will be deleted after you leave this page.</>
+						: <><Eye className="h-4 w-4 shrink-0" /> {paste.remainingViews} view{paste.remainingViews !== 1 ? 's' : ''} remaining before deletion.</>
+					}
 				</div>
 			)}
 
-			{/* View limit warning for final view */}
-			{paste.hasViewLimit && paste.remainingViews === 1 && (
-				<div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 rounded-md mb-4 flex items-start">
-					<div className="flex-shrink-0">
-						<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-							<path
-								fillRule="evenodd"
-								d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-								clipRule="evenodd"
-							/>
-						</svg>
-					</div>
-					<div className="ml-3">
-						<h3 className="text-sm font-medium text-red-800 dark:text-red-300">Final View</h3>
-						<div className="mt-1 text-xs text-red-700 dark:text-red-400">
-							<p>This is your final viewing of this content. After you leave this page, it will be permanently deleted.</p>
-						</div>
-					</div>
-				</div>
-			)}
-
-			{/* View limit information */}
-			{paste.hasViewLimit && paste.remainingViews && paste.remainingViews > 1 && (
-				<div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 rounded-md mb-4 flex items-start">
-					<div className="flex-shrink-0">
-						<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-amber-400" viewBox="0 0 20 20" fill="currentColor">
-							<path
-								fillRule="evenodd"
-								d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-								clipRule="evenodd"
-							/>
-						</svg>
-					</div>
-					<div className="ml-3">
-						<h3 className="text-sm font-medium text-amber-800 dark:text-amber-300">Limited Views</h3>
-						<div className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-							<p>
-								This content has a view limit of {paste.viewLimit} views total. It will be automatically deleted after reaching the limit.
-							</p>
-							<p className="mt-1 font-medium">{paste.remainingViews} views remaining.</p>
-						</div>
-					</div>
-				</div>
-			)}
-
-			{/* Encryption notice - shown while still encrypted - only for encrypted pastes */}
-			{paste.isEncrypted && !decrypted && !isDecrypting && !showPasswordForm && (
-				<div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-4 rounded-md mb-4 flex items-start">
-					<div className="flex-shrink-0">
-						<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
-							<path
-								fillRule="evenodd"
-								d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-								clipRule="evenodd"
-							/>
-						</svg>
-					</div>
-					<div className="ml-3">
-						<h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-300">End-to-End Encrypted Content</h3>
-						<div className="mt-1 text-xs text-yellow-700 dark:text-yellow-400">
-							<p>This paste is encrypted and requires a decryption key or password.</p>
-							<p className="mt-1">
-								If you received a complete URL with a decryption key, make sure you've entered the entire URL including the part after the #
-								symbol.
-							</p>
-						</div>
-					</div>
-				</div>
-			)}
-
-			{/* Error display for decryption issues */}
+			{/* ── Error display ───────────────────────────────────── */}
 			{error && category === ErrorCategory.CRYPTO && !isDecrypting && (
 				<ErrorDisplay
-					message={errorMessage || 'Error decrypting content'}
+					message={errorMessage || 'Decryption error'}
 					category={ErrorCategory.CRYPTO}
-					retry={() => {
-						// Reload the page to try again
-						window.location.reload();
-					}}
-					details={typeof window !== 'undefined' && window.location.hostname === 'localhost' ? error.stack : undefined}
+					retry={() => window.location.reload()}
+					details={isDev ? error.stack : undefined}
 				/>
 			)}
 
-			{/* Decryption in progress */}
+			{/* ── Decryption progress ─────────────────────────────── */}
 			{isDecrypting && (
-				<div className="flex flex-col justify-center items-center p-8">
+				<div className="flex flex-col items-center justify-center py-12">
 					{decryptionProgress !== null ? (
-						<div className="w-full max-w-md mb-4">
-							<div className="flex items-center justify-between mb-1">
-								<span className="text-sm font-medium">Decrypting ({decryptionProgress}%)</span>
+						<div className="w-full max-w-xs">
+							<div className="flex justify-between text-xs text-muted-foreground mb-1">
+								<span>Decrypting...</span>
+								<span>{decryptionProgress}%</span>
 							</div>
-							<div
-								className="w-full bg-muted rounded-full h-2.5"
-								role="progressbar"
-								aria-valuenow={decryptionProgress}
-								aria-valuemin={0}
-								aria-valuemax={100}
-								aria-label="Decryption progress"
-							>
-								<div
-									className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-in-out"
-									style={{ width: `${decryptionProgress}%` }}
-								></div>
+							<div className="w-full bg-muted rounded-full h-1.5" role="progressbar" aria-valuenow={decryptionProgress} aria-valuemin={0} aria-valuemax={100}>
+								<div className="bg-primary h-1.5 rounded-full transition-all duration-200" style={{ width: `${decryptionProgress}%` }} />
 							</div>
-							<p className="text-xs text-muted-foreground mt-2 text-center">
-								{decryptionProgress === 0
-									? 'Preparing decryption...'
-									: decryptionProgress < 10
-										? 'Initializing...'
-										: decryptionProgress < 40
-											? 'Decoding encrypted data...'
-											: decryptionProgress < 65
-												? 'Processing security keys...'
-												: decryptionProgress < 85
-													? 'Decrypting content...'
-													: decryptionProgress < 95
-														? 'Processing decrypted content...'
-														: 'Finalizing...'}
-							</p>
 						</div>
 					) : (
-						<>
-							<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" role="status" aria-label="Decrypting"></div>
-							<span className="ml-2">Decrypting content...</span>
-						</>
+						<div className="animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent" role="status" aria-label="Decrypting" />
 					)}
 				</div>
 			)}
 
-			{/* Code content */}
-			<div className={`${isDecrypting ? 'opacity-50' : ''} relative`}>
-				<pre
-					className={`p-4 rounded-md overflow-x-auto overflow-y-auto font-mono text-sm max-h-[600px] ${paste.isEncrypted && !decrypted ? 'blur-sm select-none' : ''}`}
-				>
-					<code ref={codeRef} className={`language-${paste.language || 'plaintext'}`}>
-						{visibleContent}
-					</code>
-				</pre>
-
-				{/* Loading indicator for large files */}
-				{isLargeFile && !fullContentLoaded && !isDecrypting && (
-					<div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-gray-100/90 dark:from-gray-800/90 to-transparent py-4 flex justify-center">
-						<div className="bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm flex items-center">
-							<div className="animate-spin mr-2 rounded-full h-4 w-4 border-2 border-primary-foreground border-t-transparent"></div>
-							Loading complete file... ({Math.round(content.length / 1024)}KB)
-						</div>
+			{/* ── Locked state (replaces blurred base64) ──────────── */}
+			{paste.isEncrypted && !decrypted && !isDecrypting && !showPasswordForm && (
+				<div className="flex flex-col items-center justify-center py-16 text-center">
+					<div className="rounded-full bg-muted p-4 mb-4">
+						<Lock className="h-8 w-8 text-muted-foreground" />
 					</div>
-				)}
-			</div>
-
-			{/* Password form - only show for encrypted pastes when explicity requested */}
-			{paste.isEncrypted && !decrypted && showPasswordForm && (
-				<div className="mt-4 p-6 bg-muted/30 rounded-md border border-border shadow-sm">
-					<div className="flex items-center mb-2">
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							className="h-5 w-5 text-yellow-500 mr-2"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-							/>
-						</svg>
-						<h3 className="font-bold text-lg">Password Protected Content</h3>
-					</div>
-
-					<p className="text-sm text-muted-foreground mb-4 pl-7">
-						This content is encrypted with end-to-end encryption. Enter the password that was used during creation to decrypt it.
+					<h3 className={T.emptyTitle}>Encrypted Content</h3>
+					<p className={T.emptyDescription}>
+						This paste requires a decryption key or password. Make sure the URL includes the key after&nbsp;#.
 					</p>
-
-					<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-3 mb-4">
-						<div className="flex">
-							<div className="flex-shrink-0">
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									className="h-5 w-5 text-blue-500"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-									/>
-								</svg>
-							</div>
-							<div className="ml-3">
-								<p className="text-sm text-blue-700 dark:text-blue-300">
-									<span className="font-medium">Privacy Note:</span> Decryption happens in your browser. The password is never sent to the
-									server.
-								</p>
-							</div>
-						</div>
+					<div className="flex gap-3">
+						<Button size="sm" onClick={() => setShowPasswordForm(true)}>
+							<KeyRound className="h-4 w-4 mr-1.5" /> Enter Password
+						</Button>
+						<Button size="sm" variant="outline" asChild>
+							<a href="/">Back to Home</a>
+						</Button>
 					</div>
-
-					<form onSubmit={handlePasswordSubmit} className="space-y-4">
-						<div>
-							<label htmlFor="decrypt-password" className="block text-sm font-medium mb-1">
-								Decryption Password
-							</label>
-							<div className="relative">
-								<input
-									id="decrypt-password"
-									type="password"
-									value={passwordInput}
-									onChange={(e) => setPasswordInput(e.target.value)}
-									className="w-full pl-10 pr-3 py-2 border border-input rounded-md bg-background"
-									placeholder="Enter the password..."
-									autoComplete="current-password"
-									autoFocus
-									required
-								/>
-								<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										className="h-4 w-4 text-muted-foreground"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
-										<path
-											strokeLinecap="round"
-											strokeLinejoin="round"
-											strokeWidth={2}
-											d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-										/>
-									</svg>
-								</div>
-							</div>
-						</div>
-
-						<div className="flex items-center justify-between">
-							<button
-								type="submit"
-								className="inline-flex items-center bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors"
-								disabled={isDecrypting || !passwordInput.trim()}
-							>
-								{isDecrypting ? (
-									<>
-										<svg
-											className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-											xmlns="http://www.w3.org/2000/svg"
-											fill="none"
-											viewBox="0 0 24 24"
-										>
-											<circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-											<path
-												className="opacity-75"
-												fill="currentColor"
-												d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-											></path>
-										</svg>
-										<span>Decrypting...</span>
-									</>
-								) : (
-									<>
-										<svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												strokeWidth={2}
-												d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"
-											/>
-										</svg>
-										<span>Decrypt Content</span>
-									</>
-								)}
-							</button>
-
-							<button
-								type="button"
-								className="text-sm text-muted-foreground hover:text-foreground"
-								onClick={() => setShowPasswordForm(false)}
-							>
-								Try URL key instead
-							</button>
-						</div>
-					</form>
 				</div>
 			)}
 
-			{/* Encrypted content message - key missing - only show for private pastes */}
-			{paste.isEncrypted && !decrypted && !showPasswordForm && !isDecrypting && (
-				<div className="mt-6 max-w-md mx-auto">
-					<div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-5 shadow-sm">
-						<div className="flex">
-							<div className="flex-shrink-0">
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									className="h-6 w-6 text-amber-500"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-									/>
-								</svg>
-							</div>
-							<div className="ml-3">
-								<h3 className="text-amber-800 dark:text-amber-300 font-medium">Encrypted Content</h3>
-								<div className="mt-2 text-sm text-amber-700 dark:text-amber-400">
-									<p>This content is encrypted with end-to-end encryption and requires a decryption key or password.</p>
-								</div>
-								<div className="mt-4">
-									<div className="-mx-2 -my-1.5 flex flex-wrap gap-2">
-										<button
-											onClick={() => setShowPasswordForm(true)}
-											className="px-3 py-1.5 bg-amber-100 dark:bg-amber-800 text-amber-800 dark:text-amber-200 rounded-md text-sm font-medium hover:bg-amber-200 dark:hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 dark:focus:ring-offset-amber-900"
-										>
-											Enter Password
-										</button>
+			{/* ── Code content (only when viewable) ───────────────── */}
+			{(!paste.isEncrypted || decrypted) && !isDecrypting && (
+				<pre className="p-4 rounded-lg border border-border overflow-x-auto overflow-y-auto font-mono text-sm max-h-[600px] bg-card">
+					<code ref={codeRef} className={`language-${paste.language || 'plaintext'}`}>
+						{content}
+					</code>
+				</pre>
+			)}
 
-										{/* Check for saved keys and offer to restore them */}
-										{paste.id && (
-											<button
-												onClick={() => {
-													// Look for any keys in local storage for this paste
-													const pasteKeys = Object.keys(localStorage)
-														.filter((key) => key === `paste_key_${paste.id}`)
-														.map((key) => localStorage.getItem(key));
-
-													if (pasteKeys.length > 0) {
-														setIsDecrypting(true);
-														// Force a re-render which will trigger the useEffect to try the saved key
-														setTimeout(() => window.location.reload(), 500);
-														toast({
-															message: 'Trying saved decryption key...',
-															type: 'info',
-															duration: 2000,
-														});
-													} else {
-														toast({
-															message: 'No saved keys found for this paste',
-															type: 'error',
-															duration: 3000,
-														});
-													}
-												}}
-												className="px-3 py-1.5 bg-blue-100 dark:bg-blue-800 text-blue-800 dark:text-blue-200 rounded-md text-sm font-medium hover:bg-blue-200 dark:hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-blue-900"
-											>
-												Try Saved Key
-											</button>
-										)}
-
-										<a
-											href="/"
-											className="px-3 py-1.5 bg-transparent text-amber-800 dark:text-amber-300 rounded-md text-sm font-medium hover:bg-amber-50 dark:hover:bg-amber-900/30 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
-										>
-											Back to Home
-										</a>
-									</div>
-								</div>
-							</div>
-						</div>
-
-						<div className="mt-4 border-t border-amber-200 dark:border-amber-700 pt-4">
-							<p className="text-sm text-amber-600 dark:text-amber-300">
-								<strong>Missing decryption key:</strong> The complete URL should contain a decryption key after the # symbol. If you have a
-								password instead, click "Enter Password" above.
-							</p>
-						</div>
+			{/* ── Password form ───────────────────────────────────── */}
+			{paste.isEncrypted && !decrypted && showPasswordForm && !isDecrypting && (
+				<div className="max-w-sm mx-auto mt-4 p-6 rounded-lg border border-border bg-card">
+					<div className="flex items-center gap-2 mb-4">
+						<Lock className="h-5 w-5 text-muted-foreground" />
+						<h3 className="font-semibold">Password Required</h3>
 					</div>
+					<p className={cn(T.mutedSm, 'mb-4')}>Decryption happens locally in your browser.</p>
+
+					<form onSubmit={handlePasswordSubmit} className="space-y-3">
+						<input
+							type="password"
+							value={passwordInput}
+							onChange={(e) => setPasswordInput(e.target.value)}
+							className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							placeholder="Enter password"
+							autoComplete="current-password"
+							autoFocus
+							required
+						/>
+						<div className="flex gap-2">
+							<Button type="submit" size="sm" disabled={!passwordInput.trim()} className="flex-1">Decrypt</Button>
+							<Button type="button" size="sm" variant="ghost" onClick={() => setShowPasswordForm(false)}>Cancel</Button>
+						</div>
+					</form>
 				</div>
 			)}
 		</div>

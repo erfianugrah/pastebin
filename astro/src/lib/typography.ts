@@ -4,7 +4,7 @@
 
 export const T = {
 	// ── Page-level ────────────────────────────────────────────────────
-	pageTitle: 'text-3xl font-bold',
+	pageTitle: 'text-2xl font-bold tracking-tight',
 	pageSubtitle: 'text-sm text-muted-foreground',
 
 	// ── Cards ─────────────────────────────────────────────────────────
@@ -12,13 +12,17 @@ export const T = {
 	cardDescription: 'text-sm text-muted-foreground',
 
 	// ── Form ──────────────────────────────────────────────────────────
-	formLabel: 'block text-sm font-medium mb-1',
+	formLabel: 'text-sm font-medium mb-1 block',
 	formError: 'text-destructive text-sm mt-1',
 	formHelp: 'text-xs text-muted-foreground mt-1',
 
 	// ── Paste metadata ───────────────────────────────────────────────
-	metaRow: 'text-muted-foreground text-sm flex flex-wrap gap-x-4 gap-y-1',
-	pasteTitle: 'font-medium text-lg truncate',
+	metaRow: 'flex flex-wrap items-center gap-2 text-sm text-muted-foreground',
+	pasteTitle: 'text-xl font-bold',
+
+	// ── Section headings ─────────────────────────────────────────────
+	sectionTitle: 'text-lg font-semibold',
+	sectionSubtitle: 'text-sm text-muted-foreground',
 
 	// ── Notices ───────────────────────────────────────────────────────
 	noticeInfo: 'text-sm text-info',
@@ -29,8 +33,7 @@ export const T = {
 	muted: 'text-xs text-muted-foreground',
 	mutedSm: 'text-sm text-muted-foreground',
 
-	// ── Security panel ───────────────────────────────────────────────
-	panelTitle: 'text-sm font-semibold mb-2',
-	panelLabel: 'font-medium',
-	panelHelp: 'text-xs mt-0.5',
+	// ── Centered empty / status screens ──────────────────────────────
+	emptyTitle: 'text-lg font-semibold mb-1',
+	emptyDescription: 'text-sm text-muted-foreground mb-6 max-w-sm',
 } as const;

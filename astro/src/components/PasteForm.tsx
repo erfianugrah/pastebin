@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { CheckCircle2, ChevronDown, Copy, Lock, Key, Shield, Info } from 'lucide-react';
 import { Button } from './ui/button';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from './ui/card';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from './ui/card';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
 import { toast } from './ui/toast';
@@ -9,13 +10,30 @@ import { PasswordStrengthMeter } from './ui/password-strength';
 import { generateEncryptionKey, encryptData, deriveKeyFromPassword } from '../lib/crypto';
 import { validatePasteForm } from '../lib/validation';
 import { useErrorHandler } from '../hooks/useErrorHandler';
+import { cn } from '../lib/utils';
+import { T } from '../lib/typography';
 
 const isDev = typeof window !== 'undefined' && window.location?.hostname === 'localhost';
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
+const MAX_CONTENT_BYTES = 25 * 1024 * 1024;
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// ── Component ────────────────────────────────────────────────────────
+
 export default function PasteForm() {
 	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
+	const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 	const [result, setResult] = useState<{ id: string; url: string; encryptionKey?: string } | null>(null);
+
+	// Form state
+	const [content, setContent] = useState('');
 	const [isE2EEncrypted, setIsE2EEncrypted] = useState(false);
 	const [passwordValue, setPasswordValue] = useState('');
 	const [securityMethod, setSecurityMethod] = useState<'none' | 'password' | 'key'>('none');
@@ -23,11 +41,12 @@ export default function PasteForm() {
 	const [language, setLanguage] = useState('');
 	const [expiration, setExpiration] = useState('86400');
 	const [visibility, setVisibility] = useState('public');
+	const [viewLimitEnabled, setViewLimitEnabled] = useState(false);
+	const [showOptions, setShowOptions] = useState(false);
 
-	// Use our error handler hook
 	const { handleError } = useErrorHandler();
 
-	// Keep security method in sync with encryption state
+	// Sync security method with encryption state
 	useEffect(() => {
 		if (isE2EEncrypted && securityMethod === 'none') {
 			setSecurityMethod(passwordValue ? 'password' : 'key');
@@ -36,568 +55,291 @@ export default function PasteForm() {
 		}
 	}, [isE2EEncrypted, passwordValue]);
 
-	const validateForm = (formData: FormData) => {
-		const errors: { [key: string]: string } = {};
+	// ── Clipboard helper ───────────────────────────────────────────────
 
-		// Convert FormData to Record<string, string> for validation
-		const formFields: Record<string, string> = {};
-		formData.forEach((value, key) => {
-			formFields[key] = value.toString();
-		});
-
-		// Use the validation utility
-		const validationErrors = validatePasteForm(formFields);
-
-		// Convert validation errors to simple string format for compatibility
-		for (const [field, error] of Object.entries(validationErrors)) {
-			errors[field] = error.message;
+	async function copyToClipboard(text: string, label: string) {
+		if (!navigator?.clipboard) return;
+		try {
+			await navigator.clipboard.writeText(text);
+			toast({ message: `${label} copied!`, type: 'success', duration: 2000 });
+		} catch {
+			toast({ message: `Failed to copy ${label.toLowerCase()}`, type: 'error', duration: 3000 });
 		}
+	}
 
-		// Add warning for large pastes
-		const content = formData.get('content') as string;
-		if (content && content.length > 5 * 1024 * 1024) {
-			// 5MB warning
-			console.warn('Large paste detected:', Math.floor(content.length / (1024 * 1024)), 'MB');
-		}
-
-		return errors;
-	};
+	// ── Submit ─────────────────────────────────────────────────────────
 
 	async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
 		e.preventDefault();
 		setIsSubmitting(true);
 		setFormErrors({});
-		setEncryptionProgress(null); // Reset progress
+		setEncryptionProgress(null);
 
 		try {
 			const form = e.target as HTMLFormElement;
 			const formData = new FormData(form);
 
-			// Validate form
-			const errors = validateForm(formData);
-			if (Object.keys(errors).length > 0) {
+			// Validate
+			const formFields: Record<string, string> = {};
+			formData.forEach((value, key) => { formFields[key] = value.toString(); });
+			const validationErrors = validatePasteForm(formFields);
+			if (Object.keys(validationErrors).length > 0) {
+				const errors: Record<string, string> = {};
+				for (const [field, error] of Object.entries(validationErrors)) errors[field] = error.message;
 				setFormErrors(errors);
 				setIsSubmitting(false);
 				return;
 			}
 
-			// Get values from form
-			const content = formData.get('content') as string;
 			const title = formData.get('title') as string;
-			const language = formData.get('language') as string;
-			const expiration = parseInt(formData.get('expiration') as string, 10);
-			const visibility = formData.get('visibility') as string;
+			const rawContent = formData.get('content') as string;
+			const lang = formData.get('language') as string;
+			const exp = parseInt(formData.get('expiration') as string, 10);
+			const vis = formData.get('visibility') as string;
 			const password = formData.get('password') as string;
 			const burnAfterReading = formData.get('burnAfterReading') === 'on';
 			const e2eEncryption = formData.get('e2eEncryption') === 'on';
-
-			// Get view limit values
-			const viewLimitEnabled = formData.get('enableViewLimit') === 'on' || formData.get('viewLimitEnabled') === 'true';
 			const viewLimit = viewLimitEnabled ? parseInt(formData.get('viewLimit') as string, 10) : undefined;
 
-			let encryptedContent = content;
+			let encryptedContent = rawContent;
 			let encryptionKey: string | undefined;
-			let passwordHash: string | undefined;
+			const needsEncryption = e2eEncryption || (vis === 'private' && isE2EEncrypted) || !!password;
 
-			// Handle client-side encryption (if private or e2e encryption is selected)
-			if (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) {
+			// ── Encrypt ──────────────────────────────────────────────────
+			if (needsEncryption) {
 				try {
+					setEncryptionProgress(0);
 					if (password) {
-						// Password-based encryption
-						// Step 1: Derive key from password using PBKDF2
-						const { key: derivedKey, salt } = await deriveKeyFromPassword(password);
-						if (isDev) console.log('Derived key from password with salt');
-
-						// Step 2: Encrypt content with password-derived key
-						encryptedContent = await encryptData(content, derivedKey, true, salt);
-						if (isDev) console.log('Content encrypted with password-derived key');
-
-						// We don't need to send a password to the server at all
-						// Just mark that this content is encrypted
-						passwordHash = undefined;
+						const { key: derivedKey, salt } = await deriveKeyFromPassword(password, undefined, (p) => {
+							setEncryptionProgress(Math.floor(p.percent * 0.3));
+						});
+						encryptedContent = await encryptData(rawContent, derivedKey, true, salt, (p) => {
+							setEncryptionProgress(30 + Math.floor(p.percent * 0.7));
+						});
 					} else {
-						// Random key encryption
-						// Step 1: Generate a secure random key
 						encryptionKey = generateEncryptionKey();
-						if (isDev) console.log('Generated random encryption key');
-
-						// Step 2: Encrypt the content with this key
-						setEncryptionProgress(0); // Start encryption progress
-
-						try {
-							// Do the actual encryption with progress tracking
-							encryptedContent = await encryptData(content, encryptionKey, false, undefined, (progress) => {
-								if (isDev) console.log('Real encryption progress:', progress.percent);
-								setEncryptionProgress(progress.percent);
-							});
-
-							// Ensure 100% is shown at the end
-							setEncryptionProgress(100);
-						} catch (error) {
-							console.error('Encryption failed:', error);
-							throw error;
-						}
-
-					// We already set progress to 100% inside the try block
-					if (isDev) console.log('Content encrypted successfully with random key');
-					}
-				} catch (error) {
-					console.error('Encryption error:', error);
-					// Add more context to the error
-					const enhancedError = new Error('Failed to encrypt content. Please try again.');
-					// Add original error details to help with debugging
-					(enhancedError as any).originalError = error;
-					(enhancedError as any).code = 'encryption_failed';
-					throw enhancedError;
-				}
-			} else if (password) {
-				// In Phase 3, all passwords must use client-side encryption
-				// Auto-convert any password to client-side encryption
-				if (isDev) console.info('Using client-side encryption with password protection (required in Phase 3)');
-
-				try {
-					// Use client-side encryption by default
-
-					try {
-						// Initialize progress
-						setEncryptionProgress(0);
-
-						// First phase: Derive key with progress tracking (0-30%)
-						const { key: derivedKey, salt } = await deriveKeyFromPassword(password, undefined, (keyProgress) => {
-							// Scale key derivation progress to 0-30% range
-							const scaledProgress = Math.floor(keyProgress.percent * 0.3);
-							if (isDev) console.log('Key derivation progress:', scaledProgress);
-							setEncryptionProgress(scaledProgress);
+						encryptedContent = await encryptData(rawContent, encryptionKey, false, undefined, (p) => {
+							setEncryptionProgress(p.percent);
 						});
-						if (isDev) console.log('Derived key from password with salt');
-
-						// Second phase: Encrypt with the derived key (30-100%)
-						encryptedContent = await encryptData(content, derivedKey, true, salt, (encryptProgress) => {
-							// Scale encryption progress to 30-100% range
-							const scaledProgress = 30 + Math.floor(encryptProgress.percent * 0.7);
-							if (isDev) console.log('Password encryption progress:', scaledProgress);
-							setEncryptionProgress(scaledProgress);
-						});
-
-						// Ensure 100% is shown at the end
-						setEncryptionProgress(100);
-					} catch (error) {
-						console.error('Password encryption failed:', error);
-						throw error;
 					}
-
-				// We already set progress to 100% inside the try block
-				if (isDev) console.log('Content encrypted with password-derived key');
-
-					// Set encryption flag for response
-					// We can't modify e2eEncryption directly as it's a function parameter
-
-					// No password hash needed for server - passwords always use client-side encryption now
-					passwordHash = undefined;
+					setEncryptionProgress(100);
 				} catch (error) {
-					console.error('Encryption error:', error);
-					// Add more context to the error
-					const enhancedError = new Error('Failed to encrypt content with password. Please try again.');
-					// Add original error details to help with debugging
-					(enhancedError as any).originalError = error;
-					(enhancedError as any).code = 'password_encryption_failed';
-					throw enhancedError;
+					const err = new Error('Failed to encrypt content. Please try again.');
+					(err as any).originalError = error;
+					(err as any).code = 'encryption_failed';
+					throw err;
 				}
 			}
 
-			// Log encryption status for debugging (development only)
-			if (isDev) {
-				console.log('Creating paste:', {
-					isEncrypted: !!(e2eEncryption || (visibility === 'private' && isE2EEncrypted)),
-					contentLength: encryptedContent.length,
-					hasPassword: !!passwordHash,
-				});
-			}
-
-			// Send request to create the paste
+			// ── Create paste ─────────────────────────────────────────────
 			const response = await fetch('/pastes', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					title,
 					content: encryptedContent,
-					language,
-					expiration,
-					visibility,
-					password: passwordHash,
+					language: lang,
+					expiration: exp,
+					visibility: vis,
 					burnAfterReading,
-					isEncrypted: !!(e2eEncryption || (securityMethod !== 'none' && isE2EEncrypted)),
-					viewLimit: viewLimitEnabled ? viewLimit : undefined,
-					// Add version to track encryption method (1=server-side, 2=client-side)
-					version: e2eEncryption || (securityMethod !== 'none' && isE2EEncrypted) ? 2 : 0,
+					isEncrypted: needsEncryption,
+					viewLimit,
+					version: needsEncryption ? 2 : 0,
 				}),
 			}).catch((fetchError) => {
-				console.error('Network error:', fetchError);
-				const networkError = new Error('Network error. Please check your connection and try again.');
-				(networkError as any).originalError = fetchError;
-				(networkError as any).code = 'network_error';
-				throw networkError;
+				const err = new Error('Network error. Please check your connection and try again.');
+				(err as any).originalError = fetchError;
+				(err as any).code = 'network_error';
+				throw err;
 			});
 
 			if (!response.ok) {
 				const errorData = (await response.json()) as { error?: { message?: string; code?: string } };
-				const serverError = new Error(errorData.error?.message || 'Failed to create paste');
-				(serverError as any).code = errorData.error?.code || 'server_error';
-				(serverError as any).status = response.status;
-				throw serverError;
+				const err = new Error(errorData.error?.message || 'Failed to create paste');
+				(err as any).code = errorData.error?.code || 'server_error';
+				throw err;
 			}
 
 			const data = (await response.json()) as { id: string; url: string };
 
-			// If using client-side encryption, append the key to the URL fragment
-			// The fragment is not sent to the server
 			let resultUrl = data.url;
-			if (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) {
-				// Keep the "+" character as-is by using encodeURIComponent and then replacing %2B back to +
-				// This ensures proper handling of Base64 keys that may contain "+" characters
-				// Note: Base64 characters "+", "/" and "=" need to be properly handled in URLs
-				const encodedKey = encryptionKey ? encryptionKey.replace(/\+/g, '%2B').replace(/\//g, '%2F').replace(/=/g, '%3D') : '';
+			if (needsEncryption && encryptionKey) {
+				const encodedKey = encryptionKey.replace(/\+/g, '%2B').replace(/\//g, '%2F').replace(/=/g, '%3D');
 				resultUrl = `${data.url}#key=${encodedKey}`;
-				if (isDev) console.log('Added encryption key to URL fragment');
 			}
 
-			// Handle the encryptionKey prop to avoid type issues with undefined
-			const resultData = {
+			setResult({
 				id: data.id,
 				url: resultUrl,
-			};
-
-			// Only add the encryptionKey property if it exists
-			if (e2eEncryption || (visibility === 'private' && isE2EEncrypted)) {
-				Object.assign(resultData, { encryptionKey });
-			}
-
-			setResult(resultData);
-
-			toast({
-				message: 'Paste created successfully!',
-				type: 'success',
+				...(encryptionKey ? { encryptionKey } : {}),
 			});
+			toast({ message: 'Paste created!', type: 'success' });
 		} catch (error) {
-			// Use our error handler
-			handleError(error, {
-				location: 'PasteForm.handleSubmit',
-				formData: {
-					hasTitle: !!(document.getElementById('title') as HTMLInputElement | null)?.value,
-					contentLength: (document.getElementById('content') as HTMLTextAreaElement | null)?.value?.length || 0,
-					visibility: (() => {
-						const el = document.getElementById('visibility');
-						return el instanceof HTMLSelectElement ? el.value : 'unknown';
-					})(),
-					isE2EEncrypted,
-				},
-			});
+			handleError(error, { location: 'PasteForm.handleSubmit' });
 		} finally {
 			setIsSubmitting(false);
 		}
 	}
 
-	return (
-		<Card className="w-full max-w-3xl mx-auto">
-			<CardHeader>
-				<CardTitle>Create New Paste</CardTitle>
-			</CardHeader>
-			<CardContent>
-				{result ? (
-					<div className="text-center p-4">
-						<h2 className="text-xl font-bold mb-2">Paste Created!</h2>
-						<p className="mb-4">Your paste is available at:</p>
-						<div className="relative bg-muted p-2 rounded-md mb-4 overflow-x-auto group">
-							<a
-								href={result.url}
-								className="text-primary font-mono text-sm hover:underline pr-8"
-								target="_blank"
-								rel="noopener noreferrer"
-							>
-								{result.url}
-							</a>
-							<button
-								onClick={() => {
-									if (typeof navigator !== 'undefined' && navigator.clipboard) {
-										navigator.clipboard
-											.writeText(result.url)
-											.then(() => {
-												toast({
-													message: 'URL copied to clipboard!',
-													type: 'success',
-													duration: 2000,
-												});
-											})
-											.catch((err) => {
-												console.error('Could not copy URL: ', err);
-												toast({
-													message: 'Failed to copy URL',
-													type: 'error',
-													duration: 3000,
-												});
-											});
-									}
-								}}
-								className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-muted transition-colors"
-								title="Copy URL to clipboard"
-								aria-label="Copy URL to clipboard"
-							>
-								<svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={2}
-										d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
-									/>
-								</svg>
-							</button>
-						</div>
+	// ── Result screen ────────────────────────────────────────────────
 
-						{result.encryptionKey && (
-							<div className="mt-4 mb-4">
-								<p className="mb-2 text-yellow-600 dark:text-yellow-400 font-bold">Important Security Notice</p>
-								<p className="mb-3 text-sm">
-									This paste is end-to-end encrypted. The decryption key is included in the URL after the # symbol.
-									<br />
-									The server cannot decrypt this content without this key.
-								</p>
+	if (result) {
+		return (
+			<Card className="max-w-2xl mx-auto">
+				<CardContent className="pt-6 space-y-4">
+					<div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+						<CheckCircle2 className="h-5 w-5" />
+						<span className="font-medium">Paste created</span>
+					</div>
 
-								<div className="bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 p-3 rounded-md mb-3">
-									<div className="flex justify-between items-start">
-										<p className="text-sm text-yellow-800 dark:text-yellow-300">
-											Share the complete URL including the part after # to allow others to decrypt this paste.
-										</p>
+					{/* URL */}
+					<div className="flex items-center gap-2 bg-muted rounded-lg p-3">
+						<a href={result.url} className="flex-1 font-mono text-sm text-primary truncate hover:underline" target="_blank" rel="noopener noreferrer">
+							{result.url}
+						</a>
+						<Button variant="ghost" size="icon" className="shrink-0" onClick={() => copyToClipboard(result.url, 'URL')}>
+							<Copy className="h-4 w-4" />
+						</Button>
+					</div>
 
-										<div className="ml-2 flex-shrink-0">
-											<div className="relative">
-												<button
-													onClick={async () => {
-														// Store the key in secure storage with the paste ID as the key
-														if (typeof window !== 'undefined' && result.id && result.encryptionKey) {
-															try {
-																const { secureStore } = await import('../lib/secureStorage');
-																await secureStore(`paste_key_${result.id}`, result.encryptionKey);
-																toast({
-																	message: 'Encryption key saved securely to browser',
-																	type: 'success',
-																	duration: 2000,
-																});
-															} catch (secureError) {
-																toast({
-																	message: 'Could not save encryption key to browser. Copy the key manually from the URL.',
-																	type: 'error',
-																	duration: 5000,
-																});
-															}
-														}
-													}}
-													className="px-2 py-1 text-xs font-medium text-yellow-700 dark:text-yellow-300 bg-yellow-200 dark:bg-yellow-800 rounded hover:bg-yellow-300 dark:hover:bg-yellow-700 transition-colors"
-													title="Save key to this browser"
-												>
-													Save Key
-												</button>
-											</div>
-										</div>
-									</div>
-
-									{/* Display the encryption key with copy button */}
-									<div className="mt-2 pt-2 border-t border-yellow-200 dark:border-yellow-700">
-										<p className="text-xs text-yellow-700 dark:text-yellow-400 mb-1">Encryption Key:</p>
-										<div className="relative flex">
-											<div className="bg-yellow-50 dark:bg-yellow-900/50 p-1.5 rounded text-xs font-mono text-yellow-800 dark:text-yellow-300 overflow-x-auto flex-grow">
-												{result.encryptionKey}
-											</div>
-											<button
-												onClick={() => {
-													if (typeof navigator !== 'undefined' && navigator.clipboard) {
-														navigator.clipboard
-															.writeText(result.encryptionKey || '')
-															.then(() => {
-																toast({
-																	message: 'Encryption key copied!',
-																	type: 'success',
-																	duration: 2000,
-																});
-															})
-															.catch((err) => {
-																console.error('Could not copy key: ', err);
-																toast({
-																	message: 'Failed to copy key',
-																	type: 'error',
-																	duration: 3000,
-																});
-															});
-													}
-												}}
-												className="ml-1 p-1 rounded-md text-yellow-600 hover:text-yellow-800 hover:bg-yellow-200 dark:hover:bg-yellow-800 transition-colors"
-												title="Copy key to clipboard"
-												aria-label="Copy encryption key to clipboard"
-											>
-												<svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-													<path
-														strokeLinecap="round"
-														strokeLinejoin="round"
-														strokeWidth={2}
-														d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
-													/>
-												</svg>
-											</button>
-										</div>
-									</div>
+					{/* Encryption key notice */}
+					{result.encryptionKey && (
+						<div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4 space-y-3">
+							<div className="flex items-start gap-2">
+								<Key className="h-4 w-4 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
+								<div className="text-sm">
+									<p className="font-medium text-amber-800 dark:text-amber-200">End-to-end encrypted</p>
+									<p className="text-amber-700 dark:text-amber-300 mt-1">
+										The decryption key is in the URL after&nbsp;#. Share the complete URL to allow decryption.
+									</p>
 								</div>
 							</div>
-						)}
-
-						<div className="mt-6">
-							<Button onClick={() => setResult(null)} variant="outline">
-								Create Another Paste
-							</Button>
+							<div className="flex items-center gap-2 bg-amber-100/50 dark:bg-amber-900/30 rounded-md p-2">
+								<code className="flex-1 text-xs text-amber-800 dark:text-amber-300 truncate">{result.encryptionKey}</code>
+								<Button variant="ghost" size="icon" className="shrink-0 h-7 w-7" onClick={() => copyToClipboard(result.encryptionKey!, 'Key')}>
+									<Copy className="h-3.5 w-3.5" />
+								</Button>
+							</div>
 						</div>
-					</div>
-				) : (
-					<form onSubmit={handleSubmit} className="space-y-4">
-						<div>
-							<label htmlFor="title" className="block text-sm font-medium mb-1">
-								Title (optional)
-							</label>
-							<input
-								id="title"
-								name="title"
-								type="text"
-								placeholder="Untitled Paste"
-								aria-invalid={!!formErrors.title}
-								aria-describedby={formErrors.title ? 'title-error' : undefined}
-								className={`w-full rounded-md border ${formErrors.title ? 'border-destructive' : 'border-input'} bg-background px-3 py-2`}
-							/>
-							{formErrors.title && (
-								<p id="title-error" role="alert" className="text-destructive text-sm mt-1">
-									{formErrors.title}
-								</p>
-							)}
-						</div>
+					)}
 
-						<div>
-							<label htmlFor="content" className="block text-sm font-medium mb-1">
+					<Button onClick={() => { setResult(null); setContent(''); }} variant="outline" className="w-full">
+						Create another paste
+					</Button>
+				</CardContent>
+			</Card>
+		);
+	}
+
+	// ── Form ─────────────────────────────────────────────────────────
+
+	const contentLength = new TextEncoder().encode(content).length;
+
+	return (
+		<Card className="max-w-2xl mx-auto">
+			<CardContent className="pt-6">
+				<form onSubmit={handleSubmit} className="space-y-4">
+					{/* ── Content (primary action) ─────────────────────── */}
+					<div>
+						<div className="flex items-center justify-between mb-1">
+							<label htmlFor="content" className={T.formLabel}>
 								Content <span className="text-destructive">*</span>
 							</label>
-							<Textarea
-								id="content"
-								name="content"
-								placeholder="Paste your content here..."
-								rows={12}
-								required
-								aria-invalid={!!formErrors.content}
-								aria-describedby={formErrors.content ? 'content-error' : undefined}
-								className={`font-mono bg-background ${formErrors.content ? 'border-destructive' : ''}`}
-							/>
-							{formErrors.content && (
-								<p id="content-error" role="alert" className="text-destructive text-sm mt-1">
-									{formErrors.content}
-								</p>
-							)}
+							<span className={cn('text-xs', contentLength > MAX_CONTENT_BYTES * 0.9 ? 'text-destructive' : 'text-muted-foreground')}>
+								{formatBytes(contentLength)}
+							</span>
 						</div>
+						<Textarea
+							id="content"
+							name="content"
+							placeholder="Paste your code or text here..."
+							rows={14}
+							required
+							value={content}
+							onChange={(e) => setContent(e.target.value)}
+							aria-invalid={!!formErrors.content}
+							aria-describedby={formErrors.content ? 'content-error' : undefined}
+							className={cn('font-mono text-sm bg-background', formErrors.content && 'border-destructive')}
+						/>
+						{formErrors.content && <p id="content-error" role="alert" className={T.formError}>{formErrors.content}</p>}
+					</div>
 
-						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-							<div>
-								<label htmlFor="language" className="block text-sm font-medium mb-1">
-									Language (optional)
-								</label>
+					{/* ── Title ────────────────────────────────────────── */}
+					<div>
+						<label htmlFor="title" className={T.formLabel}>Title</label>
+						<input
+							id="title"
+							name="title"
+							type="text"
+							placeholder="Untitled"
+							aria-invalid={!!formErrors.title}
+							className={cn('w-full rounded-md border border-input bg-background px-3 py-2 text-sm', formErrors.title && 'border-destructive')}
+						/>
+						{formErrors.title && <p role="alert" className={T.formError}>{formErrors.title}</p>}
+					</div>
+
+					{/* ── Language + Expiration ────────────────────────── */}
+					<div className="grid grid-cols-2 gap-3">
+						<div>
+							<label className={T.formLabel}>Language</label>
 							<Select value={language} onValueChange={setLanguage}>
-								<SelectTrigger className="w-full">
-									<SelectValue placeholder="Plain Text" />
-								</SelectTrigger>
+								<SelectTrigger className="w-full"><SelectValue placeholder="Plain Text" /></SelectTrigger>
 								<SelectContent>
 									<SelectItem value="plaintext">Plain Text</SelectItem>
 									<SelectSeparator />
-
-									{/* Web Development */}
 									<SelectGroup>
-										<SelectLabel>Web Development</SelectLabel>
+										<SelectLabel>Web</SelectLabel>
 										<SelectItem value="markup">HTML</SelectItem>
 										<SelectItem value="css">CSS</SelectItem>
 										<SelectItem value="javascript">JavaScript</SelectItem>
 										<SelectItem value="typescript">TypeScript</SelectItem>
 										<SelectItem value="jsx">JSX</SelectItem>
 										<SelectItem value="tsx">TSX</SelectItem>
-										<SelectItem value="php">PHP</SelectItem>
 									</SelectGroup>
-
-									{/* Data Formats */}
 									<SelectGroup>
-										<SelectLabel>Data Formats</SelectLabel>
+										<SelectLabel>Data</SelectLabel>
 										<SelectItem value="json">JSON</SelectItem>
-										<SelectItem value="xml-doc">XML</SelectItem>
 										<SelectItem value="yaml">YAML</SelectItem>
 										<SelectItem value="toml">TOML</SelectItem>
-										<SelectItem value="ini">INI</SelectItem>
-										<SelectItem value="csv">CSV</SelectItem>
+										<SelectItem value="xml-doc">XML</SelectItem>
+										<SelectItem value="sql">SQL</SelectItem>
+										<SelectItem value="graphql">GraphQL</SelectItem>
 									</SelectGroup>
-
-									{/* Infrastructure & DevOps */}
 									<SelectGroup>
-										<SelectLabel>Infrastructure & DevOps</SelectLabel>
-										<SelectItem value="hcl">HCL (Terraform)</SelectItem>
-										<SelectItem value="docker">Dockerfile</SelectItem>
-										<SelectItem value="bash">Bash</SelectItem>
-										<SelectItem value="shell-session">Shell</SelectItem>
-										<SelectItem value="powershell">PowerShell</SelectItem>
-										<SelectItem value="nginx">Nginx</SelectItem>
-									</SelectGroup>
-
-									{/* Programming Languages */}
-									<SelectGroup>
-										<SelectLabel>Programming Languages</SelectLabel>
+										<SelectLabel>Systems</SelectLabel>
 										<SelectItem value="python">Python</SelectItem>
+										<SelectItem value="go">Go</SelectItem>
+										<SelectItem value="rust">Rust</SelectItem>
 										<SelectItem value="java">Java</SelectItem>
 										<SelectItem value="csharp">C#</SelectItem>
 										<SelectItem value="c">C</SelectItem>
 										<SelectItem value="cpp">C++</SelectItem>
-										<SelectItem value="go">Go</SelectItem>
-										<SelectItem value="rust">Rust</SelectItem>
 										<SelectItem value="ruby">Ruby</SelectItem>
 										<SelectItem value="kotlin">Kotlin</SelectItem>
 										<SelectItem value="swift">Swift</SelectItem>
-										<SelectItem value="scala">Scala</SelectItem>
-										<SelectItem value="perl">Perl</SelectItem>
-										<SelectItem value="r">R</SelectItem>
 									</SelectGroup>
-
-									{/* Database */}
 									<SelectGroup>
-										<SelectLabel>Database</SelectLabel>
-										<SelectItem value="sql">SQL</SelectItem>
-										<SelectItem value="mongodb">MongoDB</SelectItem>
-										<SelectItem value="graphql">GraphQL</SelectItem>
+										<SelectLabel>DevOps</SelectLabel>
+										<SelectItem value="bash">Bash</SelectItem>
+										<SelectItem value="docker">Dockerfile</SelectItem>
+										<SelectItem value="hcl">HCL (Terraform)</SelectItem>
+										<SelectItem value="nginx">Nginx</SelectItem>
 									</SelectGroup>
-
-									{/* Markup & Style */}
 									<SelectGroup>
-										<SelectLabel>Markup & Style</SelectLabel>
+										<SelectLabel>Markup</SelectLabel>
 										<SelectItem value="markdown">Markdown</SelectItem>
 										<SelectItem value="latex">LaTeX</SelectItem>
 										<SelectItem value="scss">SCSS</SelectItem>
-										<SelectItem value="less">LESS</SelectItem>
-									</SelectGroup>
-
-									{/* Configuration */}
-									<SelectGroup>
-										<SelectLabel>Configuration</SelectLabel>
-										<SelectItem value="apache">Apache</SelectItem>
-										<SelectItem value="properties">Properties</SelectItem>
 									</SelectGroup>
 								</SelectContent>
 							</Select>
 							<input type="hidden" name="language" value={language} />
-							</div>
+						</div>
 
-							<div>
-								<label htmlFor="expiration" className="block text-sm font-medium mb-1">
-									Expiration
-								</label>
+						<div>
+							<label className={T.formLabel}>Expiration</label>
 							<Select value={expiration} onValueChange={setExpiration}>
-								<SelectTrigger className="w-full">
-									<SelectValue placeholder="Select expiration" />
-								</SelectTrigger>
+								<SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
 								<SelectContent>
 									<SelectItem value="3600">1 hour</SelectItem>
 									<SelectItem value="86400">1 day</SelectItem>
@@ -607,444 +349,158 @@ export default function PasteForm() {
 								</SelectContent>
 							</Select>
 							<input type="hidden" name="expiration" value={expiration} />
-							</div>
 						</div>
+					</div>
 
-						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-							<div>
-								<label htmlFor="visibility" className="block text-sm font-medium mb-1">
-									Visibility
-								</label>
-							<Select value={visibility} onValueChange={(value) => {
-								setVisibility(value);
-								if (value === 'private') {
-									// Suggest encryption for private pastes but don't force it
-									// Only set E2E encryption if a security method is already chosen
-									if (securityMethod !== 'none') {
-										setIsE2EEncrypted(true);
-									}
-									// Inform the user that encryption is recommended for private pastes
-									toast({
-										message: 'Encryption is recommended for private pastes',
-										type: 'info',
-										duration: 3000,
-									});
-								}
-							}}>
-								<SelectTrigger className="w-full">
-									<SelectValue placeholder="Select visibility" />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="public">Public</SelectItem>
-									<SelectItem value="private">Private</SelectItem>
-								</SelectContent>
-							</Select>
-							<input type="hidden" name="visibility" value={visibility} />
-							</div>
+					{/* ── Options toggle ───────────────────────────────── */}
+					<button
+						type="button"
+						onClick={() => setShowOptions(!showOptions)}
+						className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+					>
+						<ChevronDown className={cn('h-4 w-4 transition-transform', showOptions && 'rotate-180')} />
+						Security &amp; Privacy
+					</button>
 
-							<div>
-								<div className="flex items-center mb-1">
-									<label htmlFor="securityMethod" className="block text-sm font-medium">
-										Security
-									</label>
-									<Tooltip
-										content={
-											<div className="p-1">
-												<p className="font-medium mb-1">Choose your encryption method:</p>
-												<ul className="list-disc ml-4 space-y-1">
-													<li>
-														<strong>None</strong>: Content stored as plaintext
-													</li>
-													<li>
-														<strong>Password</strong>: Encrypted with PBKDF2 key derivation
-													</li>
-													<li>
-														<strong>Key</strong>: Secured with 256-bit random key
-													</li>
-												</ul>
-												<p className="mt-1 text-xs">All encryption is end-to-end (E2EE)</p>
-											</div>
-										}
-										position="top"
-									>
-										<span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-muted text-muted-foreground text-xs font-bold cursor-help">
-											?
-										</span>
-									</Tooltip>
+					{/* ── Collapsible options ──────────────────────────── */}
+					{showOptions && (
+						<div className="space-y-4 rounded-lg border border-border bg-card p-4">
+							{/* Visibility + Security method */}
+							<div className="grid grid-cols-2 gap-3">
+								<div>
+									<label className={T.formLabel}>Visibility</label>
+									<Select value={visibility} onValueChange={setVisibility}>
+										<SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+										<SelectContent>
+											<SelectItem value="public">Public</SelectItem>
+											<SelectItem value="private">Private</SelectItem>
+										</SelectContent>
+									</Select>
+									<input type="hidden" name="visibility" value={visibility} />
 								</div>
-
-							<Select
-								value={!isE2EEncrypted ? 'none' : securityMethod === 'none' ? (passwordValue ? 'password' : 'key') : securityMethod}
-								onValueChange={(value: string) => {
-									const method = value as 'none' | 'password' | 'key';
-									setSecurityMethod(method);
-
-									if (method === 'none') {
-										setIsE2EEncrypted(false);
-										// Clear password field
-										setPasswordValue('');
-									} else if (method === 'password' || method === 'key') {
-										setIsE2EEncrypted(true);
-
-										// If switching to key mode, clear any existing password
-										if (method === 'key') {
-											setPasswordValue('');
-										}
-									}
-								}}
-							>
-								<SelectTrigger className="w-full">
-									<SelectValue placeholder="Select security method" />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="none">None (Plaintext)</SelectItem>
-									<SelectItem value="password">Password Protection (E2EE) - Recommended</SelectItem>
-									<SelectItem value="key">Key Protection (E2EE)</SelectItem>
-								</SelectContent>
-							</Select>
-							<input type="hidden" name="securityMethod" value={!isE2EEncrypted ? 'none' : securityMethod === 'none' ? (passwordValue ? 'password' : 'key') : securityMethod} />
-
-								<div className="text-xs text-muted-foreground mt-1 flex items-start">
-									<div className="mt-0.5 mr-1 flex-shrink-0">
-										{!isE2EEncrypted ? (
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												className="w-3 h-3 text-muted-foreground"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-												/>
-											</svg>
-										) : (
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												className="w-3 h-3 text-green-500"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-												/>
-											</svg>
-										)}
+								<div>
+									<div className="flex items-center gap-1 mb-1">
+										<label className="text-sm font-medium block">Encryption</label>
+										<Tooltip content="None = plaintext. Password = PBKDF2 key derivation. Key = 256-bit random key in URL." position="top">
+											<Info className="h-3.5 w-3.5 text-muted-foreground" />
+										</Tooltip>
 									</div>
-									<span>
-										{!isE2EEncrypted
-											? 'Content will be stored unencrypted on the server'
-											: passwordValue
-												? 'Password-based encryption, secure as your password'
-												: 'Securely encrypted with a strong random key'}
-									</span>
+									<Select
+										value={!isE2EEncrypted ? 'none' : securityMethod === 'none' ? (passwordValue ? 'password' : 'key') : securityMethod}
+										onValueChange={(v: string) => {
+											const method = v as 'none' | 'password' | 'key';
+											setSecurityMethod(method);
+											if (method === 'none') { setIsE2EEncrypted(false); setPasswordValue(''); }
+											else { setIsE2EEncrypted(true); if (method === 'key') setPasswordValue(''); }
+										}}
+									>
+										<SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+										<SelectContent>
+											<SelectItem value="none">None</SelectItem>
+											<SelectItem value="password">Password (E2EE)</SelectItem>
+											<SelectItem value="key">Key (E2EE)</SelectItem>
+										</SelectContent>
+									</Select>
+									<input type="hidden" name="securityMethod" value={!isE2EEncrypted ? 'none' : securityMethod} />
 								</div>
 							</div>
-						</div>
 
-						{/* Show password field only if E2E encryption is selected */}
-						{isE2EEncrypted && (
-							<div className="mt-4">
-								<div className="flex items-center mb-1">
-									<label htmlFor="password" className="block text-sm font-medium">
-										Password
+							{/* Password field */}
+							{isE2EEncrypted && (
+								<div>
+									<label htmlFor="password" className={T.formLabel}>
+										{securityMethod === 'password' ? 'Encryption password' : 'Password (leave empty for key mode)'}
 									</label>
-									<Tooltip
-										content={
-											<div className="p-1 max-w-xs">
-												<p className="mb-1">
-													<strong>Password-based encryption:</strong> You'll need to remember this password to decrypt your content later.
-												</p>
-												<p className="mb-1">
-													<strong>Key-based encryption:</strong> Leave empty to use a secure random key (shared in the URL).
-												</p>
-												<p className="text-xs mt-2">
-													The server never receives your password or key - all encryption happens in your browser.
-												</p>
-											</div>
-										}
-										position="top"
-									>
-										<span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-muted text-muted-foreground text-xs font-bold cursor-help">
-											?
-										</span>
-									</Tooltip>
-								</div>
-
-								<div className="relative">
 									<input
 										type="password"
 										id="password"
 										name="password"
 										autoComplete="new-password"
-										placeholder={
-											!passwordValue && !isE2EEncrypted
-												? 'Enter password or leave empty for key protection'
-												: passwordValue
-													? 'Your encryption password'
-													: 'Leave empty to use a secure random key'
-										}
-										className={`w-full rounded-md border px-3 py-2 bg-background text-foreground pr-10 ${
-											passwordValue ? 'border-green-400' : 'border-input'
-										}`}
+										placeholder={securityMethod === 'password' ? 'Enter a strong password' : 'Leave empty for key-based encryption'}
+										className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
 										value={passwordValue}
 										onChange={(e) => {
-											// Update state with the new password value
 											setPasswordValue(e.target.value);
-
-											// If we have an actual value, update security method to password
-											if (e.target.value.trim().length > 0) {
-												setSecurityMethod('password');
-											}
+											if (e.target.value.trim()) setSecurityMethod('password');
 										}}
 									/>
-
-									{/* Security indicator icon */}
-									<div className="absolute right-3 top-1/2 -translate-y-1/2">
-										{passwordValue ? (
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												className="h-5 w-5 text-green-500"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-												/>
-											</svg>
-										) : (
-											<svg
-												xmlns="http://www.w3.org/2000/svg"
-												className="h-5 w-5 text-blue-500"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
-											>
-												<path
-													strokeLinecap="round"
-													strokeLinejoin="round"
-													strokeWidth={2}
-													d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-												/>
-											</svg>
-										)}
-									</div>
+									{passwordValue && <PasswordStrengthMeter password={passwordValue} />}
 								</div>
+							)}
 
-								{/* Helper text based on current selection */}
-								<p className="text-xs mt-1 text-muted-foreground">
-									{passwordValue
-										? 'This password will be required to decrypt your content later.'
-										: 'A secure random key will be included in the URL for decryption.'}
-								</p>
+							{/* Burn + View limit */}
+							<div className="space-y-3 pt-2 border-t border-border">
+								<label className="flex items-center gap-2.5 cursor-pointer">
+									<input type="checkbox" name="burnAfterReading" className="h-4 w-4 rounded border-input form-checkbox" />
+									<div>
+										<span className="text-sm font-medium">Burn after reading</span>
+										<p className="text-xs text-muted-foreground">Deleted after first view</p>
+									</div>
+								</label>
 
-								{/* Password strength meter - only show if password is entered */}
-								{passwordValue && <PasswordStrengthMeter password={passwordValue} />}
-							</div>
-						)}
-
-						<div className="space-y-4 mt-4">
-							{/* Security options section */}
-							<div className="security-panel rounded-lg border border-slate-200 bg-slate-50 p-3 shadow-sm dark:border-blue-800 dark:bg-blue-900/20">
-								<h3 className="security-panel-title text-sm font-semibold mb-2">Security Options</h3>
-
-								{/* Burn after reading option */}
-								<div className="flex items-start mb-3">
-									<div className="flex h-5 items-center">
+								<label className="flex items-center gap-2.5 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={viewLimitEnabled}
+										onChange={(e) => setViewLimitEnabled(e.target.checked)}
+										className="h-4 w-4 rounded border-input form-checkbox"
+									/>
+									<div className="flex items-center gap-2">
+										<span className="text-sm font-medium">Limit views</span>
 										<input
-											type="checkbox"
-											id="burnAfterReading"
-											name="burnAfterReading"
-											className="h-4 w-4 rounded border-input text-primary focus:ring-primary focus:ring-offset-0 bg-background checked:bg-primary form-checkbox"
+											type="number"
+											name="viewLimit"
+											min="1"
+											max="100"
+											defaultValue="1"
+											disabled={!viewLimitEnabled}
+											className="w-14 px-2 py-0.5 text-xs rounded border border-input bg-background"
 										/>
 									</div>
-									<div className="ml-3 text-sm">
-										<label htmlFor="burnAfterReading" className="security-panel-label font-medium">
-											Burn after reading
-										</label>
-										<p className="security-panel-help text-xs mt-0.5">Content will be permanently deleted after first view</p>
-									</div>
-								</div>
-
-								{/* Expiration options */}
-								<div className="flex items-start">
-									<div className="flex h-5 items-center">
-										<input
-											type="checkbox"
-											id="enableViewLimit"
-											name="enableViewLimit"
-											className="h-4 w-4 rounded border-input text-primary focus:ring-primary focus:ring-offset-0 bg-background checked:bg-primary form-checkbox"
-											onChange={(e) => {
-												if (typeof document !== 'undefined') {
-													const viewLimitInput = document.getElementById('viewLimit') as HTMLInputElement;
-													if (viewLimitInput) {
-														viewLimitInput.disabled = !e.target.checked;
-														if (e.target.checked) {
-															viewLimitInput.focus();
-														}
-													}
-												}
-											}}
-										/>
-									</div>
-									<div className="ml-3 text-sm flex-grow">
-										<label htmlFor="enableViewLimit" className="security-panel-label font-medium">
-											Limit number of views
-										</label>
-										<div className="flex items-center mt-1">
-											<input
-												type="number"
-												id="viewLimit"
-												name="viewLimit"
-												min="1"
-												max="100"
-												defaultValue="1"
-												disabled
-												className="w-16 px-2 py-1 text-xs rounded border border-input bg-background text-foreground"
-											/>
-											<label htmlFor="viewLimit" className="security-panel-help ml-2 text-xs">
-												views before expiration
-											</label>
-										</div>
-									</div>
-								</div>
+								</label>
 							</div>
 
-							{/* Hidden field to maintain compatibility with the form submission */}
-							<input type="hidden" id="e2eEncryption" name="e2eEncryption" value={isE2EEncrypted ? 'on' : 'off'} readOnly />
-
-							{/* Hidden field for view limit */}
-							<input
-								type="hidden"
-								id="viewLimitEnabled"
-								name="viewLimitEnabled"
-								value="false"
-								ref={(el) => {
-									if (el && typeof document !== 'undefined') {
-										const enableViewLimit = document.getElementById('enableViewLimit') as HTMLInputElement;
-										if (enableViewLimit) {
-											el.value = enableViewLimit.checked ? 'true' : 'false';
-										}
-									}
-								}}
-								readOnly
-							/>
-
-							{/* Encryption/Security notice */}
-							{isE2EEncrypted ? (
-								<div className="bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 p-3 rounded-md">
-									<div className="flex">
-										<div className="flex-shrink-0">
-											<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
-												<path
-													fillRule="evenodd"
-													d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 7.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-													clipRule="evenodd"
-												/>
-											</svg>
-										</div>
-										<div className="ml-3">
-											<p className="text-sm text-blue-800 dark:text-blue-200">
-												<strong>Enhanced Privacy:</strong> Your content will be encrypted before being sent to the server.
-												{typeof document !== 'undefined' && (document.getElementById('password') as HTMLInputElement)?.value
-													? " You'll need the password to decrypt it."
-													: ' Only people with the complete URL can decrypt it.'}
-												{' The server never sees the original content.'}
-											</p>
-										</div>
-									</div>
+							{/* Encryption status */}
+							{isE2EEncrypted && (
+								<div className="flex items-start gap-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3">
+									<Shield className="h-4 w-4 mt-0.5 text-blue-600 dark:text-blue-400 shrink-0" />
+									<p className="text-xs text-blue-700 dark:text-blue-300">
+										Content will be encrypted in your browser before upload. The server never sees the original content.
+									</p>
 								</div>
-							) : passwordValue ? (
-								<div className="bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 p-3 rounded-md">
-									<div className="flex">
-										<div className="flex-shrink-0">
-											<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
-												<path
-													fillRule="evenodd"
-													d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-													clipRule="evenodd"
-												/>
-											</svg>
-										</div>
-										<div className="ml-3">
-											<p className="text-sm text-yellow-800 dark:text-yellow-200">
-												<strong>Legacy Password Protection:</strong> You're using server-side password protection. For better security,
-												consider using client-side encryption instead.
-												<span className="block mt-1 text-xs">This method will be deprecated in a future update.</span>
-											</p>
-										</div>
-									</div>
-								</div>
-							) : null}
+							)}
 						</div>
+					)}
 
-						{/* Encryption progress bar - only show during encryption */}
-						{isSubmitting && encryptionProgress !== null && (
-							<div className="mt-4 mb-4">
-								<div className="flex items-center justify-between mb-1">
-									<span className="text-sm font-medium">Encrypting content...</span>
-									<span className="text-sm font-medium">{encryptionProgress}%</span>
-								</div>
-								<div
-									className="w-full bg-muted rounded-full h-2.5"
-									role="progressbar"
-									aria-valuenow={encryptionProgress}
-									aria-valuemin={0}
-									aria-valuemax={100}
-									aria-label="Encryption progress"
-								>
-									<div
-										className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-in-out"
-										style={{
-											width: `${encryptionProgress}%`,
-											transitionProperty: 'width',
-											transitionDuration: '300ms',
-										}}
-									></div>
-								</div>
-								<p className="text-xs text-muted-foreground mt-1">
-									{encryptionProgress === 0
-										? 'Preparing...'
-										: encryptionProgress < 15
-											? 'Generating encryption keys...'
-											: encryptionProgress < 30
-												? 'Deriving secure key...'
-												: encryptionProgress < 50
-													? 'Processing data...'
-													: encryptionProgress < 75
-														? 'Applying encryption...'
-														: encryptionProgress < 95
-															? 'Finalizing encryption...'
-															: 'Securing your content...'}
-								</p>
+					{/* Hidden fields */}
+					<input type="hidden" name="e2eEncryption" value={isE2EEncrypted ? 'on' : 'off'} readOnly />
+					<input type="hidden" name="viewLimitEnabled" value={viewLimitEnabled ? 'true' : 'false'} readOnly />
+					<input type="hidden" name="enableViewLimit" value={viewLimitEnabled ? 'on' : 'off'} readOnly />
+
+					{/* ── Progress bar ─────────────────────────────────── */}
+					{isSubmitting && encryptionProgress !== null && (
+						<div>
+							<div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+								<span>Encrypting...</span>
+								<span>{encryptionProgress}%</span>
 							</div>
-						)}
+							<div className="w-full bg-muted rounded-full h-1.5" role="progressbar" aria-valuenow={encryptionProgress} aria-valuemin={0} aria-valuemax={100}>
+								<div className="bg-primary h-1.5 rounded-full transition-all duration-300" style={{ width: `${encryptionProgress}%` }} />
+							</div>
+						</div>
+					)}
 
-						<CardFooter className="flex justify-between p-0 pt-4">
-							<Button type="submit" variant="outline" disabled={isSubmitting}>
-								{isSubmitting
-									? encryptionProgress !== null
-										? encryptionProgress < 30
-											? `Securing (${encryptionProgress}%)`
-											: `Encrypting (${encryptionProgress}%)`
-										: 'Creating...'
-									: 'Create Paste'}
-							</Button>
-							<Button
-								type="reset"
-								variant="outline"
-								disabled={isSubmitting}
+					{/* ── Actions ──────────────────────────────────────── */}
+					<CardFooter className="flex justify-between p-0 pt-2">
+						<Button type="submit" disabled={isSubmitting}>
+							{isSubmitting
+								? encryptionProgress !== null ? `Encrypting (${encryptionProgress}%)` : 'Creating...'
+								: 'Create Paste'}
+						</Button>
+						<Button
+							type="reset"
+							variant="ghost"
+							disabled={isSubmitting}
 							onClick={() => {
 								setFormErrors({});
 								setIsE2EEncrypted(false);
@@ -1053,13 +509,15 @@ export default function PasteForm() {
 								setLanguage('');
 								setExpiration('86400');
 								setVisibility('public');
+								setViewLimitEnabled(false);
+								setShowOptions(false);
+								setContent('');
 							}}
-							>
-								Clear
-							</Button>
-						</CardFooter>
-					</form>
-				)}
+						>
+							Clear
+						</Button>
+					</CardFooter>
+				</form>
 			</CardContent>
 		</Card>
 	);

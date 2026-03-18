@@ -1,3 +1,4 @@
+import { Plus, FileText, Trash2, Copy } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
 import { showConfirmModal } from './ui/modal';
@@ -19,7 +20,7 @@ export default function PasteActions({ pasteId, isEncrypted, getDecryptedContent
 				window.open(url, '_blank');
 				setTimeout(() => URL.revokeObjectURL(url), 1000);
 			} else {
-				toast({ message: 'Content is still being decrypted. Please wait.', type: 'info', duration: 2000 });
+				toast({ message: 'Content is still being decrypted.', type: 'info', duration: 2000 });
 			}
 		} else {
 			window.open(`/pastes/raw/${pasteId}`, '_blank');
@@ -29,7 +30,7 @@ export default function PasteActions({ pasteId, isEncrypted, getDecryptedContent
 	const handleDelete = async () => {
 		const confirmed = await showConfirmModal({
 			title: 'Delete Paste',
-			description: 'Are you sure you want to delete this paste? This action cannot be undone.',
+			description: 'Are you sure? This action cannot be undone.',
 			confirmText: 'Delete',
 			cancelText: 'Cancel',
 			isDangerous: true,
@@ -40,49 +41,38 @@ export default function PasteActions({ pasteId, isEncrypted, getDecryptedContent
 	};
 
 	const handleCopy = async () => {
-		const contentToCopy = isEncrypted ? getDecryptedContent() : getRawContent();
-
-		if (!contentToCopy) {
-			toast({
-				message: isEncrypted ? 'Content is still being decrypted. Please wait.' : 'No content to copy.',
-				type: isEncrypted ? 'info' : 'error',
-				duration: 2000,
-			});
+		const text = isEncrypted ? getDecryptedContent() : getRawContent();
+		if (!text) {
+			toast({ message: isEncrypted ? 'Still decrypting...' : 'No content to copy.', type: 'info', duration: 2000 });
 			return;
 		}
-
-		if (navigator.clipboard) {
-			try {
-				await navigator.clipboard.writeText(contentToCopy);
-				toast({ message: 'Copied to clipboard!', type: 'success', duration: 2000 });
-			} catch {
-				toast({ message: 'Failed to copy to clipboard', type: 'error', duration: 3000 });
-			}
-		} else {
-			toast({ message: 'Clipboard access not available in your browser', type: 'error', duration: 3000 });
+		if (!navigator.clipboard) {
+			toast({ message: 'Clipboard not available.', type: 'error', duration: 3000 });
+			return;
+		}
+		try {
+			await navigator.clipboard.writeText(text);
+			toast({ message: 'Copied!', type: 'success', duration: 2000 });
+		} catch {
+			toast({ message: 'Failed to copy.', type: 'error', duration: 3000 });
 		}
 	};
 
 	return (
-		<div className="mt-6 border-t border-border pt-4 flex justify-between items-center flex-wrap gap-3">
-			<div className="flex flex-wrap gap-2">
-				<a href="/">
-					<Button variant="secondary" size="sm">
-						Create New Paste
-					</Button>
-				</a>
-				<Button variant="secondary" size="sm" onClick={handleViewRaw}>
-					View Raw
-				</Button>
-				<Button variant="destructive" size="sm" onClick={handleDelete}>
-					Delete
-				</Button>
-			</div>
-			<div className="flex gap-2">
-				<Button variant="secondary" size="sm" onClick={handleCopy}>
-					Copy to Clipboard
-				</Button>
-			</div>
+		<div className="mt-4 pt-4 border-t border-border flex flex-wrap items-center gap-2">
+			<Button variant="outline" size="sm" asChild>
+				<a href="/"><Plus className="h-3.5 w-3.5 mr-1.5" /> New</a>
+			</Button>
+			<Button variant="outline" size="sm" onClick={handleViewRaw}>
+				<FileText className="h-3.5 w-3.5 mr-1.5" /> Raw
+			</Button>
+			<Button variant="outline" size="sm" onClick={handleCopy}>
+				<Copy className="h-3.5 w-3.5 mr-1.5" /> Copy
+			</Button>
+			<div className="flex-1" />
+			<Button variant="destructive" size="sm" onClick={handleDelete}>
+				<Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete
+			</Button>
 		</div>
 	);
 }
