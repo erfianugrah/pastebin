@@ -6,7 +6,7 @@ const CSP_DIRECTIVES = [
 	"script-src 'self' 'unsafe-inline'",
 	"style-src 'self' 'unsafe-inline'",
 	"connect-src 'self'",
-	"img-src 'self' data: blob:",
+	"img-src 'self' data: blob: https://api.qrserver.com",
 	"font-src 'self'",
 	"object-src 'none'",
 	"media-src 'self'",
