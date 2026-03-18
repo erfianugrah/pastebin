@@ -69,6 +69,8 @@ function Badge({ className, children }: { className?: string; children: React.Re
 	return <span className={cn('badge', className)}>{children}</span>;
 }
 
+type FileEntry = { name: string; content: string; language?: string };
+
 /** Minimal markdown to HTML renderer (no dependencies). */
 function renderMarkdown(md: string): string {
 	let html = md
@@ -116,7 +118,6 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 
 	// Multi-file detection: language === '_multi' and content is JSON array
 	const isMultiFile = paste.language === '_multi';
-	type FileEntry = { name: string; content: string; language?: string };
 	const [parsedFiles, setParsedFiles] = useState<FileEntry[]>([]);
 
 	// Parse multi-file content when available

@@ -28,6 +28,7 @@ export function Modal({
 	const [isMounted, setIsMounted] = useState(false);
 	const modalRef = useRef<HTMLDivElement>(null);
 	const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+	const uniqueId = React.useId().replace(/:/g, '');
 
 	useEffect(() => {
 		setIsMounted(true);
@@ -102,8 +103,8 @@ export function Modal({
 
 	if (!isMounted || !isOpen) return null;
 
-	const titleId = 'modal-title-' + React.useId().replace(/:/g, '');
-	const descId = description ? 'modal-desc-' + titleId : undefined;
+	const titleId = 'modal-title-' + uniqueId;
+	const descId = description ? 'modal-desc-' + uniqueId : undefined;
 
 	const modal = (
 		<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/25 backdrop-blur-sm">
