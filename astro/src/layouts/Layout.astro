@@ -157,14 +157,14 @@ const themeScript = `
 			Skip to main content
 		</a>
 		
-		{!hideHeader && <Header client:only="react" />}
+		{!hideHeader && <Header client:load />}
 		<main id="main-content" class="flex-grow">
 			<slot />
 		</main>
-		{!hideFooter && <Footer client:only="react" />}
+		{!hideFooter && <Footer client:load />}
 		
-		<ToastContainer client:only="react" />
-		<DelayedServiceWorker client:only="react" />
+		<ToastContainer client:load />
+		<DelayedServiceWorker client:load />
 		
 		<!-- Prism.js Scripts - Using NPM package -->
 		<script>
