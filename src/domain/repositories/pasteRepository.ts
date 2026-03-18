@@ -28,4 +28,15 @@ export interface PasteRepository {
    * @returns A promise that resolves to an array of pastes
    */
   findRecentPublic(limit: number): Promise<Paste[]>;
+
+  /**
+   * Resolve a vanity slug to a paste ID
+   * @returns The paste ID or null if not found
+   */
+  resolveSlug(slug: string): Promise<string | null>;
+
+  /**
+   * Save a vanity slug -> paste ID mapping
+   */
+  saveSlug(slug: string, pasteId: string, expiresAt: Date): Promise<void>;
 }

@@ -88,7 +88,7 @@ app.use('*', async (c, next) => {
 	const getPasteQuery = new GetPasteQuery(pasteRepository);
 	const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
 
-	const apiHandlers = new ApiHandlers(createPasteCommand, deletePasteCommand, getPasteQuery, getRecentPastesQuery, logger);
+	const apiHandlers = new ApiHandlers(createPasteCommand, deletePasteCommand, getPasteQuery, getRecentPastesQuery, logger, pasteRepository);
 
 	c.set('handlers', apiHandlers);
 
@@ -169,6 +169,12 @@ app.get('/pastes/:id/delete', async (c) => {
 	return c.json({ error: { code: 'method_not_allowed', message: 'Use DELETE or POST to delete a paste' } }, 405);
 });
 
+// PUT /pastes/:id — update paste (requires token)
+app.put('/pastes/:id', async (c) => {
+	const pasteId = c.req.param('id');
+	return preventCaching(await c.get('handlers').handleUpdatePaste(c.req.raw, pasteId));
+});
+
 // GET /pastes — index without an ID
 app.get('/pastes', async (c) => {
 	const accept = c.req.header('accept') || '';
@@ -211,6 +217,38 @@ app.on(['GET', 'POST'], '/pastes/:id', async (c) => {
 	const url = new URL(c.req.url);
 	const assetRequest = new Request(url.origin + '/pastes/index/index.html', c.req.raw);
 	return cacheStaticAsset(await c.env.ASSETS.fetch(assetRequest), 'html');
+});
+
+// ---- Vanity URL: /p/:slug ----
+
+app.get('/p/:slug', async (c) => {
+	const slug = c.req.param('slug');
+	const logger = c.get('logger');
+
+	// Resolve slug to paste ID
+	const pasteRepository = new KVPasteRepository(c.env.PASTES, logger);
+	const pasteId = await pasteRepository.resolveSlug(slug);
+
+	if (!pasteId) {
+		return c.json({ error: { code: 'not_found', message: 'Paste not found' } }, 404);
+	}
+
+	const accept = c.req.header('accept') || '';
+	if (accept.includes('application/json')) {
+		const response = await c.get('handlers').handleGetPaste(c.req.raw, pasteId);
+		return response.status === 200 ? cachePasteView(response) : preventCaching(response);
+	}
+
+	// Serve the vanity viewer page (or fall back to paste viewer page)
+	const url = new URL(c.req.url);
+	const assetRequest = new Request(url.origin + '/p/index/index.html', c.req.raw);
+	try {
+		const assetResponse = await c.env.ASSETS.fetch(assetRequest);
+		if (assetResponse.ok) return cacheStaticAsset(assetResponse, 'html');
+	} catch { /* fall through */ }
+	// Fallback to paste viewer
+	const fallback = new Request(url.origin + '/pastes/index/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(fallback), 'html');
 });
 
 // ---- Static pages ----

@@ -79,6 +79,15 @@ export class KVPasteRepository implements PasteRepository {
 		return results.filter((paste): paste is Paste => paste !== null);
 	}
 
+	async resolveSlug(slug: string): Promise<string | null> {
+		return this.kv.get(`slug:${slug}`);
+	}
+
+	async saveSlug(slug: string, pasteId: string, expiresAt: Date): Promise<void> {
+		const ttl = Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+		await this.kv.put(`slug:${slug}`, pasteId, { expirationTtl: ttl });
+	}
+
 	private async addToRecentList(id: string, expiresAt: Date): Promise<void> {
 		// Store the ID in a list with timestamp as key for sorting
 		const key = `recent:${Date.now()}:${id}`;

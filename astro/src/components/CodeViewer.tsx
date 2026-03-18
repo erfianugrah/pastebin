@@ -109,9 +109,25 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 	const [passwordInput, setPasswordInput] = useState('');
 	const [showPasswordForm, setShowPasswordForm] = useState(false);
 	const [showRendered, setShowRendered] = useState(false);
+	const [activeFileIdx, setActiveFileIdx] = useState(0);
 	const codeRef = useRef<HTMLElement>(null);
 
 	const isMarkdown = paste.language === 'markdown';
+
+	// Multi-file detection: language === '_multi' and content is JSON array
+	const isMultiFile = paste.language === '_multi';
+	type FileEntry = { name: string; content: string; language?: string };
+	const [parsedFiles, setParsedFiles] = useState<FileEntry[]>([]);
+
+	// Parse multi-file content when available
+	useEffect(() => {
+		const raw = (!paste.isEncrypted || decrypted) ? content : null;
+		if (isMultiFile && raw) {
+			try { setParsedFiles(JSON.parse(raw) as FileEntry[]); } catch { /* not valid JSON */ }
+		}
+	}, [content, decrypted, isMultiFile]);
+
+	const activeFile = parsedFiles[activeFileIdx] ?? parsedFiles[0];
 
 	const { error, errorMessage, category, handleError } = useErrorHandler();
 
@@ -400,8 +416,29 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 			{/* ── Code content (only when viewable) ───────────────── */}
 			{(!paste.isEncrypted || decrypted) && !isDecrypting && (
 				<div>
+					{/* Multi-file tabs */}
+					{isMultiFile && parsedFiles.length > 0 && (
+						<div className="flex items-center gap-1 mb-2 overflow-x-auto border-b border-border">
+							{parsedFiles.map((f, i) => (
+								<button
+									key={i}
+									type="button"
+									onClick={() => setActiveFileIdx(i)}
+									className={cn(
+										'px-3 py-1.5 text-xs rounded-t-md transition-colors whitespace-nowrap border border-b-0',
+										activeFileIdx === i
+											? 'bg-card border-border text-foreground -mb-px'
+											: 'bg-transparent border-transparent text-muted-foreground hover:text-foreground',
+									)}
+								>
+									{f.name || `file ${i + 1}`}
+								</button>
+							))}
+						</div>
+					)}
+
 					{/* Markdown toggle */}
-					{isMarkdown && (
+					{(isMarkdown || (isMultiFile && activeFile?.language === 'markdown')) && (
 						<div className="flex gap-1 mb-2">
 							<button
 								type="button"
@@ -421,15 +458,15 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 					)}
 
 					{/* Rendered markdown */}
-					{isMarkdown && showRendered ? (
+					{showRendered && (isMarkdown || activeFile?.language === 'markdown') ? (
 						<div
 							className="prose prose-sm dark:prose-invert max-w-none p-4 rounded-lg border border-border bg-card overflow-auto max-h-[600px]"
-							dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+							dangerouslySetInnerHTML={{ __html: renderMarkdown(isMultiFile ? (activeFile?.content || '') : content) }}
 						/>
 					) : (
 						<pre className="p-4 rounded-lg border border-border overflow-x-auto overflow-y-auto font-mono text-sm max-h-[600px] bg-card line-numbers">
-							<code ref={codeRef} className={`language-${paste.language || 'plaintext'}`}>
-								{content}
+							<code ref={codeRef} className={`language-${isMultiFile ? (activeFile?.language || 'plaintext') : (paste.language || 'plaintext')}`}>
+								{isMultiFile ? (activeFile?.content || '') : content}
 							</code>
 						</pre>
 					)}

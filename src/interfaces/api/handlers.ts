@@ -1,3 +1,5 @@
+import { Paste } from '../../domain/models/paste';
+import { PasteRepository } from '../../domain/repositories/pasteRepository';
 import { CreatePasteCommand, CreatePasteParams } from '../../application/commands/createPasteCommand';
 import { DeletePasteCommand, DeleteErrorCode } from '../../application/commands/deletePasteCommand';
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
@@ -37,6 +39,7 @@ export class ApiHandlers {
 		private readonly getPasteQuery: GetPasteQuery,
 		private readonly getRecentPastesQuery: GetRecentPastesQuery,
 		private readonly logger: Logger,
+		private readonly repository?: PasteRepository,
 	) {}
 
 	async handleCreatePaste(request: Request): Promise<Response> {
@@ -119,6 +122,56 @@ export class ApiHandlers {
 			const status = result.errorCode ? DELETE_STATUS_MAP[result.errorCode] : 400;
 
 			return json({ error: { code: result.errorCode || 'unknown_error', message: result.message } }, status);
+		} catch (error) {
+			rethrowIfZodError(error);
+			throw error;
+		}
+	}
+
+	async handleUpdatePaste(request: Request, pasteId: string): Promise<Response> {
+		try {
+			this.logger.debug('Handling update paste request', { pasteId });
+
+			if (!this.repository) {
+				return json({ error: { code: 'internal_error', message: 'Repository not configured' } }, 500);
+			}
+
+			const body = (await request.json()) as { token: string; content: string; title?: string; language?: string };
+
+			if (!body.token) {
+				return json({ error: { code: 'unauthorized', message: 'Token required' } }, 403);
+			}
+
+			// Read-only lookup (no view count increment)
+			const paste = await this.getPasteQuery.findById(pasteId);
+			if (!paste) {
+				throw NotFoundError('Paste not found');
+			}
+
+			if (paste.getDeleteToken() !== body.token) {
+				return json({ error: { code: 'unauthorized', message: 'Invalid token' } }, 403);
+			}
+
+			// Create updated paste in-place (new Paste with same ID, updated content)
+			const updatedPaste = new Paste(
+				paste.getId(),
+				body.content ?? paste.getContent(),
+				paste.getCreatedAt(),
+				paste.getExpirationPolicy(),
+				body.title ?? paste.getTitle(),
+				body.language ?? paste.getLanguage(),
+				paste.getVisibility(),
+				paste.isBurnAfterReading(),
+				paste.getReadCount(),
+				paste.getIsEncrypted(),
+				paste.getViewLimit(),
+				paste.getVersion(),
+				paste.getDeleteToken(),
+			);
+
+			await this.repository.save(updatedPaste);
+
+			return json({ success: true, id: pasteId });
 		} catch (error) {
 			rethrowIfZodError(error);
 			throw error;

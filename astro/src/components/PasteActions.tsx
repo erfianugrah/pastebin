@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, FileText, Trash2, Copy, Download, GitFork, QrCode, Code2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, FileText, Trash2, Copy, Download, GitFork, QrCode, Code2, Pencil } from 'lucide-react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
 import { showConfirmModal } from './ui/modal';
@@ -34,6 +34,15 @@ export default function PasteActions({
 	getRawContent,
 }: PasteActionsProps) {
 	const [showPanel, setShowPanel] = useState<'none' | 'qr' | 'embed'>('none');
+	const [hasEditToken, setHasEditToken] = useState(false);
+
+	// Check if user has a saved token for this paste (means they created it)
+	useEffect(() => {
+		try {
+			const token = localStorage.getItem(`paste_token_${pasteId}`);
+			setHasEditToken(!!token);
+		} catch { /* ignore */ }
+	}, [pasteId]);
 
 	const getContent = () => {
 		const text = isEncrypted ? getDecryptedContent() : getRawContent();
@@ -94,6 +103,19 @@ export default function PasteActions({
 		window.location.href = '/';
 	};
 
+	const handleEdit = () => {
+		const text = getContent();
+		if (!text) return;
+		sessionStorage.setItem('pasteriser_edit', JSON.stringify({
+			pasteId,
+			content: text,
+			title: pasteTitle,
+			language: pasteLanguage,
+			token: localStorage.getItem(`paste_token_${pasteId}`),
+		}));
+		window.location.href = '/';
+	};
+
 	const handleDelete = async () => {
 		const confirmed = await showConfirmModal({
 			title: 'Delete Paste',
@@ -120,6 +142,11 @@ export default function PasteActions({
 				<Button variant="outline" size="sm" asChild>
 					<a href="/"><Plus className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">New</span></a>
 				</Button>
+				{hasEditToken && (
+					<Button variant="outline" size="sm" onClick={handleEdit}>
+						<Pencil className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Edit</span>
+					</Button>
+				)}
 				<Button variant="outline" size="sm" onClick={handleFork}>
 					<GitFork className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Fork</span>
 				</Button>

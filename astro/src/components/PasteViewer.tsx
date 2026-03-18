@@ -30,17 +30,24 @@ export default function PasteViewer() {
 	const [paste, setPaste] = useState<PasteData | null>(null);
 	const [decryptedContent, setDecryptedContent] = useState<string | null>(null);
 
-	const pasteId = typeof window !== 'undefined' ? window.location.pathname.split('/').pop() || '' : '';
+	// Support both /pastes/:id and /p/:slug URLs
+	const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+	const isVanity = pathname.startsWith('/p/');
+	const idOrSlug = isVanity
+		? pathname.split('/')[2] || ''
+		: pathname.split('/').pop() || '';
 
 	useEffect(() => {
-		if (!pasteId) {
+		if (!idOrSlug) {
 			setState('error');
 			return;
 		}
 
 		async function fetchPaste() {
 			try {
-				const response = await fetch(`/pastes/${pasteId}`, {
+				// For vanity URLs, fetch via /p/:slug; for normal, /pastes/:id
+				const fetchUrl = isVanity ? `/p/${idOrSlug}` : `/pastes/${idOrSlug}`;
+				const response = await fetch(fetchUrl, {
 					headers: { Accept: 'application/json' },
 				});
 
@@ -62,7 +69,7 @@ export default function PasteViewer() {
 		}
 
 		fetchPaste();
-	}, [pasteId]);
+	}, [idOrSlug]);
 
 	// ── Loading ──────────────────────────────────────────────────────
 	if (state === 'loading') {

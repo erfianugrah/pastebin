@@ -8,6 +8,8 @@ const mockRepository: PasteRepository = {
 	findById: vi.fn(),
 	delete: vi.fn(),
 	findRecentPublic: vi.fn(),
+	resolveSlug: vi.fn(),
+	saveSlug: vi.fn(),
 };
 
 function makePaste(id: string, deleteToken = 'valid-token'): Paste {

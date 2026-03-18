@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle2, ChevronDown, Copy, Lock, Key, Shield, Info } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Copy, Lock, Key, Shield, Info, Plus, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from './ui/card';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from './ui/select';
@@ -9,11 +9,25 @@ import { Tooltip } from './ui/tooltip';
 import { PasswordStrengthMeter } from './ui/password-strength';
 import { generateEncryptionKey, encryptData, deriveKeyFromPassword } from '../lib/crypto';
 import { validatePasteForm } from '../lib/validation';
+import { detectLanguage } from '../lib/language-detect';
 import { useErrorHandler } from '../hooks/useErrorHandler';
 import { cn } from '../lib/utils';
 import { T } from '../lib/typography';
 
 const isDev = typeof window !== 'undefined' && window.location?.hostname === 'localhost';
+
+// ── Types ────────────────────────────────────────────────────────────
+
+interface FileTab {
+	id: string;
+	name: string;
+	content: string;
+	language: string;
+}
+
+function newFileTab(name = '', content = '', language = ''): FileTab {
+	return { id: crypto.randomUUID(), name, content, language };
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -39,29 +53,69 @@ export default function PasteForm() {
 	const [securityMethod, setSecurityMethod] = useState<'none' | 'password' | 'key'>('none');
 	const [encryptionProgress, setEncryptionProgress] = useState<number | null>(null);
 	const [language, setLanguage] = useState('');
+	const [autoDetect, setAutoDetect] = useState(true);
 	const [expiration, setExpiration] = useState('86400');
 	const [visibility, setVisibility] = useState('public');
 	const [viewLimitEnabled, setViewLimitEnabled] = useState(false);
+	const [slug, setSlug] = useState('');
 	const [showOptions, setShowOptions] = useState(false);
+	const [files, setFiles] = useState<FileTab[]>([]);
+	const [activeFileId, setActiveFileId] = useState<string | null>(null);
+	const isMultiFile = files.length > 0;
 
 	const { handleError } = useErrorHandler();
 
-	// Load forked paste content from sessionStorage
+	// Edit mode state
+	const [editMode, setEditMode] = useState<{ pasteId: string; token: string } | null>(null);
+
+	// Load forked or edited paste content from sessionStorage
 	useEffect(() => {
 		try {
+			// Check for edit mode first
+			const edit = sessionStorage.getItem('pasteriser_edit');
+			if (edit) {
+				sessionStorage.removeItem('pasteriser_edit');
+				const data = JSON.parse(edit) as { pasteId: string; content?: string; title?: string; language?: string; token?: string };
+				if (data.content) setContent(data.content);
+				if (data.title) {
+					setTimeout(() => {
+						const titleInput = document.getElementById('title') as HTMLInputElement;
+						if (titleInput) titleInput.value = data.title!;
+					}, 0);
+				}
+				if (data.language) setLanguage(data.language);
+				if (data.pasteId && data.token) setEditMode({ pasteId: data.pasteId, token: data.token });
+				return;
+			}
+
+			// Check for fork
 			const fork = sessionStorage.getItem('pasteriser_fork');
 			if (fork) {
 				sessionStorage.removeItem('pasteriser_fork');
 				const data = JSON.parse(fork) as { content?: string; title?: string; language?: string };
 				if (data.content) setContent(data.content);
 				if (data.title) {
-					const titleInput = document.getElementById('title') as HTMLInputElement;
-					if (titleInput) titleInput.value = data.title;
+					setTimeout(() => {
+						const titleInput = document.getElementById('title') as HTMLInputElement;
+						if (titleInput) titleInput.value = data.title!;
+					}, 0);
 				}
 				if (data.language) setLanguage(data.language);
 			}
 		} catch { /* ignore */ }
 	}, []);
+
+	// Auto-detect language when content changes (debounced)
+	useEffect(() => {
+		if (!autoDetect || !content || content.length < 20) return;
+		const timer = setTimeout(() => {
+			const detected = detectLanguage(content);
+			if (detected && detected !== language) {
+				setLanguage(detected);
+			}
+		}, 500);
+		return () => clearTimeout(timer);
+	}, [content, autoDetect]);
 
 	// Sync security method with encryption state
 	useEffect(() => {
@@ -109,8 +163,11 @@ export default function PasteForm() {
 			}
 
 			const title = formData.get('title') as string;
-			const rawContent = formData.get('content') as string;
-			const lang = formData.get('language') as string;
+			// Multi-file: serialize files array as JSON content
+			const rawContent = isMultiFile
+				? JSON.stringify(files.map(f => ({ name: f.name || 'untitled', content: f.content, language: f.language })))
+				: formData.get('content') as string;
+			const lang = isMultiFile ? '_multi' : formData.get('language') as string;
 			const exp = parseInt(formData.get('expiration') as string, 10);
 			const vis = formData.get('visibility') as string;
 			const password = formData.get('password') as string;
@@ -148,21 +205,28 @@ export default function PasteForm() {
 				}
 			}
 
-			// ── Create paste ─────────────────────────────────────────────
-			const response = await fetch('/pastes', {
-				method: 'POST',
+			// ── Create or update paste ───────────────────────────────────
+			const isEdit = !!editMode;
+			const fetchUrl = isEdit ? `/pastes/${editMode.pasteId}` : '/pastes';
+			const fetchMethod = isEdit ? 'PUT' : 'POST';
+
+			const response = await fetch(fetchUrl, {
+				method: fetchMethod,
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					title,
-					content: encryptedContent,
-					language: lang,
-					expiration: exp,
-					visibility: vis,
-					burnAfterReading,
-					isEncrypted: needsEncryption,
-					viewLimit,
-					version: needsEncryption ? 2 : 0,
-				}),
+				body: isEdit
+					? JSON.stringify({ token: editMode.token, content: encryptedContent, title, language: lang })
+					: JSON.stringify({
+						title,
+						content: encryptedContent,
+						language: lang,
+						expiration: exp,
+						visibility: vis,
+						burnAfterReading,
+						isEncrypted: needsEncryption,
+						viewLimit,
+						version: needsEncryption ? 2 : 0,
+						...(slug.trim() ? { slug: slug.trim().toLowerCase() } : {}),
+					}),
 			}).catch((fetchError) => {
 				const err = new Error('Network error. Please check your connection and try again.');
 				(err as any).originalError = fetchError;
@@ -177,12 +241,24 @@ export default function PasteForm() {
 				throw err;
 			}
 
-			const data = (await response.json()) as { id: string; url: string };
+			// Handle edit success — redirect back to paste
+			if (isEdit) {
+				toast({ message: 'Paste updated!', type: 'success' });
+				window.location.href = `/pastes/${editMode.pasteId}`;
+				return;
+			}
+
+			const data = (await response.json()) as { id: string; url: string; deleteToken?: string };
 
 			let resultUrl = data.url;
 			if (needsEncryption && encryptionKey) {
 				const encodedKey = encryptionKey.replace(/\+/g, '%2B').replace(/\//g, '%2F').replace(/=/g, '%3D');
 				resultUrl = `${data.url}#key=${encodedKey}`;
+			}
+
+			// Save delete/edit token for this paste
+			if (data.deleteToken) {
+				try { localStorage.setItem(`paste_token_${data.id}`, data.deleteToken); } catch { /* ignore */ }
 			}
 
 			setResult({
@@ -256,37 +332,133 @@ export default function PasteForm() {
 		<Card className="max-w-2xl mx-auto">
 			<CardContent className="pt-6">
 				<form onSubmit={handleSubmit} className="space-y-4">
-					{/* ── Content (primary action) ─────────────────────── */}
+					{/* ── Content area ─────────────────────────────────── */}
 					<div>
 						<div className="flex items-center justify-between mb-1">
-							<label htmlFor="content" className={T.formLabel}>
+							<label className={T.formLabel}>
 								Content <span className="text-destructive">*</span>
 							</label>
-							{contentLength > 0 && (
-								<span className={cn('text-xs', contentLength > MAX_CONTENT_BYTES * 0.9 ? 'text-destructive' : 'text-muted-foreground')}>
-									{formatBytes(contentLength)}
-								</span>
-							)}
+							<div className="flex items-center gap-2">
+								{!isMultiFile && contentLength > 0 && (
+									<span className={cn('text-xs', contentLength > MAX_CONTENT_BYTES * 0.9 ? 'text-destructive' : 'text-muted-foreground')}>
+										{formatBytes(contentLength)}
+									</span>
+								)}
+								<button
+									type="button"
+									onClick={() => {
+										if (isMultiFile) {
+											// Switch back to single file — take first file's content
+											const first = files[0];
+											if (first) { setContent(first.content); setLanguage(first.language); }
+											setFiles([]);
+											setActiveFileId(null);
+										} else {
+											// Switch to multi-file — move current content to first file
+											const f = newFileTab('file1', content, language);
+											setFiles([f]);
+											setActiveFileId(f.id);
+										}
+									}}
+									className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+								>
+									{isMultiFile ? 'Single file' : '+ Multi-file'}
+								</button>
+							</div>
 						</div>
-						<Textarea
-							id="content"
-							name="content"
-							placeholder="Paste your code or text here... (Ctrl+Enter to submit)"
-							rows={14}
-							required
-							value={content}
-							onChange={(e) => setContent(e.target.value)}
-							onKeyDown={(e) => {
-								if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-									e.preventDefault();
-									(e.target as HTMLTextAreaElement).form?.requestSubmit();
-								}
-							}}
-							aria-invalid={!!formErrors.content}
-							aria-describedby={formErrors.content ? 'content-error' : undefined}
-							className={cn('font-mono text-sm bg-background', formErrors.content && 'border-destructive')}
-						/>
-						{formErrors.content && <p id="content-error" role="alert" className={T.formError}>{formErrors.content}</p>}
+
+						{isMultiFile ? (
+							<>
+								{/* File tabs */}
+								<div className="flex items-center gap-1 mb-2 overflow-x-auto">
+									{files.map((f) => (
+										<button
+											key={f.id}
+											type="button"
+											onClick={() => setActiveFileId(f.id)}
+											className={cn(
+												'flex items-center gap-1 px-2.5 py-1 text-xs rounded-t-md border border-b-0 transition-colors whitespace-nowrap',
+												activeFileId === f.id
+													? 'bg-background border-border text-foreground'
+													: 'bg-muted/50 border-transparent text-muted-foreground hover:text-foreground',
+											)}
+										>
+											<input
+												type="text"
+												value={f.name}
+												onChange={(e) => setFiles(files.map(x => x.id === f.id ? { ...x, name: e.target.value } : x))}
+												onClick={(e) => e.stopPropagation()}
+												className="bg-transparent border-none outline-none w-20 text-xs"
+												placeholder="filename"
+											/>
+											{files.length > 1 && (
+												<X
+													className="h-3 w-3 opacity-50 hover:opacity-100 cursor-pointer"
+													onClick={(e) => {
+														e.stopPropagation();
+														const remaining = files.filter(x => x.id !== f.id);
+														setFiles(remaining);
+														if (activeFileId === f.id) setActiveFileId(remaining[0]?.id ?? null);
+													}}
+												/>
+											)}
+										</button>
+									))}
+									<button
+										type="button"
+										onClick={() => {
+											const f = newFileTab(`file${files.length + 1}`);
+											setFiles([...files, f]);
+											setActiveFileId(f.id);
+										}}
+										className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+									>
+										<Plus className="h-3.5 w-3.5" />
+									</button>
+								</div>
+								{/* Active file editor */}
+								{files.map((f) => f.id === activeFileId && (
+									<Textarea
+										key={f.id}
+										placeholder="File content..."
+										rows={12}
+										value={f.content}
+										onChange={(e) => setFiles(files.map(x => x.id === f.id ? { ...x, content: e.target.value } : x))}
+										onKeyDown={(e) => {
+											if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+												e.preventDefault();
+												(e.target as HTMLTextAreaElement).form?.requestSubmit();
+											}
+										}}
+										className="font-mono text-sm bg-background"
+									/>
+								))}
+								{/* Hidden input for form validation */}
+								<input type="hidden" name="content" value={files.some(f => f.content.trim()) ? 'multi' : ''} required />
+							</>
+						) : (
+							<>
+								<Textarea
+									id="content"
+									name="content"
+									placeholder="Paste your code or text here... (Ctrl+Enter to submit)"
+									rows={14}
+									required
+									value={content}
+									onChange={(e) => setContent(e.target.value)}
+									onKeyDown={(e) => {
+										if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+											e.preventDefault();
+											(e.target as HTMLTextAreaElement).form?.requestSubmit();
+										}
+									}}
+									aria-invalid={!!formErrors.content}
+									aria-describedby={formErrors.content ? 'content-error' : undefined}
+									className={cn('font-mono text-sm bg-background', formErrors.content && 'border-destructive')}
+								/>
+								{formErrors.content && <p id="content-error" role="alert" className={T.formError}>{formErrors.content}</p>}
+							</>
+						)}
 					</div>
 
 					{/* ── Title ────────────────────────────────────────── */}
@@ -306,8 +478,19 @@ export default function PasteForm() {
 					{/* ── Language + Expiration ────────────────────────── */}
 					<div className="grid grid-cols-2 gap-3">
 						<div>
-							<label className={T.formLabel}>Language</label>
-							<Select value={language} onValueChange={setLanguage}>
+							<div className="flex items-center justify-between">
+								<label className="text-sm font-medium">Language</label>
+								<label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
+									<input
+										type="checkbox"
+										checked={autoDetect}
+										onChange={(e) => setAutoDetect(e.target.checked)}
+										className="h-3 w-3 rounded border-input form-checkbox"
+									/>
+									Auto
+								</label>
+							</div>
+							<Select value={language} onValueChange={(v) => { setLanguage(v); setAutoDetect(false); }}>
 								<SelectTrigger className="w-full"><SelectValue placeholder="Plain Text" /></SelectTrigger>
 								<SelectContent>
 									<SelectItem value="plaintext">Plain Text</SelectItem>
@@ -493,6 +676,26 @@ export default function PasteForm() {
 								</label>
 							</div>
 
+							{/* Vanity URL */}
+							<div className="pt-2 border-t border-border">
+								<label htmlFor="slug" className={T.formLabel}>Custom URL (optional)</label>
+								<div className="flex items-center gap-2">
+									<span className="text-xs text-muted-foreground whitespace-nowrap">paste.erfi.dev/p/</span>
+									<input
+										id="slug"
+										type="text"
+										value={slug}
+										onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+										placeholder="my-snippet"
+										maxLength={64}
+										className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm shadow-inner"
+									/>
+								</div>
+								{slug && slug.length < 3 && (
+									<p className="text-xs text-destructive mt-1">Minimum 3 characters</p>
+								)}
+							</div>
+
 							{/* Encryption status */}
 							{isE2EEncrypted && (
 								<div className="flex items-start gap-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3">
@@ -527,8 +730,8 @@ export default function PasteForm() {
 					<CardFooter className="flex justify-between p-0 pt-2">
 						<Button type="submit" disabled={isSubmitting}>
 							{isSubmitting
-								? encryptionProgress !== null ? `Encrypting (${encryptionProgress}%)` : 'Creating...'
-								: 'Create Paste'}
+								? encryptionProgress !== null ? `Encrypting (${encryptionProgress}%)` : (editMode ? 'Saving...' : 'Creating...')
+								: editMode ? 'Save Changes' : 'Create Paste'}
 						</Button>
 						<Button
 							type="reset"
@@ -543,6 +746,7 @@ export default function PasteForm() {
 								setExpiration('86400');
 								setVisibility('public');
 								setViewLimitEnabled(false);
+								setSlug('');
 								setShowOptions(false);
 								setContent('');
 							}}

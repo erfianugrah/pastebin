@@ -5,6 +5,9 @@ import { ExpirationService } from '../../domain/services/expirationService';
 import { UniqueIdService } from '../../domain/services/uniqueIdService';
 
 // Using Zod 4 schema definition
+/** Vanity slug: 3-64 chars, lowercase alphanumeric + hyphens, no leading/trailing hyphens */
+const SlugSchema = z.string().min(3).max(64).regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Slug must be lowercase alphanumeric with hyphens');
+
 export const CreatePasteSchema = z.object({
 	content: z
 		.string()
@@ -19,6 +22,7 @@ export const CreatePasteSchema = z.object({
 	isEncrypted: z.boolean().default(false), // Whether the content is already encrypted client-side
 	viewLimit: z.number().int().min(1).max(100).optional(), // Optional view limit
 	version: z.number().int().min(0).max(10).optional().default(0), // Encryption version (0=plaintext, 1=server-side, 2=client-side)
+	slug: SlugSchema.optional(), // Optional vanity URL slug
 });
 
 export type CreatePasteParams = z.infer<typeof CreatePasteSchema>;
@@ -26,6 +30,7 @@ export type CreatePasteParams = z.infer<typeof CreatePasteSchema>;
 export interface CreatePasteResult {
 	id: string;
 	url: string;
+	slug?: string;
 	expiresAt: string;
 	deleteToken: string;
 }
@@ -80,10 +85,25 @@ export class CreatePasteCommand {
 		// Save to repository
 		await this.repository.save(paste);
 
+		// Register vanity slug if provided
+		if (validParams.slug) {
+			const slugTaken = await this.repository.resolveSlug(validParams.slug);
+			if (slugTaken) {
+				throw new Error('This custom URL is already taken');
+			}
+			await this.repository.saveSlug(validParams.slug, id.toString(), paste.getExpiresAt());
+		}
+
+		const slug = validParams.slug;
+		const url = slug
+			? `${this.baseUrl}/p/${slug}`
+			: `${this.baseUrl}/pastes/${id.toString()}`;
+
 		// Return result (includes deleteToken so the creator can delete their paste)
 		return {
 			id: id.toString(),
-			url: `${this.baseUrl}/pastes/${id.toString()}`,
+			url,
+			slug,
 			expiresAt: paste.getExpiresAt().toISOString(),
 			deleteToken: paste.getDeleteToken()!,
 		};
