@@ -109,10 +109,6 @@ const themeScript = `
 		<meta name="theme-color" content="#4F46E5" />
 
 		
-		<!-- Security Headers -->
-		<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';" />
-		<meta http-equiv="X-Frame-Options" content="DENY" />
-		
 		<!-- Generator Info -->
 		<meta name="generator" content={Astro.generator} />
 		
@@ -166,64 +162,24 @@ const themeScript = `
 		<ToastContainer client:load />
 		<DelayedServiceWorker client:load />
 		
-		<!-- Prism.js Scripts - Using NPM package -->
+		<!-- Prism.js — core + plugins only; autoloader fetches grammars on demand -->
 		<script>
-			// Import Prism and plugins
 			import Prism from 'prismjs';
-			
-			// Import language components
-			// Load core dependencies first
-			import 'prismjs/components/prism-markup-templating';
-			import 'prismjs/components/prism-typescript';
-			import 'prismjs/components/prism-jsx';
-			import 'prismjs/components/prism-tsx';
-			import 'prismjs/components/prism-yaml';
-			import 'prismjs/components/prism-json';
-			import 'prismjs/components/prism-bash';
-			import 'prismjs/components/prism-hcl';
-			import 'prismjs/components/prism-toml';
-			import 'prismjs/components/prism-docker';
-			import 'prismjs/components/prism-rust';
-			import 'prismjs/components/prism-python';
-			import 'prismjs/components/prism-java';
-			import 'prismjs/components/prism-csharp';
-			import 'prismjs/components/prism-css';
-			import 'prismjs/components/prism-markup'; // HTML
-			import 'prismjs/components/prism-javascript';
-			import 'prismjs/components/prism-php';
-			import 'prismjs/components/prism-xml-doc'; // XML
-			import 'prismjs/components/prism-ini';
-			import 'prismjs/components/prism-shell-session'; // Shell
-			import 'prismjs/components/prism-powershell';
-			import 'prismjs/components/prism-nginx';
-			import 'prismjs/components/prism-c';
-			import 'prismjs/components/prism-cpp';
-			import 'prismjs/components/prism-go';
-			import 'prismjs/components/prism-ruby';
-			import 'prismjs/components/prism-kotlin';
-			import 'prismjs/components/prism-swift';
-			import 'prismjs/components/prism-scala';
-			import 'prismjs/components/prism-perl';
-			import 'prismjs/components/prism-r';
-			import 'prismjs/components/prism-sql';
-			import 'prismjs/components/prism-graphql';
-			import 'prismjs/components/prism-markdown';
-			import 'prismjs/components/prism-latex';
-			import 'prismjs/components/prism-scss';
-			import 'prismjs/components/prism-less';
-			
-			// Import plugins
+
+			// These are dependency grammars the autoloader can't resolve on its own
+			import 'prismjs/components/prism-markup-templating'; // needed by PHP
+			import 'prismjs/components/prism-c';                // needed by C++
+			import 'prismjs/components/prism-markup';           // needed by JSX/TSX/HTML
+			import 'prismjs/components/prism-javascript';       // needed by JSX/TSX/TS
+			import 'prismjs/components/prism-css';              // needed by SCSS/LESS
+
+			// Plugins
 			import 'prismjs/plugins/line-numbers/prism-line-numbers';
 			import 'prismjs/plugins/toolbar/prism-toolbar';
 			import 'prismjs/plugins/copy-to-clipboard/prism-copy-to-clipboard';
-			
-			// Make Prism available globally for our components
+
 			window.Prism = Prism;
-			
-			// Highlight all code blocks when page loads
-			document.addEventListener('DOMContentLoaded', () => {
-				Prism.highlightAll();
-			});
+			document.addEventListener('DOMContentLoaded', () => Prism.highlightAll());
 		</script>
 	</body>
 </html>

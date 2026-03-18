@@ -245,9 +245,11 @@ export default function PasteForm() {
 							<label htmlFor="content" className={T.formLabel}>
 								Content <span className="text-destructive">*</span>
 							</label>
-							<span className={cn('text-xs', contentLength > MAX_CONTENT_BYTES * 0.9 ? 'text-destructive' : 'text-muted-foreground')}>
-								{formatBytes(contentLength)}
-							</span>
+							{contentLength > 0 && (
+								<span className={cn('text-xs', contentLength > MAX_CONTENT_BYTES * 0.9 ? 'text-destructive' : 'text-muted-foreground')}>
+									{formatBytes(contentLength)}
+								</span>
+							)}
 						</div>
 						<Textarea
 							id="content"
@@ -295,6 +297,7 @@ export default function PasteForm() {
 										<SelectItem value="typescript">TypeScript</SelectItem>
 										<SelectItem value="jsx">JSX</SelectItem>
 										<SelectItem value="tsx">TSX</SelectItem>
+										<SelectItem value="php">PHP</SelectItem>
 									</SelectGroup>
 									<SelectGroup>
 										<SelectLabel>Data</SelectLabel>
@@ -302,6 +305,7 @@ export default function PasteForm() {
 										<SelectItem value="yaml">YAML</SelectItem>
 										<SelectItem value="toml">TOML</SelectItem>
 										<SelectItem value="xml-doc">XML</SelectItem>
+										<SelectItem value="ini">INI</SelectItem>
 										<SelectItem value="sql">SQL</SelectItem>
 										<SelectItem value="graphql">GraphQL</SelectItem>
 									</SelectGroup>
@@ -317,19 +321,25 @@ export default function PasteForm() {
 										<SelectItem value="ruby">Ruby</SelectItem>
 										<SelectItem value="kotlin">Kotlin</SelectItem>
 										<SelectItem value="swift">Swift</SelectItem>
+										<SelectItem value="scala">Scala</SelectItem>
+										<SelectItem value="perl">Perl</SelectItem>
+										<SelectItem value="r">R</SelectItem>
 									</SelectGroup>
 									<SelectGroup>
 										<SelectLabel>DevOps</SelectLabel>
 										<SelectItem value="bash">Bash</SelectItem>
+										<SelectItem value="shell-session">Shell</SelectItem>
+										<SelectItem value="powershell">PowerShell</SelectItem>
 										<SelectItem value="docker">Dockerfile</SelectItem>
 										<SelectItem value="hcl">HCL (Terraform)</SelectItem>
 										<SelectItem value="nginx">Nginx</SelectItem>
 									</SelectGroup>
 									<SelectGroup>
-										<SelectLabel>Markup</SelectLabel>
+										<SelectLabel>Markup &amp; Style</SelectLabel>
 										<SelectItem value="markdown">Markdown</SelectItem>
 										<SelectItem value="latex">LaTeX</SelectItem>
 										<SelectItem value="scss">SCSS</SelectItem>
+										<SelectItem value="less">LESS</SelectItem>
 									</SelectGroup>
 								</SelectContent>
 							</Select>
