@@ -6,44 +6,45 @@ type Theme = 'light' | 'dark' | 'system';
 
 const THEME_ORDER: Theme[] = ['light', 'dark', 'system'];
 
+function applyTheme(theme: Theme) {
+	const root = document.documentElement;
+	root.classList.remove('light', 'dark');
+	if (theme === 'system') {
+		root.classList.add(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+	} else {
+		root.classList.add(theme);
+	}
+}
+
 export default function ThemeToggle() {
-	// Read initial theme synchronously to avoid flash
-	const [theme, setTheme] = useState<Theme>(() => {
-		if (typeof window === 'undefined') return 'system';
-		return (localStorage.getItem('theme') as Theme) || 'system';
-	});
+	// Always start with 'system' for SSR consistency
+	const [theme, setTheme] = useState<Theme>('system');
 
-	// Apply theme class whenever theme changes
+	// On mount: read saved preference
 	useEffect(() => {
-		const root = document.documentElement;
-		root.classList.remove('light', 'dark');
-
-		if (theme === 'system') {
-			const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-			root.classList.add(systemTheme);
-		} else {
-			root.classList.add(theme);
+		const saved = localStorage.getItem('theme') as Theme | null;
+		if (saved && THEME_ORDER.includes(saved)) {
+			setTheme(saved);
+			applyTheme(saved);
 		}
+	}, []);
 
+	// When theme changes: persist and apply
+	useEffect(() => {
 		localStorage.setItem('theme', theme);
+		applyTheme(theme);
 	}, [theme]);
 
 	// Listen for system preference changes
 	useEffect(() => {
 		const mq = window.matchMedia('(prefers-color-scheme: dark)');
-		const handler = () => {
-			if (theme === 'system') {
-				document.documentElement.classList.remove('light', 'dark');
-				document.documentElement.classList.add(mq.matches ? 'dark' : 'light');
-			}
-		};
+		const handler = () => { if (theme === 'system') applyTheme('system'); };
 		mq.addEventListener('change', handler);
 		return () => mq.removeEventListener('change', handler);
 	}, [theme]);
 
 	const cycleTheme = () => {
-		const next = THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
-		setTheme(next);
+		setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]);
 	};
 
 	const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor;

@@ -6,6 +6,6 @@ import RecentPastes from '../components/RecentPastes';
 <Layout title="Recent Pastes - Pasteriser">
   <div class="max-w-4xl mx-auto px-4 py-8">
     <h1 class="text-2xl font-bold tracking-tight mb-6">Recent Public Pastes</h1>
-    <RecentPastes client:load />
+    <RecentPastes client:only="react" />
   </div>
 </Layout>

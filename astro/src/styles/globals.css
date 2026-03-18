@@ -39,8 +39,9 @@
   --radius-md: calc(0.5rem - 2px);
   --radius-sm: calc(0.5rem - 4px);
 
-  /* Fonts — sans for UI, mono for code */
-  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  /* Font — monospace everywhere */
+  --font-sans: "Iosevka", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, monospace;
   --font-mono: "Iosevka", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, monospace;
 
