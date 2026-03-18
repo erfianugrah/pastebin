@@ -61,7 +61,7 @@
 
 /* ── Light palette ─────────────────────────────────────────────────── */
 :root {
-  --background: hsl(220 20% 97%);
+  --background: hsl(220 16% 93%);
   --foreground: hsl(222 28% 12%);
 
   --card: hsl(0 0% 100%);
@@ -85,8 +85,8 @@
   --destructive: hsl(0 84.2% 60.2%);
   --destructive-foreground: hsl(210 40% 98%);
 
-  --border: hsl(220 13% 84%);
-  --input: hsl(220 13% 84%);
+  --border: hsl(220 13% 78%);
+  --input: hsl(220 13% 78%);
   --ring: hsl(222 74% 46%);
 
   /* Semantic accents — light */

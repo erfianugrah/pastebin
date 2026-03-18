@@ -273,7 +273,7 @@ export default function PasteForm() {
 							type="text"
 							placeholder="Untitled"
 							aria-invalid={!!formErrors.title}
-							className={cn('w-full rounded-md border border-input bg-background px-3 py-2 text-sm', formErrors.title && 'border-destructive')}
+							className={cn('w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-inner', formErrors.title && 'border-destructive')}
 						/>
 						{formErrors.title && <p role="alert" className={T.formError}>{formErrors.title}</p>}
 					</div>
@@ -417,7 +417,7 @@ export default function PasteForm() {
 										name="password"
 										autoComplete="new-password"
 										placeholder={securityMethod === 'password' ? 'Enter a strong password' : 'Leave empty for key-based encryption'}
-										className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+										className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-inner"
 										value={passwordValue}
 										onChange={(e) => {
 											setPasswordValue(e.target.value);

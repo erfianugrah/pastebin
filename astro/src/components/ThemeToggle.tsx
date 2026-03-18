@@ -63,7 +63,7 @@ export default function ThemeToggle() {
 	};
 
 	if (!mounted) {
-		return <div className="h-9 w-9 rounded-md bg-muted animate-pulse" aria-hidden="true" />;
+		return <div className="h-8 w-16 sm:w-20 rounded-md bg-muted/50 animate-pulse" aria-hidden="true" />;
 	}
 
 	const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor;
