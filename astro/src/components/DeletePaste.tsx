@@ -16,13 +16,24 @@ export default function DeletePaste() {
 	async function handleDelete() {
 		setState('loading');
 		try {
+			// Read token from sessionStorage (set by PasteActions) or localStorage
+			let token: string | null = null;
+			try {
+				token = sessionStorage.getItem('pasteriser_delete_token');
+				if (token) sessionStorage.removeItem('pasteriser_delete_token');
+				if (!token) token = localStorage.getItem(`paste_token_${pasteId}`);
+			} catch { /* ignore */ }
+
 			const response = await fetch(`/pastes/${pasteId}/delete`, {
 				method: 'DELETE',
 				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ token }),
 			});
 			const result = (await response.json()) as { error?: { message?: string } };
 
 			if (response.ok) {
+				// Clean up stored token
+				try { localStorage.removeItem(`paste_token_${pasteId}`); } catch { /* ignore */ }
 				setState('success');
 			} else {
 				setErrorMessage(result.error?.message || 'Could not delete this paste.');

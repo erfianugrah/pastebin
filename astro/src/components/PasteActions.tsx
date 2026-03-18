@@ -125,6 +125,11 @@ export default function PasteActions({
 			isDangerous: true,
 		});
 		if (confirmed) {
+			// Pass the delete token via sessionStorage so the delete page can use it
+			try {
+				const token = localStorage.getItem(`paste_token_${pasteId}`);
+				if (token) sessionStorage.setItem('pasteriser_delete_token', token);
+			} catch { /* ignore */ }
 			window.location.href = `/pastes/${pasteId}/delete`;
 		}
 	};
