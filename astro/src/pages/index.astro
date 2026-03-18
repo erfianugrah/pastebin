@@ -1,10 +1,28 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import PasteForm from '../components/PasteForm';
+
+const curlExample1 = `curl -X POST https://paste.erfi.dev/pastes \\
+  -H 'Content-Type: application/json' \\
+  -d '{"content":"Hello world","expiration":86400}'`;
+
+const curlExample2 = `cat file.py | jq -Rs '{"content":.,"language":"python"}' | \\
+  curl -X POST https://paste.erfi.dev/pastes \\
+  -H 'Content-Type: application/json' -d @-`;
 ---
 
 <Layout title="Pasteriser">
 	<div class="max-w-4xl mx-auto px-4 py-6">
 		<PasteForm client:load />
+
+		<details class="max-w-2xl mx-auto mt-6 text-xs text-muted-foreground">
+			<summary class="cursor-pointer hover:text-foreground transition-colors">API — create pastes from the command line</summary>
+			<div class="mt-2 p-3 rounded-lg border border-border bg-card font-mono space-y-2">
+				<p class="text-muted-foreground mb-1"># Create a paste</p>
+				<pre class="overflow-x-auto whitespace-pre" set:text={curlExample1} />
+				<p class="text-muted-foreground mb-1 mt-3"># Pipe a file</p>
+				<pre class="overflow-x-auto whitespace-pre" set:text={curlExample2} />
+			</div>
+		</details>
 	</div>
 </Layout>

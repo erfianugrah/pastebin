@@ -69,6 +69,36 @@ function Badge({ className, children }: { className?: string; children: React.Re
 	return <span className={cn('badge', className)}>{children}</span>;
 }
 
+/** Minimal markdown to HTML renderer (no dependencies). */
+function renderMarkdown(md: string): string {
+	let html = md
+		.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+		// headings
+		.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>')
+		.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>')
+		.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>')
+		.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
+		.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>')
+		.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>')
+		// bold, italic, code
+		.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+		.replace(/\*(.+?)\*/g, '<em>$1</em>')
+		.replace(/`([^`]+)`/g, '<code>$1</code>')
+		// links
+		.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+		// horizontal rule
+		.replace(/^---$/gm, '<hr />')
+		// unordered lists
+		.replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>')
+		// paragraphs (double newline)
+		.replace(/\n\n/g, '</p><p>')
+		// single newlines
+		.replace(/\n/g, '<br />');
+	// Wrap list items
+	html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, '<ul>$1</ul>');
+	return `<p>${html}</p>`;
+}
+
 // ── Component ────────────────────────────────────────────────────────
 
 export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeViewerProps) {
@@ -78,7 +108,10 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 	const [decryptionProgress, setDecryptionProgress] = useState<number | null>(null);
 	const [passwordInput, setPasswordInput] = useState('');
 	const [showPasswordForm, setShowPasswordForm] = useState(false);
+	const [showRendered, setShowRendered] = useState(false);
 	const codeRef = useRef<HTMLElement>(null);
+
+	const isMarkdown = paste.language === 'markdown';
 
 	const { error, errorMessage, category, handleError } = useErrorHandler();
 
@@ -366,11 +399,41 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 
 			{/* ── Code content (only when viewable) ───────────────── */}
 			{(!paste.isEncrypted || decrypted) && !isDecrypting && (
-				<pre className="p-4 rounded-lg border border-border overflow-x-auto overflow-y-auto font-mono text-sm max-h-[600px] bg-card">
-					<code ref={codeRef} className={`language-${paste.language || 'plaintext'}`}>
-						{content}
-					</code>
-				</pre>
+				<div>
+					{/* Markdown toggle */}
+					{isMarkdown && (
+						<div className="flex gap-1 mb-2">
+							<button
+								type="button"
+								onClick={() => setShowRendered(false)}
+								className={cn('px-3 py-1 text-xs rounded-md transition-colors', !showRendered ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}
+							>
+								Code
+							</button>
+							<button
+								type="button"
+								onClick={() => setShowRendered(true)}
+								className={cn('px-3 py-1 text-xs rounded-md transition-colors', showRendered ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}
+							>
+								Preview
+							</button>
+						</div>
+					)}
+
+					{/* Rendered markdown */}
+					{isMarkdown && showRendered ? (
+						<div
+							className="prose prose-sm dark:prose-invert max-w-none p-4 rounded-lg border border-border bg-card overflow-auto max-h-[600px]"
+							dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+						/>
+					) : (
+						<pre className="p-4 rounded-lg border border-border overflow-x-auto overflow-y-auto font-mono text-sm max-h-[600px] bg-card line-numbers">
+							<code ref={codeRef} className={`language-${paste.language || 'plaintext'}`}>
+								{content}
+							</code>
+						</pre>
+					)}
+				</div>
 			)}
 
 			{/* ── Password form ───────────────────────────────────── */}

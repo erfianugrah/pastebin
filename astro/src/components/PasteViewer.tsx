@@ -101,6 +101,8 @@ export default function PasteViewer() {
 			/>
 			<PasteActions
 				pasteId={paste.id}
+				pasteTitle={paste.title}
+				pasteLanguage={paste.language}
 				isEncrypted={!!paste.isEncrypted}
 				getDecryptedContent={() => decryptedContent}
 				getRawContent={() => paste.content}

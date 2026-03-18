@@ -46,6 +46,23 @@ export default function PasteForm() {
 
 	const { handleError } = useErrorHandler();
 
+	// Load forked paste content from sessionStorage
+	useEffect(() => {
+		try {
+			const fork = sessionStorage.getItem('pasteriser_fork');
+			if (fork) {
+				sessionStorage.removeItem('pasteriser_fork');
+				const data = JSON.parse(fork) as { content?: string; title?: string; language?: string };
+				if (data.content) setContent(data.content);
+				if (data.title) {
+					const titleInput = document.getElementById('title') as HTMLInputElement;
+					if (titleInput) titleInput.value = data.title;
+				}
+				if (data.language) setLanguage(data.language);
+			}
+		} catch { /* ignore */ }
+	}, []);
+
 	// Sync security method with encryption state
 	useEffect(() => {
 		if (isE2EEncrypted && securityMethod === 'none') {
@@ -254,11 +271,17 @@ export default function PasteForm() {
 						<Textarea
 							id="content"
 							name="content"
-							placeholder="Paste your code or text here..."
+							placeholder="Paste your code or text here... (Ctrl+Enter to submit)"
 							rows={14}
 							required
 							value={content}
 							onChange={(e) => setContent(e.target.value)}
+							onKeyDown={(e) => {
+								if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+									e.preventDefault();
+									(e.target as HTMLTextAreaElement).form?.requestSubmit();
+								}
+							}}
 							aria-invalid={!!formErrors.content}
 							aria-describedby={formErrors.content ? 'content-error' : undefined}
 							className={cn('font-mono text-sm bg-background', formErrors.content && 'border-destructive')}
