@@ -3,7 +3,7 @@ import { createMiddleware } from 'hono/factory';
 /** Content Security Policy directives */
 const CSP_DIRECTIVES = [
 	"default-src 'self'",
-	"script-src 'self'",
+	"script-src 'self' 'unsafe-inline'",
 	"style-src 'self' 'unsafe-inline'",
 	"connect-src 'self'",
 	"img-src 'self' data: blob:",
