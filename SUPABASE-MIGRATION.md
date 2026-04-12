@@ -16,38 +16,39 @@ Live at: https://paste.erfi.dev
 
 **Paste entity** (from `src/domain/models/paste.ts`):
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | string (PasteId) | Generated via custom UUIDv7 (time-ordered, RFC 9562) in `cloudflareUniqueIdService.ts` |
-| `content` | string | Max 25 MiB. May be E2E encrypted ciphertext. |
-| `title` | string? | Max 100 chars |
-| `language` | string? | Syntax highlighting language |
-| `createdAt` | ISO date string | Set at creation |
-| `expiresAt` | ISO date string | Computed from `createdAt` + expiration seconds |
-| `visibility` | `'public'` or `'private'` | Controls listing |
-| `burnAfterReading` | boolean | Delete after first view |
-| `readCount` | number | Incremented on each view |
-| `isEncrypted` | boolean | Whether content is E2E encrypted |
-| `viewLimit` | number? | 1-100, auto-delete when reached |
-| `version` | number | 0=plaintext, 2=client-side E2E |
-| `deleteToken` | string? | UUID, returned only at creation. Required for delete/update. |
+| Field              | Type                      | Notes                                                                                  |
+| ------------------ | ------------------------- | -------------------------------------------------------------------------------------- |
+| `id`               | string (PasteId)          | Generated via custom UUIDv7 (time-ordered, RFC 9562) in `cloudflareUniqueIdService.ts` |
+| `content`          | string                    | Max 25 MiB. May be E2E encrypted ciphertext.                                           |
+| `title`            | string?                   | Max 100 chars                                                                          |
+| `language`         | string?                   | Syntax highlighting language                                                           |
+| `createdAt`        | ISO date string           | Set at creation                                                                        |
+| `expiresAt`        | ISO date string           | Computed from `createdAt` + expiration seconds                                         |
+| `visibility`       | `'public'` or `'private'` | Controls listing                                                                       |
+| `burnAfterReading` | boolean                   | Delete after first view                                                                |
+| `readCount`        | number                    | Incremented on each view                                                               |
+| `isEncrypted`      | boolean                   | Whether content is E2E encrypted                                                       |
+| `viewLimit`        | number?                   | 1-100, auto-delete when reached                                                        |
+| `version`          | number                    | 0=plaintext, 2=client-side E2E                                                         |
+| `deleteToken`      | string?                   | UUID, returned only at creation. Required for delete/update.                           |
 
 **KV key patterns:**
+
 - `{pasteId}` -> JSON paste data (with TTL = expiration)
 - `recent:{timestamp}:{pasteId}` -> paste ID (with TTL, for recent public listing)
 - `slug:{slug}` -> paste ID (with TTL, for vanity URLs)
 
 ### Current API Surface
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/pastes` | None | Create paste |
-| `GET` | `/pastes/:id` | None | View paste (JSON or HTML) |
-| `GET` | `/pastes/raw/:id` | None | Raw content as text/plain |
-| `PUT` | `/pastes/:id` | deleteToken | Update paste content |
-| `DELETE/POST` | `/pastes/:id/delete` | deleteToken | Delete paste |
-| `GET` | `/api/recent` | None | List recent public pastes |
-| `GET` | `/p/:slug` | None | Vanity URL redirect |
+| Method        | Path                 | Auth        | Description               |
+| ------------- | -------------------- | ----------- | ------------------------- |
+| `POST`        | `/pastes`            | None        | Create paste              |
+| `GET`         | `/pastes/:id`        | None        | View paste (JSON or HTML) |
+| `GET`         | `/pastes/raw/:id`    | None        | Raw content as text/plain |
+| `PUT`         | `/pastes/:id`        | deleteToken | Update paste content      |
+| `DELETE/POST` | `/pastes/:id/delete` | deleteToken | Delete paste              |
+| `GET`         | `/api/recent`        | None        | List recent public pastes |
+| `GET`         | `/p/:slug`           | None        | Vanity URL redirect       |
 
 ### Current DDD Layers
 
@@ -81,12 +82,12 @@ interfaces/
 
 ```typescript
 interface PasteRepository {
-  save(paste: Paste): Promise<void>;
-  findById(id: PasteId): Promise<Paste | null>;
-  delete(id: PasteId): Promise<boolean>;
-  findRecentPublic(limit: number): Promise<Paste[]>;
-  resolveSlug(slug: string): Promise<string | null>;
-  saveSlug(slug: string, pasteId: string, expiresAt: Date): Promise<void>;
+	save(paste: Paste): Promise<void>;
+	findById(id: PasteId): Promise<Paste | null>;
+	delete(id: PasteId): Promise<boolean>;
+	findRecentPublic(limit: number): Promise<Paste[]>;
+	resolveSlug(slug: string): Promise<string | null>;
+	saveSlug(slug: string, pasteId: string, expiresAt: Date): Promise<void>;
 }
 ```
 
@@ -105,118 +106,140 @@ This is the migration seam. A `SupabasePasteRepository` implementing this interf
 
 ---
 
-## Proposed Supabase Schema
+## Deployed Supabase Schema
 
-### Tables
+Phase 0 is complete. The following is the actual deployed schema (verified against live Supabase project `dewddkcmwrzbpynylyhg`).
+
+### Tables (migration: `20260407104738_creates_pastes_schema.sql`)
 
 ```sql
--- Pastes table
--- Note: IDs are generated by the Worker as UUIDv7 (time-ordered).
--- The DEFAULT is a fallback only; in practice the Worker always provides the ID.
+-- Note: IDs are UUIDv7 (time-ordered) generated by the Worker.
+-- gen_random_uuid() default is a fallback only.
 CREATE TABLE pastes (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  content text NOT NULL,
-  title text,
-  language text,
-  visibility text NOT NULL DEFAULT 'public'
-    CHECK (visibility IN ('public', 'private')),
-  is_encrypted boolean NOT NULL DEFAULT false,
-  encryption_version smallint NOT NULL DEFAULT 0
-    CHECK (encryption_version >= 0 AND encryption_version <= 10),
-  burn_after_reading boolean NOT NULL DEFAULT false,
-  read_count integer NOT NULL DEFAULT 0,
-  view_limit integer CHECK (view_limit IS NULL OR (view_limit >= 1 AND view_limit <= 100)),
-  delete_token uuid NOT NULL DEFAULT gen_random_uuid(),
-  created_at timestamptz NOT NULL DEFAULT now(),
-  expires_at timestamptz NOT NULL,
-  -- Optional: link to auth.users if user is logged in
-  user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL
+    id               UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    user_id          UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
+    content          TEXT        NOT NULL,
+    title            TEXT        NOT NULL,
+    language         TEXT,
+    created_at       TIMESTAMPTZ DEFAULT now(),
+    expires_at       TIMESTAMPTZ NOT NULL,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    visibility       TEXT        CHECK (visibility IN ('public', 'private')) NOT NULL,
+    burn_after_reading BOOLEAN   NOT NULL DEFAULT false,
+    read_count       INT         NOT NULL DEFAULT 0,
+    is_encrypted     BOOLEAN     NOT NULL DEFAULT false,
+    view_limit       INT,
+    version          INT         NOT NULL DEFAULT 0,
+    delete_token     UUID        NOT NULL DEFAULT gen_random_uuid()
 );
 
--- Indexes for common query patterns
+CREATE TABLE slugs (
+    slug             TEXT        PRIMARY KEY NOT NULL,
+    paste_id         UUID        REFERENCES pastes(id) ON DELETE CASCADE,
+    expires_at       TIMESTAMPTZ NOT NULL
+);
+
+-- Auto-update updated_at on content/title changes only
+-- (read_count increments don't fire this)
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER set_updated_at
+  BEFORE UPDATE OF content, title
+  ON pastes FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+```
+
+### Indexes (migration: `20260410091921_add_pastes_indexes.sql`)
+
+```sql
 CREATE INDEX idx_pastes_visibility_created ON pastes (visibility, created_at DESC)
   WHERE visibility = 'public';
-CREATE INDEX idx_pastes_expires_at ON pastes (expires_at);  -- used by pg_cron cleanup
-CREATE INDEX idx_pastes_user_id ON pastes (user_id)
-  WHERE user_id IS NOT NULL;
-CREATE INDEX idx_pastes_language ON pastes (language)
-  WHERE language IS NOT NULL;
 
--- Vanity slugs
-CREATE TABLE slugs (
-  slug text PRIMARY KEY,
-  paste_id uuid NOT NULL REFERENCES pastes(id) ON DELETE CASCADE,
-  expires_at timestamptz NOT NULL
-);
+CREATE INDEX idx_pastes_expired_cleanup ON pastes (expires_at);
+
+CREATE INDEX idx_user_pastes ON pastes (user_id)
+  WHERE user_id IS NOT NULL;
 ```
 
-### RLS Policies
+### RLS (migrations: `add_rls_policies.sql`, `add_rls_policies_phase1.sql`)
 
-**Important:** In Phases 1-3, the Worker uses the `service_role` key, which bypasses RLS entirely. These policies only take effect in Phase 4 when client-side `supabase-js` with the `anon` key is used (e.g., a "My Pastes" page with Supabase Auth).
-
-Enable RLS from the start anyway -- it's a security best practice, and the `service_role` key bypasses it regardless.
+**Important:** In Phases 1-3, the Worker uses the `service_role` key, which bypasses RLS entirely. These policies are defense-in-depth -- they matter if the `anon` key is ever used directly.
 
 ```sql
+-- Enable RLS on both tables
 ALTER TABLE pastes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE slugs ENABLE ROW LEVEL SECURITY;
-
--- Anyone can read public pastes (the app is public)
-CREATE POLICY "Public pastes are viewable by anyone"
-  ON pastes FOR SELECT
-  USING (visibility = 'public');
-
--- Private pastes: currently the app allows anyone with the direct URL to view
--- any paste regardless of visibility. Visibility only controls listing.
--- In Phase 4 you'll need to decide: keep current behavior (Worker fetches
--- via service_role for all direct-ID lookups) or restrict private pastes
--- to authenticated creators only (policy below).
---
--- CREATE POLICY "Private pastes viewable by creator"
---   ON pastes FOR SELECT
---   USING (
---     visibility = 'private'
---     AND user_id = auth.uid()
---   );
-
--- Anyone can create pastes (anonymous or authenticated)
-CREATE POLICY "Anyone can create pastes"
-  ON pastes FOR INSERT
-  WITH CHECK (true);
-
--- Only creator can update (if authenticated)
-CREATE POLICY "Creator can update own pastes"
-  ON pastes FOR UPDATE
-  USING (user_id = auth.uid());
-
--- Delete handled via deleteToken in application layer (Worker uses service_role)
--- Or creator can delete their own
-CREATE POLICY "Creator can delete own pastes"
-  ON pastes FOR DELETE
-  USING (user_id = auth.uid());
-
--- Slugs: public read, insert/delete via service_role
-CREATE POLICY "Anyone can read slugs"
-  ON slugs FOR SELECT
-  USING (true);
 ```
 
-### Expiration Cleanup (pg_cron)
+**Deployed Phase 1 policies** (verified via `pg_policies`):
 
 ```sql
--- Run every 5 minutes: delete expired pastes
+-- Public pastes visible to anon
+CREATE POLICY "public pastes are viewable by anyone"
+  ON pastes FOR SELECT
+  TO anon
+  USING (visibility = 'public');
+
+-- Non-expired slugs visible to anon
+CREATE POLICY "visible vanity slugs"
+  ON slugs FOR SELECT
+  TO anon
+  USING (expires_at > now());
+```
+
+**Phase 4 policies** (not yet deployed -- add when user accounts are implemented):
+
+```sql
+-- Private pastes: design decision needed.
+-- Current app behavior: anyone with direct URL can view any paste.
+-- Visibility only controls listing (findRecentPublic).
+-- Worker always uses service_role for direct-ID lookups anyway.
+--
+-- Option A: Keep current behavior (no additional policy needed)
+-- Option B: Restrict private pastes to authenticated creators:
+-- CREATE POLICY "private pastes viewable by creator"
+--   ON pastes FOR SELECT TO authenticated
+--   USING (visibility = 'private' AND user_id = (select auth.uid()));
+
+-- Creator can update their own paste
+CREATE POLICY "creator can update own pastes"
+  ON pastes FOR UPDATE TO authenticated
+  USING (user_id = (select auth.uid()));
+
+-- Creator can delete their own paste
+CREATE POLICY "creator can delete own pastes"
+  ON pastes FOR DELETE TO authenticated
+  USING (user_id = (select auth.uid()));
+```
+
+### Expiration Cleanup (migrations: `enable_pg_cron.sql`, `schedule_cleanup_jobs.sql`)
+
+```sql
+-- Enable pg_cron
+CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
+
+-- Delete expired pastes every 5 minutes
 SELECT cron.schedule(
   'cleanup-expired-pastes',
   '*/5 * * * *',
   $$ DELETE FROM pastes WHERE expires_at < now() $$
 );
 
--- Run daily: delete expired slugs
+-- Delete expired slugs daily at 3am
 SELECT cron.schedule(
   'cleanup-expired-slugs',
   '0 3 * * *',
   $$ DELETE FROM slugs WHERE expires_at < now() $$
 );
 ```
+
+Verified live: `SELECT jobname, schedule FROM cron.job;` returns both jobs.
 
 ### Postgres Functions (for atomic operations)
 
@@ -301,116 +324,109 @@ import { PasteFactory } from '../../application/factories/pasteFactory';
 import { Logger } from '../logging/logger';
 
 export class SupabasePasteRepository implements PasteRepository {
-  private readonly client: SupabaseClient;
+	private readonly client: SupabaseClient;
 
-  constructor(
-    supabaseUrl: string,
-    supabaseKey: string,  // service_role key (Worker is trusted backend)
-    private readonly logger: Logger,
-  ) {
-    this.client = createClient(supabaseUrl, supabaseKey);
-  }
+	constructor(
+		supabaseUrl: string,
+		supabaseKey: string, // service_role key (Worker is trusted backend)
+		private readonly logger: Logger,
+	) {
+		this.client = createClient(supabaseUrl, supabaseKey);
+	}
 
-  async save(paste: Paste): Promise<void> {
-    const data = paste.toJSON(true);  // include deleteToken
-    const { error } = await this.client.from('pastes').upsert({
-      id: data.id,
-      content: data.content,
-      title: data.title,
-      language: data.language,
-      visibility: data.visibility,
-      is_encrypted: data.isEncrypted,
-      encryption_version: data.version,
-      burn_after_reading: data.burnAfterReading,
-      read_count: data.readCount,
-      view_limit: data.viewLimit,
-      delete_token: data.deleteToken,
-      created_at: data.createdAt,
-      expires_at: data.expiresAt,
-    });
+	async save(paste: Paste): Promise<void> {
+		const data = paste.toJSON(true); // include deleteToken
+		const { error } = await this.client.from('pastes').upsert({
+			id: data.id,
+			content: data.content,
+			title: data.title,
+			language: data.language,
+			visibility: data.visibility,
+			is_encrypted: data.isEncrypted,
+			encryption_version: data.version,
+			burn_after_reading: data.burnAfterReading,
+			read_count: data.readCount,
+			view_limit: data.viewLimit,
+			delete_token: data.deleteToken,
+			created_at: data.createdAt,
+			expires_at: data.expiresAt,
+		});
 
-    if (error) {
-      this.logger.error('Supabase save failed', { error });
-      throw new Error(`Failed to save paste: ${error.message}`);
-    }
-  }
+		if (error) {
+			this.logger.error('Supabase save failed', { error });
+			throw new Error(`Failed to save paste: ${error.message}`);
+		}
+	}
 
-  async findById(id: PasteId): Promise<Paste | null> {
-    const { data, error } = await this.client
-      .from('pastes')
-      .select('*')
-      .eq('id', id.toString())
-      .single();
+	async findById(id: PasteId): Promise<Paste | null> {
+		const { data, error } = await this.client.from('pastes').select('*').eq('id', id.toString()).single();
 
-    if (error || !data) return null;
+		if (error || !data) return null;
 
-    return PasteFactory.fromData(this.mapRow(data));
-  }
+		return PasteFactory.fromData(this.mapRow(data));
+	}
 
-  async delete(id: PasteId): Promise<boolean> {
-    const { error, count } = await this.client
-      .from('pastes')
-      .delete({ count: 'exact' })
-      .eq('id', id.toString());
+	async delete(id: PasteId): Promise<boolean> {
+		const { error, count } = await this.client.from('pastes').delete({ count: 'exact' }).eq('id', id.toString());
 
-    if (error) return false;
-    return (count ?? 0) > 0;
-  }
+		if (error) return false;
+		return (count ?? 0) > 0;
+	}
 
-  async findRecentPublic(limit: number): Promise<Paste[]> {
-    // One query. No N+1. No pagination of all keys.
-    const { data, error } = await this.client
-      .from('pastes')
-      .select('*')
-      .eq('visibility', 'public')
-      .gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false })
-      .limit(limit);
+	async findRecentPublic(limit: number): Promise<Paste[]> {
+		// One query. No N+1. No pagination of all keys.
+		const { data, error } = await this.client
+			.from('pastes')
+			.select('*')
+			.eq('visibility', 'public')
+			.gt('expires_at', new Date().toISOString())
+			.order('created_at', { ascending: false })
+			.limit(limit);
 
-    if (error || !data) return [];
+		if (error || !data) return [];
 
-    return data.map((row: any) => PasteFactory.fromData(this.mapRow(row)));
-  }
+		return data.map((row: any) => PasteFactory.fromData(this.mapRow(row)));
+	}
 
-  async resolveSlug(slug: string): Promise<string | null> {
-    const { data } = await this.client
-      .from('slugs')
-      .select('paste_id')
-      .eq('slug', slug)
-      .gt('expires_at', new Date().toISOString())
-      .single();
+	async resolveSlug(slug: string): Promise<string | null> {
+		const { data } = await this.client
+			.from('slugs')
+			.select('paste_id')
+			.eq('slug', slug)
+			.gt('expires_at', new Date().toISOString())
+			.single();
 
-    return data?.paste_id ?? null;
-  }
+		return data?.paste_id ?? null;
+	}
 
-  async saveSlug(slug: string, pasteId: string, expiresAt: Date): Promise<void> {
-    const { error } = await this.client.from('slugs').insert({
-      slug,
-      paste_id: pasteId,
-      expires_at: expiresAt.toISOString(),
-    });
+	async saveSlug(slug: string, pasteId: string, expiresAt: Date): Promise<void> {
+		const { error } = await this.client.from('slugs').insert({
+			slug,
+			paste_id: pasteId,
+			expires_at: expiresAt.toISOString(),
+		});
 
-    if (error) throw new Error(`Failed to save slug: ${error.message}`);
-  }
+		if (error) throw new Error(`Failed to save slug: ${error.message}`);
+	}
 
-  // Map Postgres snake_case row to PasteData camelCase
-  private mapRow(row: any): PasteData {
-    return {
-      id: row.id,
-      content: row.content,
-      title: row.title,
-      language: row.language,
-      createdAt: row.created_at,
-      expiresAt: row.expires_at,
-      visibility: row.visibility,
-      burnAfterReading: row.burn_after_reading,
-      readCount: row.read_count,
-      isEncrypted: row.is_encrypted,
-      viewLimit: row.view_limit,
-      version: row.encryption_version,
-      deleteToken: row.delete_token,
-    };
-  }
+	// Map Postgres snake_case row to PasteData camelCase
+	private mapRow(row: any): PasteData {
+		return {
+			id: row.id,
+			content: row.content,
+			title: row.title,
+			language: row.language,
+			createdAt: row.created_at,
+			expiresAt: row.expires_at,
+			visibility: row.visibility,
+			burnAfterReading: row.burn_after_reading,
+			readCount: row.read_count,
+			isEncrypted: row.is_encrypted,
+			viewLimit: row.view_limit,
+			version: row.encryption_version,
+			deleteToken: row.delete_token,
+		};
+	}
 }
 ```
 
@@ -456,6 +472,7 @@ export class SupabasePasteRepository implements PasteRepository {
 Now that you have Postgres, build features KV couldn't support:
 
 **Search** (exercises: Postgres full-text search or `ILIKE`)
+
 ```sql
 -- Add a search endpoint
 SELECT id, title, language, created_at
@@ -467,16 +484,19 @@ LIMIT 20;
 ```
 
 **User accounts** (exercises: Supabase Auth + RLS)
+
 - Add Supabase Auth (anonymous sessions -> optional signup)
 - Link pastes to `auth.users` via `user_id` column
 - "My Pastes" page using RLS (user only sees their own)
 - Authenticated users don't need `deleteToken` -- RLS handles it
 
 **Live recent feed** (exercises: Supabase Realtime)
+
 - Subscribe to `INSERT` events on `pastes` table where `visibility = 'public'`
 - Recent pastes page updates without polling
 
 **Analytics** (exercises: Postgres aggregation)
+
 ```sql
 -- Pastes by language
 SELECT language, count(*) FROM pastes
@@ -491,6 +511,7 @@ SELECT encryption_version, count(*) FROM pastes GROUP BY encryption_version;
 ```
 
 **Expiration done right** (exercises: pg_cron)
+
 - Already handled by the `cleanup-expired-pastes` cron job
 - KV TTL was the only cleanup mechanism before -- now you have both automatic expiry AND queryable expired-but-not-yet-cleaned data
 
@@ -498,41 +519,41 @@ SELECT encryption_version, count(*) FROM pastes GROUP BY encryption_version;
 
 ## What Changes, What Doesn't
 
-| Layer | Changes? | Details |
-|-------|----------|---------|
-| **Domain model** (`paste.ts`) | No | Untouched. Same Paste class. |
-| **Repository interface** | No | Same 6 methods. |
-| **Application commands/queries** | Minimal | `getPasteQuery` could use `view_paste()` RPC for atomicity |
-| **Factory** (`pasteFactory.ts`) | No | Same rehydration logic. |
-| **Infrastructure** | Yes | New `SupabasePasteRepository` + `DualWriteRepository` |
-| **Entry point** (`index.ts`) | Yes | Repository instantiation based on env flag |
-| **Types** (`types.ts`) | Yes | Add Supabase env vars to `Env` interface |
-| **Frontend** (Astro/React) | No (Phase 1-3) | Frontend doesn't know about the backend change |
-| **wrangler.jsonc** | Yes | Add Supabase secrets |
+| Layer                            | Changes?       | Details                                                    |
+| -------------------------------- | -------------- | ---------------------------------------------------------- |
+| **Domain model** (`paste.ts`)    | No             | Untouched. Same Paste class.                               |
+| **Repository interface**         | No             | Same 6 methods.                                            |
+| **Application commands/queries** | Minimal        | `getPasteQuery` could use `view_paste()` RPC for atomicity |
+| **Factory** (`pasteFactory.ts`)  | No             | Same rehydration logic.                                    |
+| **Infrastructure**               | Yes            | New `SupabasePasteRepository` + `DualWriteRepository`      |
+| **Entry point** (`index.ts`)     | Yes            | Repository instantiation based on env flag                 |
+| **Types** (`types.ts`)           | Yes            | Add Supabase env vars to `Env` interface                   |
+| **Frontend** (Astro/React)       | No (Phase 1-3) | Frontend doesn't know about the backend change             |
+| **wrangler.jsonc**               | Yes            | Add Supabase secrets                                       |
 
 ---
 
 ## Supabase Features Exercised
 
-| Feature | How it's used | Prep value |
-|---------|---------------|------------|
-| **Postgres** | Paste storage, search, aggregation, atomic operations | Core skill |
-| **RLS** | Public/private visibility, user-scoped "my pastes" | Most important Supabase feature |
-| **Auth** | Optional user accounts, "my pastes" | Phase 4 |
-| **Realtime** | Live recent paste feed | Phase 4 |
-| **pg_cron** | Expired paste cleanup | Phase 0 |
-| **Edge Functions** | Not needed (Worker is the compute layer) | N/A |
-| **Storage** | Not needed (content is in Postgres `text` column) | N/A |
-| **supabase-js** | From a Cloudflare Worker context (not Next.js) | Real-world pattern |
+| Feature            | How it's used                                         | Prep value                      |
+| ------------------ | ----------------------------------------------------- | ------------------------------- |
+| **Postgres**       | Paste storage, search, aggregation, atomic operations | Core skill                      |
+| **RLS**            | Public/private visibility, user-scoped "my pastes"    | Most important Supabase feature |
+| **Auth**           | Optional user accounts, "my pastes"                   | Phase 4                         |
+| **Realtime**       | Live recent paste feed                                | Phase 4                         |
+| **pg_cron**        | Expired paste cleanup                                 | Phase 0                         |
+| **Edge Functions** | Not needed (Worker is the compute layer)              | N/A                             |
+| **Storage**        | Not needed (content is in Postgres `text` column)     | N/A                             |
+| **supabase-js**    | From a Cloudflare Worker context (not Next.js)        | Real-world pattern              |
 
 ---
 
 ## Risks and Tradeoffs
 
-| Risk | Mitigation |
-|------|-----------|
+| Risk                                                                                                                    | Mitigation                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Latency**: KV reads from edge cache are fast (~1ms hot, ~50-200ms cold). Supabase is centralized (~50-200ms from EU). | Choose Frankfurt region (matches your CF setup). For read-heavy paths, cache responses at the edge with CF Cache API. Most pastes are read-once (burn-after-reading, view limits), so cache hit rate is naturally low anyway. |
-| **25 MiB content limit**: Postgres `text` can store it, but large payloads mean bigger row sizes. | E2E encrypted content is already base64-encoded (33% larger). Consider Supabase Storage for pastes > 1 MiB, with only metadata in Postgres. |
-| **E2E encryption**: Server never sees plaintext. Supabase sees the same ciphertext KV currently stores. | No change to encryption model. Content is opaque to both KV and Postgres. |
-| **Burn-after-reading atomicity**: KV has documented race condition. | Postgres `FOR UPDATE` row lock in `view_paste()` function fixes this completely. Net improvement. |
-| **Cost**: KV is included in Workers plan. Supabase Pro is $25/mo. | This is a prep project. Free tier (500MB, 50K MAUs) is sufficient for a pastebin. |
+| **25 MiB content limit**: Postgres `text` can store it, but large payloads mean bigger row sizes.                       | E2E encrypted content is already base64-encoded (33% larger). Consider Supabase Storage for pastes > 1 MiB, with only metadata in Postgres.                                                                                   |
+| **E2E encryption**: Server never sees plaintext. Supabase sees the same ciphertext KV currently stores.                 | No change to encryption model. Content is opaque to both KV and Postgres.                                                                                                                                                     |
+| **Burn-after-reading atomicity**: KV has documented race condition.                                                     | Postgres `FOR UPDATE` row lock in `view_paste()` function fixes this completely. Net improvement.                                                                                                                             |
+| **Cost**: KV is included in Workers plan. Supabase Pro is $25/mo.                                                       | This is a prep project. Free tier (500MB, 50K MAUs) is sufficient for a pastebin.                                                                                                                                             |
