@@ -121,7 +121,7 @@ CREATE TABLE pastes (
     content          TEXT        NOT NULL,
     title            TEXT        NOT NULL,
     language         TEXT,
-    created_at       TIMESTAMPTZ DEFAULT now(),
+    created_at       TIMESTAMPTZ DEFAULT now(),          -- nullable: Postgres always sets this via DEFAULT
     expires_at       TIMESTAMPTZ NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     visibility       TEXT        CHECK (visibility IN ('public', 'private')) NOT NULL,
