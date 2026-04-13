@@ -328,7 +328,7 @@ export class SupabasePasteRepository implements PasteRepository {
 
 	constructor(
 		supabaseUrl: string,
-		supabaseKey: string, // service_role key (Worker is trusted backend)
+		supabaseKey: string, // secret key (sb_secret_...) -- Worker is trusted backend, bypasses RLS
 		private readonly logger: Logger,
 	) {
 		this.client = createClient(supabaseUrl, supabaseKey);
@@ -438,9 +438,12 @@ export class SupabasePasteRepository implements PasteRepository {
 
 - Create a Supabase project (EU region -- Frankfurt, matches your Cloudflare setup)
 - Run the schema migration (tables, indexes, RLS, pg_cron jobs, view_paste function)
-- Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` as Wrangler secrets
-- Add `@supabase/supabase-js` to package.json
-- Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the `Env` interface in `types.ts`
+- Create Supabase project, run schema migrations (Phase 0 complete ✓)
+- Add `@supabase/supabase-js` to package.json ✓
+- Add `SUPABASE_URL` as a var in `wrangler.jsonc`
+- Add `SUPABASE_SECRET_KEY` as a Wrangler secret (`wrangler secret put SUPABASE_SECRET_KEY`)
+- Add `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STORAGE_BACKEND` to the `Env` interface in `types.ts`
+- Note: use the new `sb_secret_...` key format (Dashboard → Integrations → Data API → Settings → API Keys)
 
 ### Phase 1: Dual-Write (Day 2-3)
 
