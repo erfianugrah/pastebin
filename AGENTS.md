@@ -17,7 +17,6 @@ Two separate packages with **independent `node_modules`**:
 - **Worker config**: `wrangler.jsonc` — `run_worker_first: true`, assets from `./astro/dist`
 - **DDD layers** in `src/`: `domain/` → `application/` → `infrastructure/` → `interfaces/`
 - **Env bindings** (`src/types.ts`): `PASTES` (KV), `ASSETS` (Fetcher), plus optional env vars `NODE_ENV`, `API_URL`, `API_SECRET`
-- `supabase/migrations/` — DB migration in progress (currently still on KV in prod)
 
 ## Commands
 
