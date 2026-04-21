@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { CheckCircle2, ChevronDown, Copy, Lock, Key, Shield, Info, Plus, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from './ui/card';
+import { Checkbox } from './ui/checkbox';
+import { LanguageCombobox } from './ui/language-combobox';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from './ui/select';
 import { Textarea } from './ui/textarea';
 import { toast } from './ui/toast';
@@ -480,75 +482,19 @@ export default function PasteForm() {
 						<div>
 							<div className="flex items-center justify-between">
 								<label className="text-sm font-medium">Language</label>
-								<label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
-									<input
-										type="checkbox"
-										checked={autoDetect}
-										onChange={(e) => setAutoDetect(e.target.checked)}
-										className="h-3 w-3 rounded border-input form-checkbox"
-									/>
-									Auto
-								</label>
+							<label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
+								<Checkbox
+									checked={autoDetect}
+									onChange={(e) => setAutoDetect(e.target.checked)}
+									className="h-3 w-3"
+								/>
+								Auto
+							</label>
 							</div>
-							<Select value={language} onValueChange={(v) => { setLanguage(v); setAutoDetect(false); }}>
-								<SelectTrigger className="w-full"><SelectValue placeholder="Plain Text" /></SelectTrigger>
-								<SelectContent>
-									<SelectItem value="plaintext">Plain Text</SelectItem>
-									<SelectSeparator />
-									<SelectGroup>
-										<SelectLabel>Web</SelectLabel>
-										<SelectItem value="markup">HTML</SelectItem>
-										<SelectItem value="css">CSS</SelectItem>
-										<SelectItem value="javascript">JavaScript</SelectItem>
-										<SelectItem value="typescript">TypeScript</SelectItem>
-										<SelectItem value="jsx">JSX</SelectItem>
-										<SelectItem value="tsx">TSX</SelectItem>
-										<SelectItem value="php">PHP</SelectItem>
-									</SelectGroup>
-									<SelectGroup>
-										<SelectLabel>Data</SelectLabel>
-										<SelectItem value="json">JSON</SelectItem>
-										<SelectItem value="yaml">YAML</SelectItem>
-										<SelectItem value="toml">TOML</SelectItem>
-										<SelectItem value="xml-doc">XML</SelectItem>
-										<SelectItem value="ini">INI</SelectItem>
-										<SelectItem value="sql">SQL</SelectItem>
-										<SelectItem value="graphql">GraphQL</SelectItem>
-									</SelectGroup>
-									<SelectGroup>
-										<SelectLabel>Systems</SelectLabel>
-										<SelectItem value="python">Python</SelectItem>
-										<SelectItem value="go">Go</SelectItem>
-										<SelectItem value="rust">Rust</SelectItem>
-										<SelectItem value="java">Java</SelectItem>
-										<SelectItem value="csharp">C#</SelectItem>
-										<SelectItem value="c">C</SelectItem>
-										<SelectItem value="cpp">C++</SelectItem>
-										<SelectItem value="ruby">Ruby</SelectItem>
-										<SelectItem value="kotlin">Kotlin</SelectItem>
-										<SelectItem value="swift">Swift</SelectItem>
-										<SelectItem value="scala">Scala</SelectItem>
-										<SelectItem value="perl">Perl</SelectItem>
-										<SelectItem value="r">R</SelectItem>
-									</SelectGroup>
-									<SelectGroup>
-										<SelectLabel>DevOps</SelectLabel>
-										<SelectItem value="bash">Bash</SelectItem>
-										<SelectItem value="shell-session">Shell</SelectItem>
-										<SelectItem value="powershell">PowerShell</SelectItem>
-										<SelectItem value="docker">Dockerfile</SelectItem>
-										<SelectItem value="hcl">HCL (Terraform)</SelectItem>
-										<SelectItem value="nginx">Nginx</SelectItem>
-									</SelectGroup>
-									<SelectGroup>
-										<SelectLabel>Markup &amp; Style</SelectLabel>
-										<SelectItem value="markdown">Markdown</SelectItem>
-										<SelectItem value="latex">LaTeX</SelectItem>
-										<SelectItem value="scss">SCSS</SelectItem>
-										<SelectItem value="less">LESS</SelectItem>
-									</SelectGroup>
-								</SelectContent>
-							</Select>
+						<LanguageCombobox
+							value={language}
+							onChange={(v) => { setLanguage(v); setAutoDetect(false); }}
+						/>
 							<input type="hidden" name="language" value={language} />
 						</div>
 
@@ -646,21 +592,19 @@ export default function PasteForm() {
 
 							{/* Burn + View limit */}
 							<div className="space-y-3 pt-2 border-t border-border">
-								<label className="flex items-center gap-2.5 cursor-pointer">
-									<input type="checkbox" name="burnAfterReading" className="h-4 w-4 rounded border-input form-checkbox" />
-									<div>
+							<label className="flex items-center gap-2.5 cursor-pointer">
+								<Checkbox name="burnAfterReading" />
+								<div>
 										<span className="text-sm font-medium">Burn after reading</span>
 										<p className="text-xs text-muted-foreground">Deleted after first view</p>
 									</div>
 								</label>
 
-								<label className="flex items-center gap-2.5 cursor-pointer">
-									<input
-										type="checkbox"
-										checked={viewLimitEnabled}
-										onChange={(e) => setViewLimitEnabled(e.target.checked)}
-										className="h-4 w-4 rounded border-input form-checkbox"
-									/>
+							<label className="flex items-center gap-2.5 cursor-pointer">
+								<Checkbox
+									checked={viewLimitEnabled}
+									onChange={(e) => setViewLimitEnabled(e.target.checked)}
+								/>
 									<div className="flex items-center gap-2">
 										<span className="text-sm font-medium">Limit views</span>
 										<input
