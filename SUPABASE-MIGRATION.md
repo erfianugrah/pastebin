@@ -965,7 +965,7 @@ SELECT version, count(*) FROM pastes GROUP BY version;
 | **Frontend** (Astro/React) | No | Frontend never knew about the backend. Zero changes. |
 | **wrangler.jsonc** | Yes | `SUPABASE_URL`, `STORAGE_BACKEND` vars added. `SUPABASE_SECRET_KEY` is a Wrangler secret (not in file). |
 | **Tests** | Yes | 25 new tests: 14 for `SupabasePasteRepository`, 11 for `DualWriteRepository`. |
-| **Migrations** | Yes | 11 migration files in `supabase/migrations/` (7 baseline + trigger fix + `view_paste()` RPC + FTS + Realtime). |
+| **Migrations** | Yes | 12 migration files in `supabase/migrations/` (7 baseline + trigger fix + `view_paste()` RPC + FTS + Realtime + authenticated RLS). |
 
 ---
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.2.0] - 2026-05-11
+
+### Auth (Phase 4.4)
+
+- **5 RLS policies** on `public.pastes` for the `authenticated` role: view public, view own, create own, update own (USING + WITH CHECK), delete own. All use `(SELECT auth.uid())` for initPlan caching and `TO authenticated` for role gating. Migration `20260511140659_authenticated_rls_policies.sql`.
+- **`AuthService`** in the Worker validates `Authorization: Bearer <jwt>` via `supabase.auth.getUser()`. Extracts `user_id` from the verified token.
+- **`Paste` domain model** gains a `userId` field with full round-trip support (factory, repository save/findById, toJSON(includeSecrets)).
+- **`CreatePasteCommand`** accepts `opts.userId` — sourced only from the verified JWT, never from the request body (impersonation guard).
+- **`SupabasePasteRepository`** persists `user_id` on save (null for anonymous), hydrates on findById.
+- **Frontend**: `/login`, `/signup`, `/my` pages. React islands: `UserMenu` (header), `AuthForm` (login/signup), `MyPastes` (queries Supabase directly via RLS — no Worker endpoint needed). `useAuth` hook subscribes to `onAuthStateChange`. `PasteForm` attaches JWT to `/pastes` requests when signed in.
+- **`scripts/verify-rls.ts`** (npm run test:rls): 13 RLS checks against production using 2 real Supabase Auth users created via the admin API. Asserts JWT persistence, RLS SELECT own + public, cross-user blocking, RLS DELETE own + cross-user-block, RLS WITH CHECK impersonation rejection.
+- **`scripts/run-all-live-tests.ts`** (npm run test:all-live): orchestrates all 4 live test suites with cooldowns to avoid rate-limit-induced flakiness.
+
+### Tests
+
+- 151 unit tests (+16 since 3.1.0): 7 for AuthService, 2 for command userId, 4 for repo user_id, 3 for handler JWT flow.
+
+### Breaking changes
+
+None for end users. Anonymous paste creation still works (user_id = NULL). The `Authorization: Bearer` header is optional.
+
+---
+
 ## [3.1.0] - 2026-05-11
 
 ### Database

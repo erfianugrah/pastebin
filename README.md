@@ -466,6 +466,23 @@ The trigger payload contains only safe metadata: `id`, `title`, `language`, `cre
 
 Run `npm run test:realtime` to verify the pipeline end-to-end.
 
+#### Authentication & My Pastes
+
+**Pages:** `/login`, `/signup`, `/my`.
+
+Pasteriser supports optional Supabase Auth (email + password). When signed in:
+
+- New pastes are linked to the authenticated user via `user_id`.
+- The Worker validates `Authorization: Bearer <jwt>` and derives `user_id` from the verified token (never from the request body).
+- The `/my` page queries Supabase directly using the user's JWT — RLS policies on `pastes` filter the result to the user's own rows. No Worker endpoint is involved in this read path.
+- Authenticated users can delete their own pastes directly via the DB (RLS-gated); the `deleteToken` flow still works for anonymous pastes.
+
+Anonymous use is unchanged: pastes created without a JWT get `user_id = NULL` and are managed via the `deleteToken` returned at creation.
+
+5 RLS policies cover the authenticated role: SELECT public, SELECT own, INSERT own (WITH CHECK enforces self-assignment), UPDATE own (USING + WITH CHECK), DELETE own. The Worker uses `service_role` and bypasses RLS; the policies activate when the frontend queries Supabase directly.
+
+Run `npm run test:rls` for end-to-end verification (creates 2 real test users, runs 13 RLS scenarios, cleans up).
+
 #### Delete a Paste
 
 **Endpoint:** `DELETE /pastes/:id/delete`
@@ -690,6 +707,8 @@ npm run deploy
 - `npm run test:smoke` - Live API + Supabase e2e tests against production
 - `npm run test:race` - Concurrent burn-after-reading race-free verification
 - `npm run test:realtime` - Realtime broadcast pipeline + RLS compatibility matrix
+- `npm run test:rls` - Supabase Auth + RLS end-to-end (creates 2 real test users)
+- `npm run test:all-live` - All 4 live suites in sequence with cooldowns
 - `npm run lint` - Run ESLint
 - `npm run check` - Run TypeScript typechecking
 
@@ -1004,15 +1023,16 @@ Migrated from Cloudflare KV to **Supabase Postgres** in May 2026.
 
 | What | Where | Notes |
 |------|-------|-------|
-| Paste data | Supabase `pastes` table | RLS enabled (public-visibility policy for `anon`) |
+| Paste data | Supabase `pastes` table | RLS enabled (6 policies: 1 anon + 5 authenticated) |
 | Vanity slugs | Supabase `slugs` table | RLS enabled (non-expired slugs visible to `anon`) |
 | Atomic view | `view_paste(uuid)` RPC | `SELECT ... FOR UPDATE` row lock — fixes burn-after-reading race |
 | Search | `search_vector` (GIN-indexed tsvector) | `websearch_to_tsquery` semantics via `/api/search` |
 | Live feed | Realtime broadcast on `recent:public` | `AFTER INSERT` trigger; private channel; RLS on `realtime.messages` |
+| User accounts | Supabase Auth + JWT verification | Worker validates `Authorization: Bearer <jwt>`; `/my` page uses RLS |
 | Expiration | pg_cron jobs | Expired pastes every 5min, expired slugs daily at 03:00 |
 | KV namespace | Retained in bindings for rollback | Unused with `STORAGE_BACKEND=supabase` |
 
-See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey including Phase 3.5 audit fixes (`updated_at` trigger `WHEN` clause, server-side `createClient` opts) and Phase 4 feature work.
+See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey including Phase 3.5 audit fixes (`updated_at` trigger `WHEN` clause, server-side `createClient` opts) and Phase 4 feature work (atomic view RPC, FTS, Realtime, Auth+RLS).
 
 ## Recent Updates
 

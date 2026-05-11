@@ -66,6 +66,7 @@ npm run test:smoke       # tsx scripts/smoke-test.ts — live API + Supabase ver
 npm run test:race        # tsx scripts/concurrent-burn-test.ts — concurrent burn race-free check
 npm run test:realtime    # tsx scripts/verify-realtime.ts — broadcast pipeline + RLS compat matrix
 npm run test:rls         # tsx scripts/verify-rls.ts — Supabase Auth + RLS end-to-end (2 test users)
+npm run test:all-live    # runs all 4 live suites in sequence with cooldowns
 npm run test:all         # test + test:ui + test:e2e
 
 # Codegen
