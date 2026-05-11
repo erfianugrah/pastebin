@@ -549,19 +549,21 @@ SELECT encryption_version, count(*) FROM pastes GROUP BY encryption_version;
 
 ---
 
-## What Changes, What Doesn't
+## What Changed, What Didn't
 
-| Layer                            | Changes?       | Details                                                    |
-| -------------------------------- | -------------- | ---------------------------------------------------------- |
-| **Domain model** (`paste.ts`)    | No             | Untouched. Same Paste class.                               |
-| **Repository interface**         | No             | Same 6 methods.                                            |
-| **Application commands/queries** | Minimal        | `getPasteQuery` could use `view_paste()` RPC for atomicity |
-| **Factory** (`pasteFactory.ts`)  | No             | Same rehydration logic.                                    |
-| **Infrastructure**               | Yes            | New `SupabasePasteRepository` + `DualWriteRepository`      |
-| **Entry point** (`index.ts`)     | Yes            | Repository instantiation based on env flag                 |
-| **Types** (`types.ts`)           | Yes            | Add Supabase env vars to `Env` interface                   |
-| **Frontend** (Astro/React)       | No (Phase 1-3) | Frontend doesn't know about the backend change             |
-| **wrangler.jsonc**               | Yes            | Add Supabase secrets                                       |
+| Layer | Changed? | Details |
+|-------|----------|---------|
+| **Domain model** (`paste.ts`) | No | Untouched. Same `Paste` class, same value objects. |
+| **Repository interface** | No | Same 6 methods. The abstraction worked exactly as designed. |
+| **Application commands/queries** | No | Commands and queries are unaware of which backend is active. |
+| **Factory** (`pasteFactory.ts`) | No | Same rehydration logic from `PasteData`. |
+| **Infrastructure/storage** | Yes | Added `SupabasePasteRepository` + `DualWriteRepository`. `KVPasteRepository` retained. |
+| **Entry point** (`index.ts`) | Yes | Feature-flag logic; `pasteRepository` added to Hono context. |
+| **Types** (`types.ts`) | Yes | `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STORAGE_BACKEND` added to `Env`. |
+| **Frontend** (Astro/React) | No | Frontend never knew about the backend. Zero changes. |
+| **wrangler.jsonc** | Yes | `SUPABASE_URL`, `STORAGE_BACKEND` vars added. `SUPABASE_SECRET_KEY` is a Wrangler secret (not in file). |
+| **Tests** | Yes | 25 new tests: 14 for `SupabasePasteRepository`, 11 for `DualWriteRepository`. |
+| **Migrations** | Yes | 7 migration files in `supabase/migrations/`. |
 
 ---
 
