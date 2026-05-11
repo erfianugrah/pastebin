@@ -28,6 +28,7 @@ function makeRepo(): PasteRepository {
 	return {
 		save: vi.fn().mockResolvedValue(undefined),
 		findById: vi.fn().mockResolvedValue(null),
+		view: vi.fn().mockResolvedValue({ paste: null, wasBurned: false, wasViewLimited: false }),
 		delete: vi.fn().mockResolvedValue(true),
 		findRecentPublic: vi.fn().mockResolvedValue([]),
 		resolveSlug: vi.fn().mockResolvedValue(null),
@@ -160,6 +161,24 @@ describe('DualWriteRepository', () => {
 
 			const result = await repo.findById(PasteId.create('test-uuid'));
 			expect(result).toBe(paste);
+		});
+
+		it('view reads/writes only to primary (no double-burn)', async () => {
+			// Critical invariant: view() has side effects (read_count++,
+			// possible delete). Shadow-viewing to secondary would burn the
+			// paste twice. Verify secondary is never called.
+			const paste = makePaste();
+			vi.mocked(primary.view).mockResolvedValue({
+				paste,
+				wasBurned: false,
+				wasViewLimited: false,
+			});
+
+			const result = await repo.view(PasteId.create('test-uuid'));
+
+			expect(primary.view).toHaveBeenCalledWith(PasteId.create('test-uuid'));
+			expect(secondary.view).not.toHaveBeenCalled();
+			expect(result.paste).toBe(paste);
 		});
 	});
 });

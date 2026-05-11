@@ -573,7 +573,55 @@ to `createClient` everywhere.
 
 ### Phase 4: New Features (Week 2+)
 
-Now that you have Postgres, build features KV couldn't support:
+Now that you have Postgres, build features KV couldn't support.
+
+#### 4.1: `view_paste()` RPC ✓ COMPLETE
+
+Migration `20260511130427_add_view_paste_rpc.sql`: PL/pgSQL function that
+encapsulates the entire read flow (find + increment + burn + view-limit)
+in a single transaction with `SELECT ... FOR UPDATE` row locking.
+
+**Why:** The previous flow was 3 round-trips (SELECT → UPDATE → maybe
+DELETE). Two concurrent reads of a burn-after-reading paste could both
+pass the SELECT, both bump read_count, both serve content, then both
+DELETE -- content served twice instead of once. KV has no row-lock
+primitive so the race was unfixable there. Postgres `FOR UPDATE` makes
+it trivially correct.
+
+**Domain changes:**
+- New method on `PasteRepository`: `view(id): Promise<ViewResult>` where
+  `ViewResult = { paste, wasBurned, wasViewLimited }`.
+- `SupabasePasteRepository.view()` calls `rpc('view_paste', ...)`.
+- `KVPasteRepository.view()` mirrors the old multi-step logic (race
+  documented in the doc comment -- kept for rollback safety only).
+- `DualWriteRepository.view()` delegates to primary only (shadow-viewing
+  to secondary would double-count or double-burn).
+- `getPasteQuery.execute()` collapsed from 50 lines of orchestration to
+  a 3-line wrapper that calls `repository.view(id)`.
+
+**Verification:** `npm run test:race` — 5 fresh burn-after-reading pastes,
+20 parallel views each (100 requests total). Expected exactly 5 wins
+(one per paste) and 95 404s. Run in production after the deploy:
+
+```
+Run 1/5: ✓ wins=1 (expected 1)  misses=19
+Run 2/5: ✓ wins=1 (expected 1)  misses=19
+Run 3/5: ✓ wins=1 (expected 1)  misses=19
+Run 4/5: ✓ wins=1 (expected 1)  misses=19
+Run 5/5: ✓ wins=1 (expected 1)  misses=19
+
+Totals: 5 wins, 95 misses. Result: RACE-FREE ✓
+```
+
+**Function security:** `SECURITY DEFINER` so the function runs as its
+owner (postgres) and can DELETE rows regardless of caller. `SET
+search_path = ''` forces all table references to be schema-qualified
+(`public.pastes`) — defends against search-path attacks where someone
+creates a malicious table in their own schema to shadow `pastes`.
+Execution permission revoked from PUBLIC and granted only to
+`service_role`.
+
+#### 4.2: Search (next)
 
 **Search** (exercises: Postgres full-text search or `ILIKE`)
 
@@ -635,7 +683,7 @@ SELECT version, count(*) FROM pastes GROUP BY version;
 | **Frontend** (Astro/React) | No | Frontend never knew about the backend. Zero changes. |
 | **wrangler.jsonc** | Yes | `SUPABASE_URL`, `STORAGE_BACKEND` vars added. `SUPABASE_SECRET_KEY` is a Wrangler secret (not in file). |
 | **Tests** | Yes | 25 new tests: 14 for `SupabasePasteRepository`, 11 for `DualWriteRepository`. |
-| **Migrations** | Yes | 8 migration files in `supabase/migrations/` (7 baseline + `20260511124104_fix_updated_at_trigger.sql`). |
+| **Migrations** | Yes | 9 migration files in `supabase/migrations/` (7 baseline + trigger fix + `view_paste()` RPC). |
 
 ---
 

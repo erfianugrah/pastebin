@@ -63,6 +63,7 @@ function makeSupabaseMock(overrides: {
 	deleteResult?: { error: null | { message: string }; count: number | null };
 	queryResult?: { data: Record<string, unknown>[] | null; error: null | { message: string } };
 	insertResult?: { error: null | { message: string } };
+	rpcResult?: { data: unknown; error: null | { message: string } };
 } = {}) {
 	const from = vi.fn(() => ({
 		upsert: vi.fn(() => Promise.resolve(overrides.upsertResult ?? { error: null })),
@@ -79,7 +80,9 @@ function makeSupabaseMock(overrides: {
 		insert: vi.fn(() => Promise.resolve(overrides.insertResult ?? { error: null })),
 	}));
 
-	return { from };
+	const rpc = vi.fn(() => Promise.resolve(overrides.rpcResult ?? { data: [], error: null }));
+
+	return { from, rpc };
 }
 
 // ---- createClient mock ----
@@ -255,6 +258,114 @@ describe('SupabasePasteRepository', () => {
 
 			const result = await repository.delete(PasteId.create('test-uuid-1234'));
 			expect(result).toBe(false);
+			expect(mockLogger.error).toHaveBeenCalled();
+		});
+	});
+
+	describe('view (RPC-based atomic view)', () => {
+		it('calls the view_paste RPC with the correct paste_uuid', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: {
+					data: [{ paste_data: makeDbRow(), was_burned: false, was_view_limited: false }],
+					error: null,
+				},
+			});
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			await repository.view(PasteId.create('test-uuid-1234'));
+
+			expect(mockClient.rpc).toHaveBeenCalledWith('view_paste', { paste_uuid: 'test-uuid-1234' });
+		});
+
+		it('returns the paste with wasBurned=false on normal view', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: {
+					data: [
+						{
+							paste_data: makeDbRow({ read_count: 1 }),
+							was_burned: false,
+							was_view_limited: false,
+						},
+					],
+					error: null,
+				},
+			});
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.view(PasteId.create('test-uuid-1234'));
+
+			expect(result.paste).not.toBeNull();
+			expect(result.paste!.getReadCount()).toBe(1);
+			expect(result.wasBurned).toBe(false);
+			expect(result.wasViewLimited).toBe(false);
+		});
+
+		it('returns paste with wasBurned=true on burn-after-reading', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: {
+					data: [
+						{
+							paste_data: makeDbRow({ burn_after_reading: true, read_count: 1 }),
+							was_burned: true,
+							was_view_limited: false,
+						},
+					],
+					error: null,
+				},
+			});
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.view(PasteId.create('test-uuid-1234'));
+
+			expect(result.paste).not.toBeNull();
+			expect(result.wasBurned).toBe(true);
+		});
+
+		it('returns paste with wasViewLimited=true when view limit hit', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: {
+					data: [
+						{
+							paste_data: makeDbRow({ read_count: 5, view_limit: 5 }),
+							was_burned: false,
+							was_view_limited: true,
+						},
+					],
+					error: null,
+				},
+			});
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.view(PasteId.create('test-uuid-1234'));
+
+			expect(result.paste).not.toBeNull();
+			expect(result.wasViewLimited).toBe(true);
+		});
+
+		it('returns null paste when RPC returns 0 rows (not found / expired / cleaned)', async () => {
+			mockClient = makeSupabaseMock({ rpcResult: { data: [], error: null } });
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.view(PasteId.create('nonexistent'));
+
+			expect(result).toEqual({ paste: null, wasBurned: false, wasViewLimited: false });
+		});
+
+		it('returns null paste and logs on RPC error', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: null, error: { message: 'function not found' } },
+			});
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.view(PasteId.create('test-uuid-1234'));
+
+			expect(result).toEqual({ paste: null, wasBurned: false, wasViewLimited: false });
 			expect(mockLogger.error).toHaveBeenCalled();
 		});
 	});

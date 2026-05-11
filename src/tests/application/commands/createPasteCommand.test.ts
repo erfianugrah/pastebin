@@ -9,6 +9,7 @@ import { Paste, PasteId, ExpirationPolicy } from '../../../domain/models/paste';
 const mockRepository: PasteRepository = {
   save: vi.fn(),
   findById: vi.fn(),
+  view: vi.fn(),
   delete: vi.fn(),
   findRecentPublic: vi.fn(),
 	resolveSlug: vi.fn(),

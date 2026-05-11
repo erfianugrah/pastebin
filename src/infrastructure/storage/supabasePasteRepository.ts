@@ -1,8 +1,15 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Paste, PasteData, PasteId } from '../../domain/models/paste';
-import { PasteRepository } from '../../domain/repositories/pasteRepository';
+import { PasteRepository, ViewResult } from '../../domain/repositories/pasteRepository';
 import { PasteFactory } from '../../application/factories/pasteFactory';
 import { Logger } from '../logging/logger';
+
+// Shape of the view_paste() RPC response. Postgres returns 0 or 1 row.
+interface ViewPasteRow {
+	paste_data: Record<string, unknown> | null;
+	was_burned: boolean;
+	was_view_limited: boolean;
+}
 
 export class SupabasePasteRepository implements PasteRepository {
 	private readonly client: SupabaseClient;
@@ -80,6 +87,42 @@ export class SupabasePasteRepository implements PasteRepository {
 		if (!data) return null;
 
 		return PasteFactory.fromData(this.mapRow(data));
+	}
+
+	async view(id: PasteId): Promise<ViewResult> {
+		this.logger.debug('Supabase: viewing paste (atomic)', { pasteId: id.toString() });
+
+		// view_paste() takes a row lock with FOR UPDATE, handles read-count
+		// increment + burn-after-reading + view-limit atomically. See
+		// supabase/migrations/20260511130427_add_view_paste_rpc.sql for the
+		// PL/pgSQL implementation and race-condition rationale.
+		const { data, error } = await this.client.rpc('view_paste', {
+			paste_uuid: id.toString(),
+		});
+
+		if (error) {
+			this.logger.error('Supabase: view_paste RPC failed', {
+				pasteId: id.toString(),
+				error,
+			});
+			return { paste: null, wasBurned: false, wasViewLimited: false };
+		}
+
+		// RPC returns an array of 0 or 1 rows. 0 = not found, expired, or
+		// already-at-view-limit (DB cleaned it up).
+		const rows = (data ?? []) as ViewPasteRow[];
+		if (rows.length === 0 || !rows[0].paste_data) {
+			return { paste: null, wasBurned: false, wasViewLimited: false };
+		}
+
+		const row = rows[0];
+		const paste = PasteFactory.fromData(this.mapRow(row.paste_data!));
+
+		return {
+			paste,
+			wasBurned: row.was_burned,
+			wasViewLimited: row.was_view_limited,
+		};
 	}
 
 	async delete(id: PasteId): Promise<boolean> {

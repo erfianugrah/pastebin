@@ -228,4 +228,102 @@ describe('KVPasteRepository', () => {
       expect(mockKV.delete).toHaveBeenCalledWith('recent:1672574400000:abc123');
     });
   });
+
+  describe('view (race-prone orchestration)', () => {
+    // KV has no row lock primitive -- these tests verify the documented
+    // best-effort behavior. Supabase tests cover the atomic version via
+    // the view_paste() RPC.
+
+    function storedPaste(id: string, overrides: Record<string, unknown> = {}) {
+      return JSON.stringify({
+        id,
+        content: 'content',
+        title: 'title',
+        language: 'javascript',
+        createdAt: new Date(Date.now() - 1000).toISOString(),
+        expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+        visibility: 'public',
+        burnAfterReading: false,
+        readCount: 0,
+        isEncrypted: false,
+        viewLimit: undefined,
+        version: 0,
+        deleteToken: 'tok',
+        ...overrides,
+      });
+    }
+
+    it('returns null when paste not found', async () => {
+      mockKV.get.mockResolvedValue(null);
+
+      const result = await repository.view(PasteId.create('missing'));
+
+      expect(result).toEqual({ paste: null, wasBurned: false, wasViewLimited: false });
+      expect(mockKV.delete).not.toHaveBeenCalled();
+    });
+
+    it('increments read_count and returns paste on normal view', async () => {
+      mockKV.get.mockResolvedValue(storedPaste('abc', { readCount: 2 }));
+      mockKV.list.mockResolvedValue({ keys: [], list_complete: true });
+
+      const result = await repository.view(PasteId.create('abc'));
+
+      expect(result.paste).not.toBeNull();
+      expect(result.paste!.getReadCount()).toBe(3);
+      expect(result.wasBurned).toBe(false);
+      expect(result.wasViewLimited).toBe(false);
+      expect(mockKV.put).toHaveBeenCalledTimes(2); // save (paste + recent list)
+      expect(mockKV.delete).not.toHaveBeenCalled();
+    });
+
+    it('deletes and returns null for expired paste', async () => {
+      const expiredAt = new Date(Date.now() - 1000).toISOString();
+      mockKV.get.mockResolvedValue(
+        storedPaste('exp', {
+          createdAt: new Date(Date.now() - 7200 * 1000).toISOString(),
+          expiresAt: expiredAt,
+        }),
+      );
+      mockKV.list.mockResolvedValue({ keys: [], list_complete: true });
+
+      const result = await repository.view(PasteId.create('exp'));
+
+      expect(result.paste).toBeNull();
+      expect(mockKV.delete).toHaveBeenCalled();
+    });
+
+    it('serves content then deletes for burn_after_reading', async () => {
+      mockKV.get.mockResolvedValue(storedPaste('burn', { burnAfterReading: true }));
+      mockKV.list.mockResolvedValue({ keys: [], list_complete: true });
+
+      const result = await repository.view(PasteId.create('burn'));
+
+      expect(result.paste).not.toBeNull();
+      expect(result.paste!.getContent()).toBe('content');
+      expect(result.wasBurned).toBe(true);
+      expect(mockKV.delete).toHaveBeenCalled();
+    });
+
+    it('deletes and returns null when view_limit already reached', async () => {
+      mockKV.get.mockResolvedValue(storedPaste('over', { readCount: 5, viewLimit: 5 }));
+      mockKV.list.mockResolvedValue({ keys: [], list_complete: true });
+
+      const result = await repository.view(PasteId.create('over'));
+
+      expect(result.paste).toBeNull();
+      expect(mockKV.delete).toHaveBeenCalled();
+    });
+
+    it('serves content then deletes when this view hits view_limit', async () => {
+      mockKV.get.mockResolvedValue(storedPaste('last', { readCount: 4, viewLimit: 5 }));
+      mockKV.list.mockResolvedValue({ keys: [], list_complete: true });
+
+      const result = await repository.view(PasteId.create('last'));
+
+      expect(result.paste).not.toBeNull();
+      expect(result.paste!.getReadCount()).toBe(5);
+      expect(result.wasViewLimited).toBe(true);
+      expect(mockKV.delete).toHaveBeenCalled();
+    });
+  });
 });

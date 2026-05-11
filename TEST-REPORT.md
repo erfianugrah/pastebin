@@ -156,17 +156,13 @@ CREATE TRIGGER set_updated_at
 
 The `view_paste()` RPC (Phase 4) will avoid the upsert entirely by doing a targeted `UPDATE ... SET read_count = read_count + 1 WHERE id = $1 RETURNING *`. That's the deeper fix but also requires more code changes. The current trigger-level fix is sufficient until then.
 
-### 2. `getPasteQuery.execute()` concurrency caveat still applies
+### 2. `getPasteQuery.execute()` concurrency race (fixed)
 
-The KV implementation had a documented race condition in burn-after-reading. The Supabase implementation has the same issue because the read flow is:
+**Status:** Fixed in Phase 4.1 via migration `20260511130427_add_view_paste_rpc.sql`. Repository now exposes `view(id): Promise<ViewResult>` which the Supabase implementation backs with the `view_paste()` Postgres function (`SELECT ... FOR UPDATE` row lock).
 
-1. SELECT row
-2. UPDATE read_count + 1 via upsert
-3. IF burn_after_reading AND read_count > 0 THEN DELETE
+**Verification:** `npm run test:race` (5 fresh burn-after-reading pastes × 20 concurrent views each). Expected exactly 5 wins (one per paste). Result: 5 wins, 95 404s. Race-free.
 
-Two concurrent requests can both see `read_count = 0` and serve the content twice before either deletes.
-
-**Fix (planned for Phase 4):** Replace the multi-step logic with the `view_paste()` Postgres function (already scoped in `SUPABASE-MIGRATION.md`) using `FOR UPDATE` to lock the row atomically.
+The KV implementation retains the multi-step logic (no row-lock primitive in KV) and documents the race in its doc comment. KV is kept only for rollback safety.
 
 ### 3. RLS policies are defense-in-depth (Worker uses secret key)
 

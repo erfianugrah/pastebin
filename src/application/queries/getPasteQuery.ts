@@ -17,50 +17,20 @@ export class GetPasteQuery {
 	 * Fetch a paste, increment its read count, and enforce burn-after-reading
 	 * and view-limit policies.
 	 *
-	 * **Concurrency caveat:** Cloudflare KV is eventually-consistent, so
-	 * concurrent requests may each read the *same* readCount before either
-	 * write lands. This means burn-after-reading pastes could be served to
-	 * more than one simultaneous viewer, and view-limited pastes may slightly
-	 * exceed their limit. For stronger guarantees, consider Durable Objects
-	 * with an input gate for the critical section.
+	 * Atomicity depends on the storage backend:
+	 *  - Supabase: uses the `view_paste()` Postgres function with FOR UPDATE
+	 *    row lock. Concurrent reads serialize on the lock -- burn-after-
+	 *    reading is exactly-once even under high concurrency.
+	 *  - KV: best-effort. The SELECT/UPDATE/DELETE sequence is not atomic
+	 *    so concurrent reads can race (documented in KVPasteRepository.view).
+	 *
+	 * Orchestration is delegated to the repository -- the application layer
+	 * doesn't know whether the storage layer is locking rows or not.
 	 */
 	async execute(id: string): Promise<Paste | null> {
 		const pasteId = PasteId.create(id);
-		const paste = await this.repository.findById(pasteId);
-
-		if (!paste) {
-			return null;
-		}
-
-		// Check if paste has expired
-		if (paste.hasExpired()) {
-			// Delete expired paste
-			await this.repository.delete(paste.getId());
-			return null;
-		}
-
-		// If view limit already exceeded, drop the paste
-		if (paste.hasViewLimit() && paste.hasReachedViewLimit()) {
-			await this.repository.delete(paste.getId());
-			return null;
-		}
-
-		// Increment read count for every successful view
-		const updatedPaste = paste.incrementReadCount();
-		await this.repository.save(updatedPaste);
-
-		// Burn-after-reading: delete immediately after first view
-		if (updatedPaste.isBurnAfterReading()) {
-			await this.repository.delete(updatedPaste.getId());
-			return updatedPaste;
-		}
-
-		// If this view reached the view limit, delete immediately
-		if (updatedPaste.hasViewLimit() && updatedPaste.hasReachedViewLimit()) {
-			await this.repository.delete(updatedPaste.getId());
-		}
-
-		return updatedPaste;
+		const result = await this.repository.view(pasteId);
+		return result.paste;
 	}
 
 	/**

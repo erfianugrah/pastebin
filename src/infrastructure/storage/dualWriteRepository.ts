@@ -1,5 +1,5 @@
 import { Paste, PasteId } from '../../domain/models/paste';
-import { PasteRepository } from '../../domain/repositories/pasteRepository';
+import { PasteRepository, ViewResult } from '../../domain/repositories/pasteRepository';
 import { Logger } from '../logging/logger';
 
 /**
@@ -68,6 +68,15 @@ export class DualWriteRepository implements PasteRepository {
 	// All reads from primary only
 	async findById(id: PasteId) {
 		return this.primary.findById(id);
+	}
+
+	async view(id: PasteId): Promise<ViewResult> {
+		// view() has side effects (read_count++, possible burn/delete) -- only
+		// the primary is authoritative. Don't shadow-view to secondary: that
+		// would double-count reads and could burn the paste twice. The
+		// secondary's read_count diverges, which is acceptable in Phase 1
+		// (it gets reconciled on the next save()).
+		return this.primary.view(id);
 	}
 
 	async findRecentPublic(limit: number) {

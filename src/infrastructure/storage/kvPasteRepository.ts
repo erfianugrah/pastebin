@@ -1,5 +1,5 @@
 import { Paste, PasteData, PasteId } from '../../domain/models/paste';
-import { PasteRepository } from '../../domain/repositories/pasteRepository';
+import { PasteRepository, ViewResult } from '../../domain/repositories/pasteRepository';
 import { PasteFactory } from '../../application/factories/pasteFactory';
 import { Logger } from '../logging/logger';
 
@@ -50,6 +50,51 @@ export class KVPasteRepository implements PasteRepository {
 			});
 			return null;
 		}
+	}
+
+	/**
+	 * Best-effort view with documented race conditions. KV has no row-level
+	 * locking primitive, so the SELECT/UPDATE/DELETE sequence is not atomic.
+	 *
+	 * Race conditions:
+	 *  - Two concurrent reads of a burn_after_reading paste can both pass
+	 *    the read step with read_count = 0, both bump to 1, both serve the
+	 *    content, then both delete. Content served twice instead of once.
+	 *  - view_limit can be slightly exceeded under high concurrency.
+	 *
+	 * The Supabase backend uses the view_paste() RPC with FOR UPDATE row
+	 * lock, which is race-free. KV is only kept for rollback safety.
+	 */
+	async view(id: PasteId): Promise<ViewResult> {
+		const paste = await this.findById(id);
+		if (!paste) {
+			return { paste: null, wasBurned: false, wasViewLimited: false };
+		}
+
+		if (paste.hasExpired()) {
+			await this.delete(paste.getId());
+			return { paste: null, wasBurned: false, wasViewLimited: false };
+		}
+
+		if (paste.hasViewLimit() && paste.hasReachedViewLimit()) {
+			await this.delete(paste.getId());
+			return { paste: null, wasBurned: false, wasViewLimited: false };
+		}
+
+		const updated = paste.incrementReadCount();
+		await this.save(updated);
+
+		if (updated.isBurnAfterReading()) {
+			await this.delete(updated.getId());
+			return { paste: updated, wasBurned: true, wasViewLimited: false };
+		}
+
+		if (updated.hasViewLimit() && updated.hasReachedViewLimit()) {
+			await this.delete(updated.getId());
+			return { paste: updated, wasBurned: false, wasViewLimited: true };
+		}
+
+		return { paste: updated, wasBurned: false, wasViewLimited: false };
 	}
 
 	async delete(id: PasteId): Promise<boolean> {
