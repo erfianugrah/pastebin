@@ -18,7 +18,7 @@
 	},
 	"vars": {
 		"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co",
-		"STORAGE_BACKEND": "dual",
+		"STORAGE_BACKEND": "supabase",
 	},
 	"kv_namespaces": [
 		{
@@ -43,7 +43,7 @@
 			"name": "pastebin-prod",
 			"vars": {
 				"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co",
-				"STORAGE_BACKEND": "dual",
+				"STORAGE_BACKEND": "supabase",
 			},
 			"routes": [
 				{
