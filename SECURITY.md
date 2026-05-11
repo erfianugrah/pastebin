@@ -110,11 +110,20 @@ The publishable key is safe to ship — it maps to the `anon` Postgres role and 
 
 **Known gaps (planned for Phase 4.7):**
 
-- No Cloudflare Turnstile CAPTCHA on `/signup` or `POST /pastes` — Supabase docs explicitly recommend this for anon flows.
+- No Cloudflare Turnstile CAPTCHA on `/signup` or `POST /pastes` — Supabase docs explicitly recommend this for anon flows (see `auth-captcha.md`).
 - Paste size cap is 25 MiB for everyone, including anonymous — a multi-IP attacker can fill the 500 MB free Supabase tier with ~20 requests.
 - No custom SMTP — inbuilt SMTP cap means email confirmations can be exhausted by a single attacker within minutes.
+- `/auth/v1/signup` is browser → Supabase direct (no Worker gate). Without Turnstile this is the highest-ROI attack surface per documented Reddit / Hacker News reports.
 
-See `SUPABASE-MIGRATION.md` "Phase 4.7" for the full mitigation roadmap.
+**Known Supabase Auth rate-limiter bugs (upstream, not specific to Pasteriser):**
+
+- [supabase/auth#1236](https://github.com/supabase/auth/issues/1236): Failed signups count toward email rate limit even when no email is sent. PR #1748 merged but behavior persists per recent reports.
+- [supabase/auth#2333](https://github.com/supabase/auth/issues/2333): "Rate limit for sign-ups and sign-ins" Dashboard setting is not enforced as configured; allows ~30-50 requests before the generic burst limit kicks in. Supabase response: "this behavior is expected due to non-configurable burst limit."
+- [supabase/auth#1932](https://github.com/supabase/auth/issues/1932): Rate limit doesn't apply when signup uses an already-used email (returns a fake user response). Lets attackers probe valid emails without consuming the bucket.
+
+These bugs make the Worker-side gate (#5 in the Phase 4.7 plan) more valuable than the Supabase-side gate.
+
+See `SUPABASE-MIGRATION.md` "Phase 4.7" for the full mitigation roadmap with citations.
 
 ### Client-side encryption
 

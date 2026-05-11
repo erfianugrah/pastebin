@@ -1022,57 +1022,77 @@ flow needed, lets the planner inline if useful.
 **Tests:** 3 repo tests (mocked RPC: happy path, error, non-object data) +
 2 handler tests (200 with payload, 503 when null).
 
-#### 4.7: Rate-limit hardening (planned, not yet started)
+#### 4.7: Anti-abuse and rate-limit hardening (planned, not yet started)
 
-**Why now:** Pasteriser exposes both Worker-mediated paths
-(`POST /pastes`, `GET /api/recent`, etc.) AND browser-direct paths
-(Supabase Auth endpoints, Realtime subscriptions, `/my` page queries).
-The Worker has an in-memory per-IP rate limit (10/min on POST,
-60/min general) but it's per-isolate; the browser-direct paths rely
-entirely on Supabase's defaults.
+**Why this matters:** This is a well-documented, recurring attack
+pattern against Supabase projects. Citations:
 
-**Concrete gaps:**
+- *vibe-eval.com honeypot study (Apr 2026):* Leaked anon keys
+  receive their first malicious request in a median of **11
+  minutes**, fastest 47 seconds. 80% of honeypots received 100+
+  requests in the first 24 hours. Every probe starts with
+  `/rest/v1/?select=*` schema introspection, followed by mass
+  table enumeration. The decisive defense is RLS-correctness, not
+  key-rotation.
+- *Supabase Auth issues #1236, #1932, #2333, #10850:* Multiple
+  open/recently-fixed bugs in the Auth rate limiter. Failed
+  signups still consume the email quota; the configurable rate
+  limit is not enforced as configured; rate limit doesn't apply
+  to already-used emails; email auth provider rate-limits other
+  providers via shared limiters. Real reports of projects DoS'd
+  by ~50 bad requests/hour.
+- *r/SaaS / Hacker News recurring threads:* "Woke up to 500+ fake
+  signups overnight" is a standard milestone for any Supabase
+  project that opens signup without CAPTCHA. Bots drain email
+  quotas, poison sender reputation, fill `auth.users`.
+- *Supabase docs (`auth-anonymous.md:247`, `auth-captcha.md`):*
+  Explicitly recommend Cloudflare Turnstile or hCaptcha on every
+  anonymous flow.
 
-1. **Storage exhaustion via large pastes.** Schema allows 25 MiB
-   per paste. A multi-IP attacker can fill the 500 MB Supabase free
-   tier in 20 requests.
-2. **Email signup lockout.** Supabase inbuilt SMTP defaults to
-   ~4 emails/hour project-wide. One attacker spamming `/signup`
-   locks out all other email-confirmation signups for an hour.
-3. **Realtime connection exhaustion.** Free tier caps at 200
-   concurrent WS connections project-wide. Visitor 201+ on `/recent`
-   gets rejected.
-4. **No CAPTCHA.** Supabase docs explicitly recommend
-   Cloudflare Turnstile for anonymous sign-ins
-   (`auth-anonymous.md:247`).
+**Pasteriser's current exposure:**
 
-**Mitigation roadmap (recommended order):**
+| Surface | What's there now | Gap |
+|---------|------------------|-----|
+| RLS on `pastes`/`slugs` | 6 policies, verified by `test:rls` | ✓ Honeypot study would find nothing |
+| `anon` role permissions | `SELECT` only on public pastes/slugs | ✓ Minimal |
+| Worker `POST /pastes` rate limit | 10/min per IP in-memory | ⚠ Per-isolate, no cross-colo coordination |
+| `/auth/v1/signup` (browser → Supabase direct) | Supabase default | ✗ No CAPTCHA, no Worker gating |
+| `/auth/v1/token` refresh | Supabase per-IP token bucket | ⚠ Buggy per #2333 |
+| Email confirmation | Project default (likely on) | ✗ Inbuilt SMTP ~4/hour cap |
+| Realtime subscriptions | None | ⚠ Free tier 200 concurrent connections |
+| Paste size | 25 MiB max for all roles | ✗ Multi-IP attacker fills 500 MB DB in 20 requests |
 
-| Priority | Action | Where | Effort |
-|----------|--------|-------|--------|
-| HIGH | Tighten Supabase Auth rate limits via dashboard / Management API | Auth → Rate Limits | 5 min |
-| HIGH | Cap paste size lower for anonymous (e.g., 1 MiB; 25 MiB for signed-in) | `CreatePasteCommand` Zod schema | 10 min |
-| HIGH | Cloudflare Turnstile on `/signup` and `POST /pastes` | Astro form + Worker handler | 1-2h |
-| MED | Configure custom SMTP (Resend / Postmark) for production email volume | Auth → SMTP | 30 min + provider account |
-| MED | PostgREST-side per-IP rate-limit function backed by `private.rate_limits` table for browser-direct paths (see `supabase/guides/api/securing-your-api.md`) | New migration + trigger | 1h |
-| LOW | Cloudflare WAF rules: block IPs with abusive paste-creation patterns | CF dashboard | 30 min |
-| LOW | Per-IP storage quota (count + bytes) tracked in Postgres + enforced in `view_paste`-style RPC | New migration | 2h |
+**Mitigation order (tightest ROI first):**
 
-**Estimated effort to ship the HIGH-priority bundle:** half a day.
-That removes the most realistic abuse vectors (storage flooding,
-signup lockout) without touching Supabase plan tiers.
+| Priority | Action | Why first | Effort |
+|----------|--------|-----------|--------|
+| 1 | **Cloudflare Turnstile** on `/signup` form + Supabase Auth Bot and Abuse Protection. Supabase has native integration (Dashboard → Auth → Bot and Abuse Protection → CAPTCHA secret). | Highest ROI per Reddit + Supabase docs. Eliminates 92% of automated abuse per Sentinel/Discury surveys. | 1-2h |
+| 2 | **Cap anonymous paste size** (e.g., 64 KiB anon, 1 MiB authenticated, 25 MiB never). | Storage flooding is the cheapest attack and the most expensive to recover from. | 10 min |
+| 3 | **Configure custom SMTP** (Resend / Postmark) before any production email volume. | Inbuilt 4/hour is unusable. Even disabling email confirmation entirely is safer than relying on it. | 30 min + provider account |
+| 4 | **Tighten Supabase Auth rate limits** via Management API. Force conservative defaults (10 signups/hour/IP, 30 token refreshes/hour/IP). | Mitigation #2333 says config is buggy but the burst cap helps at scale. | 5 min |
+| 5 | **Move signup behind the Worker** — instead of browser calling `supabase.auth.signUp()` direct, browser POSTs to `/api/auth/signup`. Worker validates Turnstile token, checks Cloudflare bot-score, then calls Supabase Auth admin API with `Sb-Forwarded-For` header so per-IP limits work correctly. | Worker rate limit kicks in *before* Supabase Auth gets the request, doubling the gate. | 2-3h |
+| 6 | **PostgREST-side per-IP rate limit** for browser-direct paths (`/my` reads, Realtime subscribes). `private.rate_limits` table + `before insert/update/delete` triggers per `supabase/guides/api/securing-your-api.md`. | Defense in depth — Worker rate limit doesn't gate direct DB queries. | 1h |
+| 7 | **Cloudflare WAF rules** — block IPs with abusive paste-creation patterns (e.g., > 5 pastes/min, > 100 KiB body size and burst-y). | Stops obvious bots at the edge before they reach the Worker. | 30 min |
+| 8 | **Per-account daily quota** tracked in Postgres — `auth.users` daily-bytes column updated by a trigger on `pastes` insert. | Catches the rare case where a single legitimate-looking user fills the DB. | 2h |
 
-For the live verification we'd add a `test:rate-limit` script that:
+**Quick wins to ship today (~half a day for #1-4):** removes the
+most realistic abuse vectors. After this, an attacker would need to
+solve Turnstile per request, exhaust a custom-SMTP quota that's
+typically 10,000+/day, and only be able to fill the DB with ≤ 1 MiB
+pastes (and only by signing up first).
 
-- Hammers `POST /pastes` from a single IP and asserts the Worker
-  returns 429 after the quota
-- Tries `/auth/v1/signup` 5 times in a row and asserts the second
-  one is rate-limited per project config
-- Attempts 250 simultaneous Realtime subscribes and asserts
-  `too_many_connections` errors are surfaced
+**Live verification (would add `npm run test:abuse`):**
 
-This phase is **scoped but not committed**. Add to the plan when
-ready to harden for non-personal traffic.
+- Spam `POST /pastes` from one IP → assert Worker returns 429 by request N
+- Spam `POST /pastes` rotating headers (X-Forwarded-For, User-Agent) → assert in-memory limiter still catches single source
+- Try `auth.signUp` without Turnstile token → assert 500 (Supabase rejects unverified)
+- Try a 30 MiB paste body → assert Zod schema rejection
+- Try 250 simultaneous Realtime subscribes → assert `too_many_connections`
+  is surfaced gracefully in the `/recent` UI
+
+**This phase is scoped but not committed.** Recommended to ship
+items #1-3 before opening the project to any public traffic beyond
+single-user testing. Items #4-8 can wait for evidence of abuse.
 
 #### 4.6: Expiration (already done)
 
