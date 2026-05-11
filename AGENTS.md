@@ -28,13 +28,15 @@ Two separate packages with **independent `node_modules`**:
 
 ## Supabase migrations
 
-- All schema in `supabase/migrations/` — 11 files, applied to `dewddkcmwrzbpynylyhg`
+- All schema in `supabase/migrations/` — 12 files, applied to `dewddkcmwrzbpynylyhg`
 - Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema and Phase 3.5 audit fixes)
 - `set_updated_at` trigger has a `WHEN (OLD.x IS DISTINCT FROM NEW.x)` clause — required because `upsert()` sends all columns and `UPDATE OF col` fires on column presence, not value change
 - `createClient()` always passes `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }` — Supabase-recommended for server-side contexts
 - `view_paste(uuid)` RPC handles atomic view + burn-after-reading + view-limit with `SELECT ... FOR UPDATE`. The Supabase repository uses this; KV repository mirrors the logic without locking (documented race for rollback safety only)
 - `search_vector` is a STORED generated tsvector column (`to_tsvector('english', title || ' ' || language)`) backed by a GIN index. Query via `.textSearch('search_vector', q, { type: 'websearch', config: 'english' })`
 - Realtime: `AFTER INSERT` trigger on `pastes` calls `realtime.send()` to topic `recent:public` (private channel) when `visibility = 'public'`. Payload is curated to safe fields only. RLS policies on `realtime.messages` restrict `anon`/`authenticated` to the exact topic. INSERT trigger does NOT fire on upsert-induced UPDATEs.
+- RLS for authenticated users: 5 policies on `public.pastes` (view public, view own, create own, update own, delete own). Worker still uses `service_role` (RLS bypass); these policies activate when the frontend queries Supabase directly with a user JWT.
+- Auth: Worker validates `Authorization: Bearer <jwt>` via `AuthService.getUserIdFromRequest()` which calls `supabase.auth.getUser(jwt)`. user_id comes from the verified JWT, never from the request body. Anonymous requests get `user_id = NULL`.
 - Never run DDL directly via pgcli — always create a new migration file
 - Verify with `supabase db query --linked "SELECT ..."` or via `pgpasteriser` alias
 
@@ -63,6 +65,7 @@ npm run test:e2e         # playwright — runs against PRODUCTION (paste.erfi.de
 npm run test:smoke       # tsx scripts/smoke-test.ts — live API + Supabase verification
 npm run test:race        # tsx scripts/concurrent-burn-test.ts — concurrent burn race-free check
 npm run test:realtime    # tsx scripts/verify-realtime.ts — broadcast pipeline + RLS compat matrix
+npm run test:rls         # tsx scripts/verify-rls.ts — Supabase Auth + RLS end-to-end (2 test users)
 npm run test:all         # test + test:ui + test:e2e
 
 # Codegen

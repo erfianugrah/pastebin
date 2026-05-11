@@ -76,6 +76,7 @@ export class Paste {
     private readonly viewLimit?: number,
     private readonly version: number = 0, // 0=plaintext, 2=client-side encryption
     private readonly deleteToken?: string, // token required to delete this paste
+    private readonly userId?: string, // auth.users(id) when authenticated, null for anon
   ) {}
 
   static create(
@@ -90,6 +91,7 @@ export class Paste {
     viewLimit?: number,
     version: number = 0, // 0=plaintext, 2=client-side encryption
     deleteToken?: string,
+    userId?: string,
   ): Paste {
     let resolvedVersion = version;
     if (!isEncrypted) {
@@ -115,6 +117,7 @@ export class Paste {
       viewLimit,
       resolvedVersion,
       token,
+      userId,
     );
   }
 
@@ -177,6 +180,7 @@ export class Paste {
       this.viewLimit,
       this.version,
       this.deleteToken,
+      this.userId,
     );
   }
   
@@ -215,6 +219,10 @@ export class Paste {
     return this.deleteToken;
   }
 
+  getUserId(): string | undefined {
+    return this.userId;
+  }
+
   getViewLimit(): number | undefined {
     return this.viewLimit;
   }
@@ -250,9 +258,13 @@ export class Paste {
       securityType: this.getSecurityType(),
     };
 
-    // Only include deleteToken when persisting to storage, never in API responses
+    // Only include deleteToken and userId when persisting to storage,
+    // never in API responses. (userId could be leaked via display tricks
+    // even though it's not strictly secret, but we want strict control
+    // over the API response surface.)
     if (includeSecrets) {
       json.deleteToken = this.deleteToken;
+      json.userId = this.userId;
     }
 
     return json;
@@ -297,4 +309,5 @@ export interface PasteData {
   version?: number; // Encryption version: 0=plaintext, 2=client-side
   securityType?: string;
   deleteToken?: string;
+  userId?: string; // auth.users(id) when the paste was created by a logged-in user
 }

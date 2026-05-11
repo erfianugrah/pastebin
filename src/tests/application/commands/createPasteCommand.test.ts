@@ -141,4 +141,42 @@ describe('CreatePasteCommand', () => {
     
     await expect(command.execute(params)).rejects.toThrow();
   });
+
+  it('passes opts.userId into the created paste', async () => {
+    vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('with-user'));
+    vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(86400));
+
+    const params: CreatePasteParams = {
+      content: 'authed content',
+      expiration: 86400,
+      visibility: 'public',
+      burnAfterReading: false,
+      isEncrypted: false,
+      version: 0,
+    };
+
+    await command.execute(params, { userId: 'user-uuid-123' });
+
+    const savedPaste = vi.mocked(mockRepository.save).mock.calls[0][0];
+    expect(savedPaste.getUserId()).toBe('user-uuid-123');
+  });
+
+  it('omits user_id (undefined) for anonymous calls', async () => {
+    vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('anon'));
+    vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(86400));
+
+    const params: CreatePasteParams = {
+      content: 'anon content',
+      expiration: 86400,
+      visibility: 'public',
+      burnAfterReading: false,
+      isEncrypted: false,
+      version: 0,
+    };
+
+    await command.execute(params);
+
+    const savedPaste = vi.mocked(mockRepository.save).mock.calls[0][0];
+    expect(savedPaste.getUserId()).toBeUndefined();
+  });
 });

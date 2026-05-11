@@ -43,7 +43,7 @@ export class CreatePasteCommand {
 		private readonly baseUrl: string,
 	) {}
 
-	async execute(params: CreatePasteParams): Promise<CreatePasteResult> {
+	async execute(params: CreatePasteParams, opts: { userId?: string } = {}): Promise<CreatePasteResult> {
 		// Validate input
 		const validParams = CreatePasteSchema.parse(params);
 
@@ -68,7 +68,9 @@ export class CreatePasteCommand {
 			validParams.version = 0;
 		}
 
-		// Create paste entity
+		// Create paste entity. userId comes from the auth context (verified JWT
+		// in the handler layer); never from the request body to prevent
+		// impersonation.
 		const paste = Paste.create(
 			id,
 			validParams.content,
@@ -80,6 +82,8 @@ export class CreatePasteCommand {
 			validParams.isEncrypted,
 			validParams.viewLimit,
 			validParams.version,
+			undefined, // deleteToken auto-generated
+			opts.userId,
 		);
 
 		// Save to repository

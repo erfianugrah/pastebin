@@ -183,6 +183,37 @@ describe('SupabasePasteRepository', () => {
 			expect(mockClient.from.mock.results[0].value.upsert).toHaveBeenCalled();
 			expect(mockClient.from.mock.results[0].value.insert).not.toHaveBeenCalled();
 		});
+
+		it('sends user_id when set on the paste', async () => {
+			const paste = new Paste(
+				PasteId.create('with-user'),
+				'content',
+				new Date('2024-01-01T12:00:00Z'),
+				ExpirationPolicy.create(3600),
+				'Test',
+				undefined,
+				'public',
+				false,
+				0,
+				false,
+				undefined,
+				0,
+				'tok',
+				'user-uuid-123',
+			);
+			await repository.save(paste);
+
+			const upsertArg = (mockClient.from.mock.results[0].value.upsert.mock.calls as unknown[][])[0][0];
+			expect(upsertArg).toMatchObject({ user_id: 'user-uuid-123' });
+		});
+
+		it('sends user_id = null for anonymous paste', async () => {
+			const paste = makePaste(); // no userId
+			await repository.save(paste);
+
+			const upsertArg = (mockClient.from.mock.results[0].value.upsert.mock.calls as unknown[][])[0][0];
+			expect(upsertArg).toMatchObject({ user_id: null });
+		});
 	});
 
 	describe('findById', () => {
@@ -245,6 +276,26 @@ describe('SupabasePasteRepository', () => {
 			expect(result?.getViewLimit()).toBe(10);
 			expect(result?.getVersion()).toBe(2);
 			expect(result?.getVisibility()).toBe('private');
+		});
+
+		it('maps user_id from snake_case to Paste.userId', async () => {
+			const row = makeDbRow({ user_id: 'auth-user-xyz' });
+			mockClient = makeSupabaseMock({ selectResult: { data: row, error: null } });
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.findById(PasteId.create('test-uuid-1234'));
+			expect(result?.getUserId()).toBe('auth-user-xyz');
+		});
+
+		it('maps null user_id to undefined (anonymous paste)', async () => {
+			const row = makeDbRow({ user_id: null });
+			mockClient = makeSupabaseMock({ selectResult: { data: row, error: null } });
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.findById(PasteId.create('test-uuid-1234'));
+			expect(result?.getUserId()).toBeUndefined();
 		});
 	});
 

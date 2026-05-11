@@ -55,8 +55,8 @@ export class SupabasePasteRepository implements PasteRepository {
 			view_limit: data.viewLimit,
 			version: data.version,
 			delete_token: data.deleteToken,
+			user_id: data.userId ?? null,
 			// updated_at is handled by the set_updated_at trigger
-			// user_id is null for anonymous pastes (Phase 4 adds auth)
 		});
 
 		if (error) {
@@ -228,6 +228,7 @@ export class SupabasePasteRepository implements PasteRepository {
 			viewLimit: row.view_limit as number | undefined,
 			version: row.version as number,
 			deleteToken: row.delete_token as string | undefined,
+			userId: (row.user_id as string | null | undefined) ?? undefined,
 		};
 	}
 }

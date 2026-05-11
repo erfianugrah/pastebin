@@ -4,6 +4,7 @@ import { Env } from './types';
 import { ConfigurationService } from './infrastructure/config/config';
 import { KVPasteRepository } from './infrastructure/storage/kvPasteRepository';
 import { SupabasePasteRepository } from './infrastructure/storage/supabasePasteRepository';
+import { AuthService } from './infrastructure/auth/authService';
 import { DualWriteRepository } from './infrastructure/storage/dualWriteRepository';
 import { PasteRepository } from './domain/repositories/pasteRepository';
 import { CloudflareUniqueIdService } from './infrastructure/services/cloudflareUniqueIdService';
@@ -33,6 +34,7 @@ type AppEnv = {
 		logger: Logger;
 		handlers: ApiHandlers;
 		pasteRepository: PasteRepository;
+		authService: AuthService | null;
 	};
 };
 
@@ -106,6 +108,13 @@ app.use('*', async (c, next) => {
 	const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
 	const searchPastesQuery = new SearchPastesQuery(pasteRepository, logger);
 
+	// AuthService is only useful when Supabase is configured. When using KV
+	// backend without Supabase, we skip auth entirely (all pastes are anon).
+	const authService =
+		c.env.SUPABASE_URL && c.env.SUPABASE_SECRET_KEY
+			? new AuthService(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger)
+			: null;
+
 	const apiHandlers = new ApiHandlers(
 		createPasteCommand,
 		deletePasteCommand,
@@ -114,10 +123,12 @@ app.use('*', async (c, next) => {
 		searchPastesQuery,
 		logger,
 		pasteRepository,
+		authService,
 	);
 
 	c.set('handlers', apiHandlers);
 	c.set('pasteRepository', pasteRepository);
+	c.set('authService', authService);
 
 	await next();
 });

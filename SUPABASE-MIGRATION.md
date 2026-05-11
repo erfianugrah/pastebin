@@ -768,7 +768,105 @@ resolved to UPDATE. Verified empirically (see `npm run test:realtime`).
 See `postgres-learnings.md` "Supabase Realtime" section for the full
 limitations matrix.
 
-#### 4.4: Auth + RLS (next)
+#### 4.4a: RLS for authenticated users ✓ COMPLETE
+
+Migration `20260511140659_authenticated_rls_policies.sql` adds 5 RLS
+policies on `public.pastes` for the `authenticated` role:
+
+| Policy | Operation | Predicate |
+|--------|-----------|-----------|
+| `authenticated can view public pastes` | SELECT | `visibility = 'public'` (mirrors the anon policy) |
+| `authenticated can view own pastes` | SELECT | `(SELECT auth.uid()) = user_id` |
+| `authenticated can create own pastes` | INSERT | WITH CHECK `(SELECT auth.uid()) = user_id` |
+| `authenticated can update own pastes` | UPDATE | USING + WITH CHECK both pin `auth.uid() = user_id` |
+| `authenticated can delete own pastes` | DELETE | USING `(SELECT auth.uid()) = user_id` |
+
+All policies use `(SELECT auth.uid())` not bare `auth.uid()` — Postgres
+runs it once per statement via initPlan instead of once per row.
+Supabase RLS benchmarks: 94-99% improvement at scale.
+
+The Worker continues using `service_role` (RLS bypass). These policies
+activate when:
+
+- Frontend queries Supabase directly with a user JWT (`/my` page,
+  Phase 4.4c)
+- Future endpoints might run under authenticated context
+- Defense in depth if a Worker bug ever exposes the wrong rows
+
+#### 4.4b: Worker JWT verification + user_id passthrough ✓ COMPLETE
+
+**`AuthService`** (`src/infrastructure/auth/authService.ts`):
+- Constructs its own Supabase client with the secret key + standard
+  server-side auth opts
+- `getUserIdFromRequest(request)` extracts the bearer token from
+  `Authorization: <jwt>`, calls `supabase.auth.getUser(jwt)` to
+  verify, returns user id or null
+- Case-insensitive bearer prefix handling
+- Logs at debug for invalid tokens (likely user noise), warn for
+  network failures (operational signal)
+- Cost: one round-trip per authenticated request. Acceptable for
+  pastebin throughput. For higher scale, switch to `getClaims()`
+  (local JWKS-based verification).
+
+**Domain model:**
+- `Paste` gains a `userId?: string` field, accessor, factory and
+  rehydration support
+- `Paste.toJSON(includeSecrets = true)` now includes `userId` along
+  with `deleteToken` (only for persisting, never in API responses)
+- `incrementReadCount()` preserves userId
+
+**Application:**
+- `CreatePasteCommand.execute(params, opts: { userId? })` — userId
+  comes from the verified JWT, NEVER from the request body
+  (impersonation guard)
+
+**Infrastructure:**
+- `SupabasePasteRepository.save()` now sends `user_id` in the upsert
+  (nullable, defaults to null for anonymous pastes)
+- `SupabasePasteRepository.mapRow()` reads `user_id` and exposes it
+  as `userId` in `PasteData`
+
+**Handler:**
+- `ApiHandlers` gains an optional `authService` constructor arg
+- `handleCreatePaste()` calls `authService.getUserIdFromRequest()`
+  if configured; passes the result (or undefined) into the command
+- Anonymous requests (no/invalid JWT) get `userId = undefined` and
+  produce anonymous pastes (`user_id = NULL`)
+- `handleUpdatePaste()` preserves `userId` when reconstructing the
+  Paste — fixes an orphan bug that would have erased ownership on
+  every update
+
+**Tests added:**
+
+| File | New tests |
+|------|----------:|
+| `authService.test.ts` (new) | 7 |
+| `createPasteCommand.test.ts` | 2 (userId pass-through + anon) |
+| `supabasePasteRepository.test.ts` | 4 (save user_id, save null, mapRow user_id, mapRow null) |
+| `handlers.test.ts` | 3 (JWT → userId, no authService, invalid JWT) |
+
+151 unit tests total (was 135).
+
+**Live verification (`npm run test:rls`):**
+
+`scripts/verify-rls.ts` creates two Supabase Auth users via the admin
+API, signs them in, and verifies 13 RLS scenarios:
+
+1. Worker accepts JWT and persists user_id on the paste row
+2. Anonymous paste creation (no JWT) still works (user_id = NULL)
+3. User A can SELECT their own private paste via direct DB + JWT
+4. User A CANNOT SELECT user B's private paste (RLS blocks)
+5. Both users CAN SELECT public pastes from each other
+6. User A's "my pastes" via RLS contains only their own rows
+7. User A can DELETE their own paste via direct DB + JWT
+8. User A CANNOT DELETE user B's paste (count = 0, no error)
+9. INSERT with mismatched user_id is rejected by RLS WITH CHECK
+   with `new row violates row-level security policy for table "pastes"`
+
+All 13 pass against production. Cleanup deletes test users + their
+pastes; no residue in the live DB.
+
+#### 4.4c: Frontend login + /my page (next)
 
 **Analytics** (exercises: Postgres aggregation)
 

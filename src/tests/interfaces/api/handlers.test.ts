@@ -5,6 +5,7 @@ import { DeletePasteCommand, DeleteErrorCode } from '../../../application/comman
 import { GetPasteQuery } from '../../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../../application/queries/getRecentPastesQuery';
 import { SearchPastesQuery } from '../../../application/queries/searchPastesQuery';
+import { AuthService } from '../../../infrastructure/auth/authService';
 import { Logger } from '../../../infrastructure/logging/logger';
 import { Paste, PasteId, ExpirationPolicy } from '../../../domain/models/paste';
 
@@ -31,6 +32,10 @@ const mockRecentQuery = {
 const mockSearchQuery = {
 	execute: vi.fn(),
 } as unknown as SearchPastesQuery;
+
+const mockAuthService = {
+	getUserIdFromRequest: vi.fn(),
+} as unknown as AuthService;
 
 const mockLogger = {
 	debug: vi.fn(),
@@ -102,6 +107,91 @@ describe('ApiHandlers', () => {
 			expect(res.status).toBe(201);
 			const body = await res.json();
 			expect(body).toHaveProperty('id', 'abc123');
+		});
+
+		it('passes user_id from AuthService to the command when JWT is valid', async () => {
+			vi.mocked(mockAuthService.getUserIdFromRequest).mockResolvedValue('user-uuid-789');
+			vi.mocked(mockCreateCommand.execute).mockResolvedValue({
+				id: 'abc',
+				url: 'https://example.com/pastes/abc',
+				expiresAt: new Date().toISOString(),
+				deleteToken: 'tok',
+			});
+
+			handlers = new ApiHandlers(
+				mockCreateCommand,
+				mockDeleteCommand,
+				mockGetQuery,
+				mockRecentQuery,
+				mockSearchQuery,
+				mockLogger,
+				undefined,
+				mockAuthService,
+			);
+
+			const req = new Request('https://example.com/pastes', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', Authorization: 'Bearer some.jwt' },
+				body: JSON.stringify({ content: 'authed', expiration: 3600 }),
+			});
+			await handlers.handleCreatePaste(req);
+
+			expect(mockAuthService.getUserIdFromRequest).toHaveBeenCalledWith(req);
+			expect(mockCreateCommand.execute).toHaveBeenCalledWith(
+				expect.objectContaining({ content: 'authed' }),
+				{ userId: 'user-uuid-789' },
+			);
+		});
+
+		it('passes userId=undefined when no AuthService is configured', async () => {
+			vi.mocked(mockCreateCommand.execute).mockResolvedValue({
+				id: 'abc',
+				url: 'https://example.com/pastes/abc',
+				expiresAt: new Date().toISOString(),
+				deleteToken: 'tok',
+			});
+
+			// Default test handler has no authService — should still work
+			const req = jsonRequest('https://example.com/pastes', { content: 'anon', expiration: 3600 });
+			await handlers.handleCreatePaste(req);
+
+			expect(mockCreateCommand.execute).toHaveBeenCalledWith(
+				expect.objectContaining({ content: 'anon' }),
+				{ userId: undefined },
+			);
+		});
+
+		it('passes userId=undefined when JWT is invalid', async () => {
+			vi.mocked(mockAuthService.getUserIdFromRequest).mockResolvedValue(null);
+			vi.mocked(mockCreateCommand.execute).mockResolvedValue({
+				id: 'abc',
+				url: 'https://example.com/pastes/abc',
+				expiresAt: new Date().toISOString(),
+				deleteToken: 'tok',
+			});
+
+			handlers = new ApiHandlers(
+				mockCreateCommand,
+				mockDeleteCommand,
+				mockGetQuery,
+				mockRecentQuery,
+				mockSearchQuery,
+				mockLogger,
+				undefined,
+				mockAuthService,
+			);
+
+			const req = new Request('https://example.com/pastes', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', Authorization: 'Bearer bad.jwt' },
+				body: JSON.stringify({ content: 'rejected', expiration: 3600 }),
+			});
+			await handlers.handleCreatePaste(req);
+
+			expect(mockCreateCommand.execute).toHaveBeenCalledWith(
+				expect.objectContaining({ content: 'rejected' }),
+				{ userId: undefined },
+			);
 		});
 	});
 

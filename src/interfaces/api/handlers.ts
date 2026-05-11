@@ -5,6 +5,7 @@ import { DeletePasteCommand, DeleteErrorCode } from '../../application/commands/
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../application/queries/getRecentPastesQuery';
 import { SearchPastesQuery } from '../../application/queries/searchPastesQuery';
+import { AuthService } from '../../infrastructure/auth/authService';
 import { Logger } from '../../infrastructure/logging/logger';
 import { AppError, ValidationError, NotFoundError } from '../../infrastructure/errors/AppError';
 
@@ -48,14 +49,22 @@ export class ApiHandlers {
 		private readonly searchPastesQuery: SearchPastesQuery,
 		private readonly logger: Logger,
 		private readonly repository?: PasteRepository,
+		private readonly authService: AuthService | null = null,
 	) {}
 
 	async handleCreatePaste(request: Request): Promise<Response> {
 		try {
 			this.logger.debug('Handling create paste request');
 
+			// Extract user_id from JWT if a Bearer token is present and valid.
+			// Anonymous requests (no/invalid token) get userId = undefined and
+			// produce anonymous pastes (user_id = NULL in DB).
+			const userId = this.authService
+				? (await this.authService.getUserIdFromRequest(request)) ?? undefined
+				: undefined;
+
 			const body = (await request.json()) as CreatePasteParams;
-			const result = await this.createPasteCommand.execute(body);
+			const result = await this.createPasteCommand.execute(body, { userId });
 
 			return json(result, 201);
 		} catch (error) {
@@ -160,7 +169,9 @@ export class ApiHandlers {
 				return json({ error: { code: 'unauthorized', message: 'Invalid token' } }, 403);
 			}
 
-			// Create updated paste in-place (new Paste with same ID, updated content)
+			// Create updated paste in-place (new Paste with same ID, updated content).
+			// Preserve userId so updating an authenticated user's paste doesn't
+			// orphan it.
 			const updatedPaste = new Paste(
 				paste.getId(),
 				body.content ?? paste.getContent(),
@@ -175,6 +186,7 @@ export class ApiHandlers {
 				paste.getViewLimit(),
 				paste.getVersion(),
 				paste.getDeleteToken(),
+				paste.getUserId(),
 			);
 
 			await this.repository.save(updatedPaste);

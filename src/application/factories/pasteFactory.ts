@@ -30,6 +30,7 @@ export class PasteFactory {
 			data.viewLimit,
 			data.version || 0,
 			data.deleteToken,
+			data.userId,
 		);
 	}
 }
