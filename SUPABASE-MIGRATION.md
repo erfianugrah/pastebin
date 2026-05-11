@@ -343,7 +343,7 @@ export class SupabasePasteRepository implements PasteRepository {
 			language: data.language,
 			visibility: data.visibility,
 			is_encrypted: data.isEncrypted,
-			encryption_version: data.version,
+			version: data.version,
 			burn_after_reading: data.burnAfterReading,
 			read_count: data.readCount,
 			view_limit: data.viewLimit,
@@ -361,7 +361,14 @@ export class SupabasePasteRepository implements PasteRepository {
 	async findById(id: PasteId): Promise<Paste | null> {
 		const { data, error } = await this.client.from('pastes').select('*').eq('id', id.toString()).single();
 
-		if (error || !data) return null;
+		if (error) {
+			// PGRST116 = no rows -- not a real error, don't log it
+			if (error.code === 'PGRST116') return null;
+			this.logger.error('Supabase: findById failed', { error });
+			return null;
+		}
+
+		if (!data) return null;
 
 		return PasteFactory.fromData(this.mapRow(data));
 	}
@@ -423,7 +430,7 @@ export class SupabasePasteRepository implements PasteRepository {
 			readCount: row.read_count,
 			isEncrypted: row.is_encrypted,
 			viewLimit: row.view_limit,
-			version: row.encryption_version,
+			version: row.version,
 			deleteToken: row.delete_token,
 		};
 	}
@@ -538,8 +545,8 @@ WHERE visibility = 'public' GROUP BY language ORDER BY count DESC;
 SELECT date_trunc('hour', created_at) AS hour, count(*)
 FROM pastes GROUP BY hour ORDER BY hour DESC LIMIT 48;
 
--- Encryption adoption
-SELECT encryption_version, count(*) FROM pastes GROUP BY encryption_version;
+-- Encryption adoption (column is `version`: 0=plaintext, 2=client-side E2E)
+SELECT version, count(*) FROM pastes GROUP BY version;
 ```
 
 **Expiration done right** (exercises: pg_cron)
