@@ -120,6 +120,10 @@ async function subscribeStatus(opts: {
 
 	const channel = supabase.channel(opts.topic, { config: { private: opts.private } });
 
+	// Cold WebSocket connection to Realtime sometimes takes 5-8s on the
+	// first attempt of a process. 10s timeout is a reasonable cap; if it
+	// exceeds that, something's actually wrong.
+	const timeout = opts.timeoutMs ?? 10000;
 	const status = await Promise.race([
 		new Promise<string>((res) => {
 			channel.subscribe((s, err) => {
@@ -128,7 +132,7 @@ async function subscribeStatus(opts: {
 				}
 			});
 		}),
-		new Promise<string>((r) => setTimeout(() => r(`TIMEOUT(${opts.timeoutMs ?? 5000}ms)`), opts.timeoutMs ?? 5000)),
+		new Promise<string>((r) => setTimeout(() => r(`TIMEOUT(${timeout}ms)`), timeout)),
 	]);
 
 	await supabase.removeAllChannels().catch(() => {});

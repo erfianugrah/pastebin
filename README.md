@@ -353,13 +353,13 @@ The API is RESTful and follows standard HTTP conventions.
   "content": "string",
   "title": "string",
   "language": "string",
-  "expiration": 86400,
+  "expiresIn": "1d",
   "visibility": "public",
-  "password": "string",
   "burnAfterReading": false,
   "isEncrypted": false,
   "viewLimit": 10,
-  "version": 2
+  "version": 2,
+  "slug": "my-paste"
 }
 ```
 
@@ -368,13 +368,15 @@ The API is RESTful and follows standard HTTP conventions.
 | `content` | string | Yes | Paste content (max 25 MiB) |
 | `title` | string | No | Title (max 100 chars) |
 | `language` | string | No | Syntax highlighting language |
-| `expiration` | number | No | TTL in seconds (default: 86400) |
+| `expiresIn` | string\|number | No | Expiration: `"1h"`, `"1d"`, `"7d"`, or seconds (default: `"1d"`) |
 | `visibility` | string | No | `"public"` or `"private"` (default: `"public"`) |
-| `password` | string | No | Triggers client-side E2E encryption |
-| `burnAfterReading` | boolean | No | Self-destruct after first view |
-| `isEncrypted` | boolean | No | Whether content is already E2E encrypted |
+| `burnAfterReading` | boolean | No | Self-destruct after first view (atomic via `view_paste()` RPC) |
+| `isEncrypted` | boolean | No | Whether content is already client-side E2E encrypted |
 | `viewLimit` | number | No | Max views before auto-deletion (1-100) |
 | `version` | number | No | Encryption version (0=plaintext, 2=client-side E2E) |
+| `slug` | string | No | Optional vanity slug. Becomes the URL `/p/<slug>`. |
+
+Server-side password protection was removed in 2026; security is entirely client-side E2EE.
 
 **Response:**
 ```json
@@ -420,6 +422,49 @@ Set `Accept: application/json` to receive JSON. HTML requests are served the Ast
 **Endpoint:** `GET /pastes/raw/:id`
 
 Returns the raw paste content as `text/plain`.
+
+#### Recent Public Pastes
+
+**Endpoint:** `GET /api/recent?limit=20`
+
+Returns the most recently created public, non-expired pastes. Limit clamped to `[1, 100]`, default 10.
+
+```json
+{
+  "pastes": [
+    { "id": "...", "title": "...", "language": "...", "createdAt": "...", "expiresAt": "...", "readCount": 3 }
+  ]
+}
+```
+
+For a real-time live feed, subscribe to the `recent:public` Realtime broadcast channel (see *Realtime live feed* below).
+
+#### Full-Text Search
+
+**Endpoint:** `GET /api/search?q=<query>&limit=20`
+
+Searches public, non-expired pastes by title + language using Postgres FTS (`tsvector` GIN index, `websearch_to_tsquery` parsing). Limit clamped to `[1, 50]`, query truncated to 200 chars.
+
+Empty/whitespace `q` returns `{ "pastes": [], "query": "" }` without hitting the database.
+
+```json
+{
+  "pastes": [
+    { "id": "...", "title": "...", "language": "...", "createdAt": "...", "expiresAt": "...", "readCount": 5 }
+  ],
+  "query": "the trimmed search query"
+}
+```
+
+Supports `websearch_to_tsquery` syntax: `"phrase quoting"`, boolean `OR`, `-excluded`.
+
+#### Realtime Live Feed
+
+The Astro `/recent` page subscribes to Supabase Realtime topic `recent:public` (private channel, RLS-gated) and prepends newly created public pastes without polling.
+
+The trigger payload contains only safe metadata: `id`, `title`, `language`, `createdAt`, `expiresAt`, `readCount`, `isEncrypted`, `version`. Private pastes never enter the broadcast pipeline (filtered at the trigger).
+
+Run `npm run test:realtime` to verify the pipeline end-to-end.
 
 #### Delete a Paste
 
@@ -640,8 +685,11 @@ npm run deploy
 - `npm run deploy` - Deploy to Cloudflare Workers
 
 ### Testing & Quality Assurance
-- `npm run test` - Run tests
-- `npm run test:watch` - Run tests in watch mode
+- `npm run test` - Run unit tests (vitest)
+- `npm run test:watch` - Run unit tests in watch mode
+- `npm run test:smoke` - Live API + Supabase e2e tests against production
+- `npm run test:race` - Concurrent burn-after-reading race-free verification
+- `npm run test:realtime` - Realtime broadcast pipeline + RLS compatibility matrix
 - `npm run lint` - Run ESLint
 - `npm run check` - Run TypeScript typechecking
 
@@ -946,23 +994,25 @@ For more detailed security information, configuration guides, and security check
 
 ## Current Deployment Status
 
-**Live Version**: `272135c9-8306-4a51-8389-94a5e713907f` (deployed Dec 6, 2025)
 **Domain**: https://paste.erfi.dev
-**Worker Startup Time**: 13 ms
-**Deployment Size**: 555.47 KiB (gzipped: 87.37 KiB)
+**Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
+**Migrations**: 11 applied — see `supabase/migrations/`
 
 ### Storage Backend
 
-Migrated from Cloudflare KV to **Supabase Postgres** (Frankfurt, `eu-central-1`) in May 2026.
+Migrated from Cloudflare KV to **Supabase Postgres** in May 2026.
 
-| What | Where |
-|------|-------|
-| Paste data | Supabase `pastes` table |
-| Vanity slugs | Supabase `slugs` table |
-| Expiration | pg_cron job every 5 minutes |
-| KV namespace | Retained in bindings for rollback, unused |
+| What | Where | Notes |
+|------|-------|-------|
+| Paste data | Supabase `pastes` table | RLS enabled (public-visibility policy for `anon`) |
+| Vanity slugs | Supabase `slugs` table | RLS enabled (non-expired slugs visible to `anon`) |
+| Atomic view | `view_paste(uuid)` RPC | `SELECT ... FOR UPDATE` row lock — fixes burn-after-reading race |
+| Search | `search_vector` (GIN-indexed tsvector) | `websearch_to_tsquery` semantics via `/api/search` |
+| Live feed | Realtime broadcast on `recent:public` | `AFTER INSERT` trigger; private channel; RLS on `realtime.messages` |
+| Expiration | pg_cron jobs | Expired pastes every 5min, expired slugs daily at 03:00 |
+| KV namespace | Retained in bindings for rollback | Unused with `STORAGE_BACKEND=supabase` |
 
-See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey.
+See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey including Phase 3.5 audit fixes (`updated_at` trigger `WHEN` clause, server-side `createClient` opts) and Phase 4 feature work.
 
 ## Recent Updates
 
