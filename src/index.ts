@@ -304,6 +304,25 @@ app.get('/recent', async (c) => {
 	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
 });
 
+// Auth + user pages (Phase 4.4c)
+app.get('/login', async (c) => {
+	const url = new URL(c.req.url);
+	const req = new Request(url.origin + '/login/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
+});
+
+app.get('/signup', async (c) => {
+	const url = new URL(c.req.url);
+	const req = new Request(url.origin + '/signup/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
+});
+
+app.get('/my', async (c) => {
+	const url = new URL(c.req.url);
+	const req = new Request(url.origin + '/my/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
+});
+
 app.get('/', async (c) => {
 	const url = new URL(c.req.url);
 	const req = new Request(url.origin + '/index.html', c.req.raw);

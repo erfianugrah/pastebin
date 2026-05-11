@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Menu, X } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
+import UserMenu from './UserMenu';
 
 export default function Header() {
 	const [isScrolled, setIsScrolled] = useState(false);
@@ -43,6 +44,7 @@ export default function Header() {
 					</nav>
 
 					<ThemeToggle />
+					<UserMenu />
 
 					<button
 						className="md:hidden p-1.5 rounded-md hover:bg-muted transition-colors"
@@ -65,6 +67,9 @@ export default function Header() {
 						</a>
 						<a href="/recent" className="py-2 px-3 rounded-md text-sm hover:bg-muted transition-colors" onClick={() => setIsMenuOpen(false)}>
 							Recent Pastes
+						</a>
+						<a href="/my" className="py-2 px-3 rounded-md text-sm hover:bg-muted transition-colors" onClick={() => setIsMenuOpen(false)}>
+							My Pastes
 						</a>
 					</nav>
 				</div>

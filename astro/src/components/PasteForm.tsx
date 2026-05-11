@@ -212,9 +212,25 @@ export default function PasteForm() {
 			const fetchUrl = isEdit ? `/pastes/${editMode.pasteId}` : '/pastes';
 			const fetchMethod = isEdit ? 'PUT' : 'POST';
 
+			// If the user is signed in, attach their JWT so the Worker can set
+			// user_id on the paste. Anonymous users get user_id = NULL.
+			const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+			try {
+				const { getSupabase } = await import('../lib/supabase');
+				const supabase = getSupabase();
+				if (supabase) {
+					const { data } = await supabase.auth.getSession();
+					if (data.session?.access_token) {
+						headers.Authorization = `Bearer ${data.session.access_token}`;
+					}
+				}
+			} catch {
+				// supabase not configured -- proceed without auth (anonymous paste)
+			}
+
 			const response = await fetch(fetchUrl, {
 				method: fetchMethod,
-				headers: { 'Content-Type': 'application/json' },
+				headers,
 				body: isEdit
 					? JSON.stringify({ token: editMode.token, content: encryptedContent, title, language: lang })
 					: JSON.stringify({

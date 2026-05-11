@@ -1,0 +1,10 @@
+---
+import Layout from '../layouts/Layout.astro';
+import AuthForm from '../components/AuthForm';
+---
+
+<Layout title="Sign up - Pasteriser">
+  <div class="max-w-md mx-auto px-4 py-12">
+    <AuthForm mode="signup" client:load />
+  </div>
+</Layout>

@@ -1,0 +1,11 @@
+---
+import Layout from '../layouts/Layout.astro';
+import MyPastes from '../components/MyPastes';
+---
+
+<Layout title="My Pastes - Pasteriser">
+  <div class="max-w-4xl mx-auto px-4 py-8">
+    <h1 class="text-2xl font-bold tracking-tight mb-6">My Pastes</h1>
+    <MyPastes client:load />
+  </div>
+</Layout>

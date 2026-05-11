@@ -866,7 +866,68 @@ API, signs them in, and verifies 13 RLS scenarios:
 All 13 pass against production. Cleanup deletes test users + their
 pastes; no residue in the live DB.
 
-#### 4.4c: Frontend login + /my page (next)
+#### 4.4c: Frontend login + /my page ✓ COMPLETE
+
+Three new Astro pages and four React islands. All driven by a shared
+browser-side Supabase client.
+
+**Shared infrastructure:**
+
+- `astro/src/lib/supabase.ts` — browser client singleton. Lazy
+  init, returns null when env vars missing (graceful degradation).
+  Browser auth opts enabled (persistSession, autoRefreshToken,
+  storageKey scoped to `pasteriser-auth`).
+- `astro/src/hooks/useAuth.ts` — React hook returning `{ user,
+  session, loading, signIn, signUp, signOut }`. Subscribes to
+  `onAuthStateChange` for live state. Cleans up on unmount.
+
+**Components:**
+
+- `UserMenu.tsx` — header island. Shows avatar circle when signed
+  in (with a dropdown for My Pastes / Sign out), "Log in" link
+  otherwise. Hides entirely when auth not configured.
+- `AuthForm.tsx` — login/signup combined (mode prop). Email +
+  password (min 6 chars). Shows "check your email" notice when
+  the project requires email confirmation. Redirects to `/my`
+  on success.
+- `MyPastes.tsx` — `/my` page island. Queries `pastes` table
+  directly via supabase-js. **No server-side filter clause** —
+  RLS does the filtering. Delete uses direct DB delete too;
+  cross-user delete attempts return count = 0 silently.
+
+**Pages:**
+
+- `/login` → `AuthForm mode="login"`
+- `/signup` → `AuthForm mode="signup"`
+- `/my` → `MyPastes` (shows sign-in prompt if not authenticated)
+
+Routes added to the Worker so it knows to serve the corresponding
+Astro static HTML.
+
+**Existing components updated:**
+
+- `Header.tsx` mounts `UserMenu` and adds a "My Pastes" link in
+  the mobile menu.
+- `PasteForm.tsx` reads the current Supabase session before posting
+  to `/pastes` and adds `Authorization: Bearer <jwt>` when signed
+  in. Anonymous behavior unchanged.
+
+**Astro env:**
+
+`PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_KEY` (Vite
+bakes them into the client bundle at build time). Already added
+in Phase 4.3 for the live recent feed.
+
+**Verification path:**
+
+1. Open `https://paste.erfi.dev/signup`, create an account.
+2. After email confirmation (or immediately if disabled in the
+   project's auth settings), log in at `/login`.
+3. Create a paste with `Private` visibility.
+4. Navigate to `/my` — the private paste appears.
+5. Sign out, navigate to `/my` — see the sign-in prompt.
+6. Other users do NOT see your private paste (verified
+   programmatically by `npm run test:rls`).
 
 **Analytics** (exercises: Postgres aggregation)
 
