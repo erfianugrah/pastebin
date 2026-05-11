@@ -30,7 +30,7 @@ try {
 	// fall through
 }
 
-const API = env.PASTE_API_URL ?? 'https://paste.erfi.dev';
+const API = env.PASTE_API_URL ?? 'https://paste.erfi.io';
 const SUPABASE_URL = env.SUPABASE_URL!;
 const SECRET = env.SUPABASE_SECRET_KEY!;
 const PUB = env.SUPABASE_PUBLISHABLE_KEY!;

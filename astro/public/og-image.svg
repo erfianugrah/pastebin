@@ -52,7 +52,7 @@
   </g>
 
   <!-- URL -->
-  <text x="330" y="460" font-size="22" font-weight="500" font-family="'SF Mono', 'Cascadia Code', 'Fira Code', monospace" fill="white" fill-opacity="0.5">paste.erfi.dev</text>
+  <text x="330" y="460" font-size="22" font-weight="500" font-family="'SF Mono', 'Cascadia Code', 'Fira Code', monospace" fill="white" fill-opacity="0.5">paste.erfi.io</text>
 
   <!-- Bottom decorative line -->
   <rect x="80" y="560" width="1040" height="2" rx="1" fill="white" fill-opacity="0.1" />

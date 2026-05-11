@@ -5,7 +5,7 @@ export default defineConfig({
 	timeout: 30000,
 	retries: 1,
 	use: {
-		baseURL: 'https://paste.erfi.dev',
+		baseURL: 'https://paste.erfi.io',
 		headless: true,
 	},
 	projects: [

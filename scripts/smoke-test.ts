@@ -1,14 +1,14 @@
 /**
  * E2E smoke test for the Pasteriser Supabase backend.
  *
- * Hits the live API (https://paste.erfi.dev or PASTE_API_URL) and verifies
+ * Hits the live API (https://paste.erfi.io or PASTE_API_URL) and verifies
  * that data lands in Supabase correctly. Cleans up after itself.
  *
  * Run: bun run scripts/smoke-test.ts
  *      or: npx tsx scripts/smoke-test.ts
  *
  * Required env (loaded from .env):
- *   PASTE_API_URL          (default: https://paste.erfi.dev)
+ *   PASTE_API_URL          (default: https://paste.erfi.io)
  *   SUPABASE_URL
  *   SUPABASE_SECRET_KEY    (sb_secret_... key for direct DB access)
  */
@@ -43,7 +43,7 @@ function loadEnv(): Record<string, string> {
 }
 
 const env = loadEnv();
-const API_URL = env.PASTE_API_URL ?? 'https://paste.erfi.dev';
+const API_URL = env.PASTE_API_URL ?? 'https://paste.erfi.io';
 const SUPABASE_URL = env.SUPABASE_URL ?? 'https://dewddkcmwrzbpynylyhg.supabase.co';
 const SUPABASE_SECRET_KEY = env.SUPABASE_SECRET_KEY ?? '';
 

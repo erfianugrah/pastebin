@@ -1,13 +1,48 @@
 # Changelog
 
+## [3.5.0] - 2026-05-11
+
+### Domain change: `paste.erfi.dev` → `paste.erfi.io`
+
+- **`wrangler.jsonc`**: routes pattern updated for both top-level and production env. Cloudflare auto-provisioned DNS + SSL via the existing `erfi.io` zone on deploy.
+- **18 files** in-place updated: 4 Worker scripts, 4 live test scripts (`smoke`, `race`, `realtime`, `rls`), Playwright config, Astro pages/components/tests, Astro `astro.config.mjs`, `og-image.svg`, JSDoc comments in `authHandlers.ts`, and all 4 docs (`README`, `AGENTS`, `CHANGELOG`, `SUPABASE-MIGRATION`). Zero remaining `paste.erfi.dev` references.
+- **Astro client bundle** rebuilt with `PUBLIC_API_URL=https://paste.erfi.io`.
+- **Supabase Auth config** updated via Management API:
+  - `site_url`: `https://paste.erfi.io`
+  - `uri_allow_list`: `https://paste.erfi.io/auth/confirm,https://paste.erfi.io/my,https://paste.erfi.io/`
+- **Old `paste.erfi.dev` removed** by Wrangler on deploy (custom_domain entries are exclusive).
+
+### Auth — custom SMTP via Resend
+
+- **Supabase SMTP configured** via the same `PATCH /v1/projects/{ref}/config/auth` endpoint:
+  - `smtp_host`: `smtp.resend.com`
+  - `smtp_port`: `465`
+  - `smtp_user`: `resend`
+  - `smtp_pass`: Resend API key (RFC-9051 SMTP AUTH; the key is the SASL password)
+  - `smtp_admin_email`: `noreply@erfi.io` (uses the existing verified `erfi.io` Resend domain)
+  - `smtp_sender_name`: `Pasteriser`
+  - `smtp_max_frequency`: `1` (one email per second per address)
+- **Auth email rate limit bumped** from `2` → `30` per hour (was the bottleneck causing "email rate limit exceeded" on repeated signups under the default inbuilt SMTP).
+- End-to-end verified: signup via `/api/auth/signup` returns `needsConfirm: true` and Resend's `/emails` API logs the corresponding `Confirm Your Signup` send with `status=sent`.
+
+### Tests
+
+- All 4 live suites re-run green against `paste.erfi.io`: smoke 35/35, RLS 13/13, Realtime 13/13 (standalone), race race-free. Playwright 10/10.
+
+### Breaking changes
+
+- **DNS**: `paste.erfi.dev` no longer resolves to the Worker. Old bookmarks/links are broken. If `paste.erfi.dev` needs to stay alive, add it back as a custom_domain route alongside `paste.erfi.io`.
+
+---
+
 ## [3.4.0] - 2026-05-11
 
 ### Auth — server-side email confirmation (Path C)
 
 - **`GET /auth/confirm` route + `AuthHandlers.handleConfirm()`** — Worker is now the landing page for Supabase Auth confirmation emails (signup, recovery, magic-link, email change). Reads `?token_hash=...&type=...&next=...`, calls `supabase.auth.verifyOtp({ token_hash, type })` server-side, sets HttpOnly `sb-access-token` + `sb-refresh-token` cookies, then 302s to `next`. Same-origin-only redirect target (rejects `//evil.com` and external hosts; falls back to `/`).
 - **Email template + Site URL** updated via the Supabase Management API (`PATCH /v1/projects/{ref}/config/auth`) — no Dashboard click-ops:
-  - `site_url`: `http://localhost:3000` → `https://paste.erfi.dev`
-  - `uri_allow_list`: `https://paste.erfi.dev/auth/confirm,https://paste.erfi.dev/my,https://paste.erfi.dev/`
+  - `site_url`: `http://localhost:3000` → `https://paste.erfi.io`
+  - `uri_allow_list`: `https://paste.erfi.io/auth/confirm,https://paste.erfi.io/my,https://paste.erfi.io/`
   - `mailer_templates_confirmation_content`: rewritten to use `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type={{ .EmailActionType }}&next=/my`
 - End-to-end verified against production: admin `generate_link` → real `hashed_token` → `/auth/confirm` → 302 to `/my` with a valid JWT cookie (sub matches the user, `email_verified=true`, `role=authenticated`).
 

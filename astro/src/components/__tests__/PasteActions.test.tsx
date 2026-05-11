@@ -4,7 +4,7 @@ import PasteActions from '../PasteActions';
 
 // Minimal mock for window.location
 Object.defineProperty(window, 'location', {
-	value: { href: 'https://paste.erfi.dev/pastes/abc123', origin: 'https://paste.erfi.dev', pathname: '/pastes/abc123' },
+	value: { href: 'https://paste.erfi.io/pastes/abc123', origin: 'https://paste.erfi.io', pathname: '/pastes/abc123' },
 	writable: true,
 });
 

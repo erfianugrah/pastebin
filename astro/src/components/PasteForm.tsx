@@ -631,7 +631,7 @@ export default function PasteForm() {
 							<div className="pt-2 border-t border-border">
 								<label htmlFor="slug" className={T.formLabel}>Custom URL (optional)</label>
 								<div className="flex items-center gap-2">
-									<span className="text-xs text-muted-foreground whitespace-nowrap">paste.erfi.dev/p/</span>
+									<span className="text-xs text-muted-foreground whitespace-nowrap">paste.erfi.io/p/</span>
 									<input
 										id="slug"
 										type="text"

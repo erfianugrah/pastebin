@@ -30,7 +30,7 @@
 	},
 	"routes": [
 		{
-			"pattern": "paste.erfi.dev",
+			"pattern": "paste.erfi.io",
 			"custom_domain": true,
 		},
 	],
@@ -39,7 +39,7 @@
 			"name": "pastebin-prod",
 			"routes": [
 				{
-					"pattern": "paste.erfi.dev",
+					"pattern": "paste.erfi.io",
 					"custom_domain": true,
 				},
 			],

@@ -10,7 +10,7 @@ Browser (Astro + React)
 
 Single KV namespace. No auth. No database. No analytics persistence.
 
-Live at: https://paste.erfi.dev
+Live at: https://paste.erfi.io
 
 ### Current Data Model
 
@@ -497,7 +497,7 @@ wrangler deploy --env production
 
 **To verify data landing in Supabase:**
 ```sql
--- Run in pgpasteriser after creating a paste on paste.erfi.dev
+-- Run in pgpasteriser after creating a paste on paste.erfi.io
 SELECT id, title, visibility, created_at FROM pastes ORDER BY created_at DESC LIMIT 5;
 ```
 
@@ -566,7 +566,7 @@ to `createClient` everywhere.
 
 **Verification additions:**
 - `scripts/smoke-test.ts` (10 API + 9 DB/RLS tests) runs against
-  `paste.erfi.dev` and queries Supabase directly. Adds RLS coverage:
+  `paste.erfi.io` and queries Supabase directly. Adds RLS coverage:
   publishable key cannot SELECT private pastes, CAN SELECT public ones.
 - `TEST-REPORT.md` documents the full audit (test results, schema state,
   RLS check, pg_cron status, findings).
@@ -920,7 +920,7 @@ in Phase 4.3 for the live recent feed.
 
 **Verification path:**
 
-1. Open `https://paste.erfi.dev/signup`, create an account.
+1. Open `https://paste.erfi.io/signup`, create an account.
 2. After email confirmation (or immediately if disabled in the
    project's auth settings), log in at `/login`.
 3. Create a paste with `Private` visibility.
@@ -940,7 +940,7 @@ adapted to a Hono + Workers + Astro BFF.
 `https://<project>.supabase.co/auth/v1/verify?token=...&redirect_to=<SiteURL>`,
 which lands on Supabase's domain and sets session cookies for
 `.supabase.co` — useless to us because our cookies are scoped to
-`paste.erfi.dev` and CSP forbids browser→Supabase calls. Path C
+`paste.erfi.io` and CSP forbids browser→Supabase calls. Path C
 flips the verification flow: the email link points to our domain,
 the Worker does the token exchange server-side, the Worker sets
 its own HttpOnly cookies, then 302s the user into the app.
@@ -982,8 +982,8 @@ curl -X PATCH \
 
 Where `auth-patch.json` sets:
 
-- `site_url`: `https://paste.erfi.dev` (was `http://localhost:3000`)
-- `uri_allow_list`: `https://paste.erfi.dev/auth/confirm,https://paste.erfi.dev/my,https://paste.erfi.dev/`
+- `site_url`: `https://paste.erfi.io` (was `http://localhost:3000`)
+- `uri_allow_list`: `https://paste.erfi.io/auth/confirm,https://paste.erfi.io/my,https://paste.erfi.io/`
 - `mailer_templates_confirmation_content`: rewritten to use
   `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type={{ .EmailActionType }}&next=/my`
 
@@ -1012,13 +1012,13 @@ RESPONSE=$(curl -s -X POST \
 HASHED=$(echo "$RESPONSE" | jq -r .hashed_token)
 
 # 2. Hit /auth/confirm with that token
-curl -s -i "https://paste.erfi.dev/auth/confirm?token_hash=$HASHED&type=signup&next=/my" \
+curl -s -i "https://paste.erfi.io/auth/confirm?token_hash=$HASHED&type=signup&next=/my" \
   -o /tmp/confirm.txt
 grep -iE "^(http|location:|set-cookie:)" /tmp/confirm.txt
 
 # Expected:
 #   HTTP/2 302
-#   location: https://paste.erfi.dev/my
+#   location: https://paste.erfi.io/my
 #   set-cookie: sb-access-token=<JWT>; HttpOnly; Secure; SameSite=Strict; Max-Age=3600
 #   set-cookie: sb-refresh-token=<token>; HttpOnly; Secure; SameSite=Strict; Max-Age=604800
 ```
@@ -1492,7 +1492,7 @@ Notes vs the previous draft:
 - `DISCORD_APP_ID` (public; used for slash command registration)
 - `DISCORD_PUBLIC_KEY` (public; for interaction signature verification
   if HTTPS interactions are used instead of gateway — not the MVP path)
-- `PASTERISER_API_URL` (default: `https://paste.erfi.dev`)
+- `PASTERISER_API_URL` (default: `https://paste.erfi.io`)
 - `SUPABASE_URL` (only needed in 6c)
 - `SUPABASE_SECRET_KEY` (only needed in 6c, secret)
 - `BOT_DATA_DIR` (default `/data`)

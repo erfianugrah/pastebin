@@ -2,7 +2,7 @@
 
 A code-sharing service on Cloudflare Workers + Supabase Postgres. Syntax-highlighted pastes, client-side end-to-end encryption, burn-after-reading, full-text search, and optional Supabase Auth for user-owned pastes. DDD architecture (domain → application → infrastructure → interfaces).
 
-Live at [paste.erfi.dev](https://paste.erfi.dev).
+Live at [paste.erfi.io](https://paste.erfi.io).
 
 ## Features
 
@@ -509,12 +509,12 @@ Deletion requires the `deleteToken` that was returned when the paste was created
 
 **Via query parameter:**
 ```bash
-curl -X DELETE "https://paste.erfi.dev/pastes/PASTE_ID/delete?token=DELETE_TOKEN"
+curl -X DELETE "https://paste.erfi.io/pastes/PASTE_ID/delete?token=DELETE_TOKEN"
 ```
 
 **Via JSON body:**
 ```bash
-curl -X DELETE "https://paste.erfi.dev/pastes/PASTE_ID/delete" \
+curl -X DELETE "https://paste.erfi.io/pastes/PASTE_ID/delete" \
   -H "Content-Type: application/json" \
   -d '{"token": "DELETE_TOKEN"}'
 ```
@@ -587,7 +587,7 @@ The project URL is treated as a secret too — not because it's cryptographicall
 **Astro public env** (`astro/.env` — baked into the client bundle at build time):
 
 ```bash
-PUBLIC_API_URL=https://paste.erfi.dev
+PUBLIC_API_URL=https://paste.erfi.io
 ```
 
 That's the only public var. The browser bundle does not contain any Supabase identifier — all Supabase Auth calls and `/my` reads are proxied through the Worker (BFF pattern). CSP `connect-src` is `'self'` only.
@@ -846,7 +846,7 @@ For more detailed security information, configuration guides, and security check
 
 ## Current Deployment Status
 
-**Domain**: https://paste.erfi.dev
+**Domain**: https://paste.erfi.io
 **Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
 **Migrations**: 14 applied — see `supabase/migrations/`
 
@@ -875,18 +875,18 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the C
 
 ```bash
 # Create an anonymous paste
-curl -sX POST https://paste.erfi.dev/pastes \
+curl -sX POST https://paste.erfi.io/pastes \
   -H "Content-Type: application/json" \
   -d '{"content":"test","expiresIn":"1h"}'
 
 # Search
-curl -s "https://paste.erfi.dev/api/search?q=test"
+curl -s "https://paste.erfi.io/api/search?q=test"
 
 # Recent
-curl -s "https://paste.erfi.dev/api/recent?limit=5"
+curl -s "https://paste.erfi.io/api/recent?limit=5"
 
 # Aggregate stats
-curl -s "https://paste.erfi.dev/api/stats"
+curl -s "https://paste.erfi.io/api/stats"
 ```
 
 For end-to-end verification of the live system see the `test:smoke`, `test:race`, `test:realtime`, `test:rls`, and `test:all-live` npm scripts.

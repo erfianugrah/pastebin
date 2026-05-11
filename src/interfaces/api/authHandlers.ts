@@ -217,9 +217,9 @@ export class AuthHandlers {
 	 * and 302s to `next` (defaults to `/`).
 	 *
 	 * Supabase Dashboard config required:
-	 *   - Authentication → URL Configuration → Site URL = https://paste.erfi.dev
+	 *   - Authentication → URL Configuration → Site URL = https://paste.erfi.io
 	 *   - Authentication → URL Configuration → Redirect URLs (allow-list):
-	 *       https://paste.erfi.dev/auth/confirm
+	 *       https://paste.erfi.io/auth/confirm
 	 *
 	 * Email templates in Supabase need their {{ .ConfirmationURL }} or
 	 * equivalent set to:

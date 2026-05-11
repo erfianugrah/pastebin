@@ -25,7 +25,7 @@ try {
 	// fall through to process.env
 }
 
-const API = env.PASTE_API_URL ?? process.env.PASTE_API_URL ?? 'https://paste.erfi.dev';
+const API = env.PASTE_API_URL ?? process.env.PASTE_API_URL ?? 'https://paste.erfi.io';
 const CONCURRENCY = Number(env.BURN_CONCURRENCY ?? process.env.BURN_CONCURRENCY ?? 20);
 const RUNS = Number(env.BURN_RUNS ?? process.env.BURN_RUNS ?? 5);
 

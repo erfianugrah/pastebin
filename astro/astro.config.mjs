@@ -4,7 +4,7 @@ import react from '@astrojs/react';
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://paste.erfi.dev',
+  site: 'https://paste.erfi.io',
   output: 'static',
   vite: {
     plugins: [tailwindcss()],
