@@ -113,6 +113,14 @@ export class KVPasteRepository implements PasteRepository {
 		return true;
 	}
 
+	async searchPublic(_query: string, _limit: number): Promise<Paste[]> {
+		// KV has no search primitive. Returning [] is intentional -- when the
+		// app runs on KV backend, the /api/search endpoint reports "no results"
+		// rather than scanning every key (which would be unbounded).
+		this.logger.debug('KV: searchPublic called -- returning [] (KV has no search)');
+		return [];
+	}
+
 	async findRecentPublic(limit: number): Promise<Paste[]> {
 		this.logger.debug('Finding recent public pastes', { limit });
 

@@ -12,6 +12,7 @@ const mockRepository: PasteRepository = {
   view: vi.fn(),
   delete: vi.fn(),
   findRecentPublic: vi.fn(),
+  searchPublic: vi.fn(),
 	resolveSlug: vi.fn(),
 	saveSlug: vi.fn(),
 };

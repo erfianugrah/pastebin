@@ -64,15 +64,31 @@ function makeSupabaseMock(overrides: {
 	queryResult?: { data: Record<string, unknown>[] | null; error: null | { message: string } };
 	insertResult?: { error: null | { message: string } };
 	rpcResult?: { data: unknown; error: null | { message: string } };
+	searchResult?: { data: Record<string, unknown>[] | null; error: null | { message: string } };
 } = {}) {
+	// searchPublic chains: .from().select().eq().gt().textSearch().order().limit()
+	// Each call returns the next chainable; the final await gets the result.
+	const searchTerminator = Promise.resolve(overrides.searchResult ?? { data: [], error: null });
+	const searchChain = {
+		eq: vi.fn(() => searchChain),
+		gt: vi.fn(() => searchChain),
+		textSearch: vi.fn(() => searchChain),
+		order: vi.fn(() => searchChain),
+		limit: vi.fn(() => searchTerminator),
+		single: vi.fn(() => Promise.resolve(overrides.selectResult ?? { data: makeDbRow(), error: null })),
+	};
+
 	const from = vi.fn(() => ({
 		upsert: vi.fn(() => Promise.resolve(overrides.upsertResult ?? { error: null })),
 		select: vi.fn(() => ({
-			eq: vi.fn(() => ({
-				single: vi.fn(() => Promise.resolve(overrides.selectResult ?? { data: makeDbRow(), error: null })),
-			})),
-			// for findRecentPublic
-			eq2: vi.fn(),
+			eq: vi.fn((column: string, _value: unknown) => {
+				// branch: searchPublic uses .eq().gt().textSearch().order().limit()
+				// while findById uses .eq().single()
+				if (column === 'visibility') return searchChain;
+				return {
+					single: vi.fn(() => Promise.resolve(overrides.selectResult ?? { data: makeDbRow(), error: null })),
+				};
+			}),
 		})),
 		delete: vi.fn(() => ({
 			eq: vi.fn(() => Promise.resolve(overrides.deleteResult ?? { error: null, count: 1 })),
@@ -82,7 +98,7 @@ function makeSupabaseMock(overrides: {
 
 	const rpc = vi.fn(() => Promise.resolve(overrides.rpcResult ?? { data: [], error: null }));
 
-	return { from, rpc };
+	return { from, rpc, _searchChain: searchChain };
 }
 
 // ---- createClient mock ----
@@ -367,6 +383,73 @@ describe('SupabasePasteRepository', () => {
 
 			expect(result).toEqual({ paste: null, wasBurned: false, wasViewLimited: false });
 			expect(mockLogger.error).toHaveBeenCalled();
+		});
+	});
+
+	describe('searchPublic (FTS)', () => {
+		it('returns [] for empty query without hitting the DB', async () => {
+			const result = await repository.searchPublic('   ', 20);
+			expect(result).toEqual([]);
+			expect(mockClient.from).not.toHaveBeenCalled();
+		});
+
+		it('builds a textSearch query with websearch type and english config', async () => {
+			mockClient = makeSupabaseMock({ searchResult: { data: [makeDbRow()], error: null } });
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			await repository.searchPublic('hello world', 10);
+
+			expect(mockClient._searchChain.textSearch).toHaveBeenCalledWith(
+				'search_vector',
+				'hello world',
+				{ type: 'websearch', config: 'english' },
+			);
+			expect(mockClient._searchChain.limit).toHaveBeenCalledWith(10);
+		});
+
+		it('maps result rows to Paste objects', async () => {
+			mockClient = makeSupabaseMock({
+				searchResult: {
+					data: [makeDbRow({ id: 'p1' }), makeDbRow({ id: 'p2' })],
+					error: null,
+				},
+			});
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const results = await repository.searchPublic('foo', 10);
+
+			expect(results).toHaveLength(2);
+			expect(results[0].getId().toString()).toBe('p1');
+			expect(results[1].getId().toString()).toBe('p2');
+		});
+
+		it('returns [] and logs on error', async () => {
+			mockClient = makeSupabaseMock({
+				searchResult: { data: null, error: { message: 'syntax error' } },
+			});
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const results = await repository.searchPublic('foo', 10);
+
+			expect(results).toEqual([]);
+			expect(mockLogger.error).toHaveBeenCalled();
+		});
+
+		it('trims whitespace before searching', async () => {
+			mockClient = makeSupabaseMock({ searchResult: { data: [], error: null } });
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			await repository.searchPublic('   foo   ', 10);
+
+			expect(mockClient._searchChain.textSearch).toHaveBeenCalledWith(
+				'search_vector',
+				'foo',
+				expect.any(Object),
+			);
 		});
 	});
 });

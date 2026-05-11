@@ -141,6 +141,32 @@ export class SupabasePasteRepository implements PasteRepository {
 		return (count ?? 0) > 0;
 	}
 
+	async searchPublic(query: string, limit: number): Promise<Paste[]> {
+		const trimmed = query.trim();
+		if (!trimmed) return [];
+
+		this.logger.debug('Supabase: searching public pastes', { query: trimmed, limit });
+
+		// .textSearch translates to `column @@ websearch_to_tsquery(config, query)`.
+		// 'english' config matches what the search_vector generated column uses,
+		// so stemming aligns on both sides.
+		const { data, error } = await this.client
+			.from('pastes')
+			.select('*')
+			.eq('visibility', 'public')
+			.gt('expires_at', new Date().toISOString())
+			.textSearch('search_vector', trimmed, { type: 'websearch', config: 'english' })
+			.order('created_at', { ascending: false })
+			.limit(limit);
+
+		if (error) {
+			this.logger.error('Supabase: searchPublic failed', { query: trimmed, error });
+			return [];
+		}
+
+		return (data ?? []).map((row) => PasteFactory.fromData(this.mapRow(row)));
+	}
+
 	async findRecentPublic(limit: number): Promise<Paste[]> {
 		this.logger.debug('Supabase: finding recent public pastes', { limit });
 

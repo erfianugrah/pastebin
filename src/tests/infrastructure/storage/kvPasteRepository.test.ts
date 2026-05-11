@@ -326,4 +326,13 @@ describe('KVPasteRepository', () => {
       expect(mockKV.delete).toHaveBeenCalled();
     });
   });
+
+  describe('searchPublic (KV no-op)', () => {
+    it('returns empty array (KV has no search primitive)', async () => {
+      const result = await repository.searchPublic('any query', 20);
+      expect(result).toEqual([]);
+      expect(mockKV.get).not.toHaveBeenCalled();
+      expect(mockKV.list).not.toHaveBeenCalled();
+    });
+  });
 });

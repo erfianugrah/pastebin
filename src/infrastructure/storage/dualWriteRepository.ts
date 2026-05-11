@@ -83,6 +83,10 @@ export class DualWriteRepository implements PasteRepository {
 		return this.primary.findRecentPublic(limit);
 	}
 
+	async searchPublic(query: string, limit: number) {
+		return this.primary.searchPublic(query, limit);
+	}
+
 	async resolveSlug(slug: string) {
 		return this.primary.resolveSlug(slug);
 	}

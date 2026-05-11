@@ -57,6 +57,22 @@ export interface PasteRepository {
   findRecentPublic(limit: number): Promise<Paste[]>;
 
   /**
+   * Full-text search across public pastes by title + language.
+   *
+   * Backed by a Postgres tsvector + GIN index in the Supabase implementation
+   * (uses websearch_to_tsquery for Google-style query parsing: phrases,
+   * boolean operators, exclusions).
+   *
+   * KV implementation returns an empty array (no search primitive).
+   *
+   * @param query User query string. Empty/whitespace returns [].
+   * @param limit Maximum results to return.
+   * @returns Matching pastes ordered by relevance (rank desc) where supported,
+   *          else by created_at desc.
+   */
+  searchPublic(query: string, limit: number): Promise<Paste[]>;
+
+  /**
    * Resolve a vanity slug to a paste ID
    * @returns The paste ID or null if not found
    */

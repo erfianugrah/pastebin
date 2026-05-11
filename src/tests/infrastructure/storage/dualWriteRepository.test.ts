@@ -31,6 +31,7 @@ function makeRepo(): PasteRepository {
 		view: vi.fn().mockResolvedValue({ paste: null, wasBurned: false, wasViewLimited: false }),
 		delete: vi.fn().mockResolvedValue(true),
 		findRecentPublic: vi.fn().mockResolvedValue([]),
+		searchPublic: vi.fn().mockResolvedValue([]),
 		resolveSlug: vi.fn().mockResolvedValue(null),
 		saveSlug: vi.fn().mockResolvedValue(undefined),
 	};

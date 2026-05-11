@@ -12,6 +12,7 @@ import { CreatePasteCommand } from './application/commands/createPasteCommand';
 import { DeletePasteCommand } from './application/commands/deletePasteCommand';
 import { GetPasteQuery } from './application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery';
+import { SearchPastesQuery } from './application/queries/searchPastesQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
 import { securityHeaders } from './interfaces/api/middleware';
 import { AppError } from './infrastructure/errors/AppError';
@@ -103,8 +104,17 @@ app.use('*', async (c, next) => {
 	const deletePasteCommand = new DeletePasteCommand(pasteRepository);
 	const getPasteQuery = new GetPasteQuery(pasteRepository);
 	const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
+	const searchPastesQuery = new SearchPastesQuery(pasteRepository, logger);
 
-	const apiHandlers = new ApiHandlers(createPasteCommand, deletePasteCommand, getPasteQuery, getRecentPastesQuery, logger, pasteRepository);
+	const apiHandlers = new ApiHandlers(
+		createPasteCommand,
+		deletePasteCommand,
+		getPasteQuery,
+		getRecentPastesQuery,
+		searchPastesQuery,
+		logger,
+		pasteRepository,
+	);
 
 	c.set('handlers', apiHandlers);
 	c.set('pasteRepository', pasteRepository);
@@ -165,6 +175,14 @@ app.get('/api/recent', async (c) => {
 	return addCacheHeaders(await c.get('handlers').handleGetRecentPastes(c.req.raw), {
 		maxAge: 60,
 		staleWhileRevalidate: 300,
+	});
+});
+
+// GET /api/search — full-text search across public pastes
+app.get('/api/search', async (c) => {
+	return addCacheHeaders(await c.get('handlers').handleSearchPastes(c.req.raw), {
+		maxAge: 30,
+		staleWhileRevalidate: 120,
 	});
 });
 

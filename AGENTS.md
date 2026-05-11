@@ -18,7 +18,7 @@ Two separate packages with **independent `node_modules`**:
 - **Worker entry**: `src/index.ts` — Hono app, all routing, serves Astro static assets via `ASSETS` binding
 - **Worker config**: `wrangler.jsonc` — `run_worker_first: true`, assets from `./astro/dist`
 - **DDD layers** in `src/`: `domain/` → `application/` → `infrastructure/` → `interfaces/`
-- **Storage abstraction**: `PasteRepository` interface (7 methods: `save`, `findById`, `view`, `delete`, `findRecentPublic`, `resolveSlug`, `saveSlug`), three implementations: `KVPasteRepository`, `SupabasePasteRepository`, `DualWriteRepository` — selected via `STORAGE_BACKEND` env var
+- **Storage abstraction**: `PasteRepository` interface (8 methods: `save`, `findById`, `view`, `delete`, `findRecentPublic`, `searchPublic`, `resolveSlug`, `saveSlug`), three implementations: `KVPasteRepository`, `SupabasePasteRepository`, `DualWriteRepository` — selected via `STORAGE_BACKEND` env var
 - **Env bindings** (`src/types.ts`):
   - `PASTES: KVNamespace` — retained for rollback, unused with current `STORAGE_BACKEND=supabase`
   - `ASSETS: Fetcher` — Astro static assets
@@ -28,11 +28,12 @@ Two separate packages with **independent `node_modules`**:
 
 ## Supabase migrations
 
-- All schema in `supabase/migrations/` — 9 files, applied to `dewddkcmwrzbpynylyhg`
+- All schema in `supabase/migrations/` — 10 files, applied to `dewddkcmwrzbpynylyhg`
 - Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema and Phase 3.5 audit fixes)
 - `set_updated_at` trigger has a `WHEN (OLD.x IS DISTINCT FROM NEW.x)` clause — required because `upsert()` sends all columns and `UPDATE OF col` fires on column presence, not value change
 - `createClient()` always passes `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }` — Supabase-recommended for server-side contexts
 - `view_paste(uuid)` RPC handles atomic view + burn-after-reading + view-limit with `SELECT ... FOR UPDATE`. The Supabase repository uses this; KV repository mirrors the logic without locking (documented race for rollback safety only)
+- `search_vector` is a STORED generated tsvector column (`to_tsvector('english', title || ' ' || language)`) backed by a GIN index. Query via `.textSearch('search_vector', q, { type: 'websearch', config: 'english' })`
 - Never run DDL directly via pgcli — always create a new migration file
 - Verify with `supabase db query --linked "SELECT ..."` or via `pgpasteriser` alias
 

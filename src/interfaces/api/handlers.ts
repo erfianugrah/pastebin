@@ -4,6 +4,7 @@ import { CreatePasteCommand, CreatePasteParams } from '../../application/command
 import { DeletePasteCommand, DeleteErrorCode } from '../../application/commands/deletePasteCommand';
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../application/queries/getRecentPastesQuery';
+import { SearchPastesQuery } from '../../application/queries/searchPastesQuery';
 import { Logger } from '../../infrastructure/logging/logger';
 import { AppError, ValidationError, NotFoundError } from '../../infrastructure/errors/AppError';
 
@@ -32,12 +33,19 @@ const DELETE_STATUS_MAP: Record<DeleteErrorCode, number> = {
 /** Maximum number of recent pastes that can be requested */
 const MAX_RECENT_LIMIT = 100;
 
+/** Maximum number of search results that can be returned in a single request */
+const MAX_SEARCH_LIMIT = 50;
+
+/** Maximum length of a search query (prevents pathological tsquery input) */
+const MAX_SEARCH_QUERY_LEN = 200;
+
 export class ApiHandlers {
 	constructor(
 		private readonly createPasteCommand: CreatePasteCommand,
 		private readonly deletePasteCommand: DeletePasteCommand,
 		private readonly getPasteQuery: GetPasteQuery,
 		private readonly getRecentPastesQuery: GetRecentPastesQuery,
+		private readonly searchPastesQuery: SearchPastesQuery,
 		private readonly logger: Logger,
 		private readonly repository?: PasteRepository,
 	) {}
@@ -188,5 +196,22 @@ export class ApiHandlers {
 
 		const results = await this.getRecentPastesQuery.execute(limit);
 		return json({ pastes: results });
+	}
+
+	async handleSearchPastes(request: Request): Promise<Response> {
+		this.logger.debug('Handling search pastes request');
+		const url = new URL(request.url);
+		const rawQuery = (url.searchParams.get('q') ?? '').slice(0, MAX_SEARCH_QUERY_LEN);
+		const query = rawQuery.trim();
+
+		if (!query) {
+			return json({ pastes: [], query: '' });
+		}
+
+		const rawLimit = parseInt(url.searchParams.get('limit') || '20', 10);
+		const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 20 : rawLimit, MAX_SEARCH_LIMIT));
+
+		const results = await this.searchPastesQuery.execute(query, limit);
+		return json({ pastes: results, query });
 	}
 }

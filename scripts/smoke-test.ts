@@ -474,6 +474,86 @@ async function run(): Promise<void> {
 			assert(data !== null, 'anon query should not error');
 		});
 	}
+
+	// ---- 11. Full-text search ----
+	const searchToken = `unique-search-token-${Date.now()}`;
+	let searchablePaste: { id: string } | null = null;
+
+	await test('Create paste with a unique title for FTS test', async () => {
+		searchablePaste = await createPaste({
+			content: 'searchable content',
+			title: `My searchable paste ${searchToken}`,
+			expiresIn: '1h',
+			visibility: 'public',
+		});
+		assert(searchablePaste.id, 'returns id');
+	});
+
+	await test('GET /api/search finds paste by unique title token', async () => {
+		// Tiny delay for the GIN index to be visible (Postgres write should be sync,
+		// but supabase-js cache or postgres-meta refresh can lag occasionally)
+		await new Promise((r) => setTimeout(r, 200));
+		const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(searchToken)}`);
+		assertEqual(res.status, 200, 'search 200');
+		const body = (await res.json()) as { pastes: Array<{ id: string; title: string }>; query: string };
+		assertEqual(body.query, searchToken, 'echoes query');
+		const found = body.pastes.find((p) => p.id === searchablePaste!.id);
+		assert(found !== undefined, 'paste found in search results');
+		assert(found!.title.includes(searchToken), 'title contains the token');
+	});
+
+	await test('GET /api/search returns empty pastes for missing q', async () => {
+		const res = await fetch(`${API_URL}/api/search`);
+		const body = (await res.json()) as { pastes: unknown[]; query: string };
+		assertEqual(body.pastes.length, 0, 'no pastes');
+		assertEqual(body.query, '', 'empty query');
+	});
+
+	await test('GET /api/search supports websearch syntax: phrase quoting', async () => {
+		// websearch_to_tsquery treats "phrase" as a phrase match
+		const res = await fetch(
+			`${API_URL}/api/search?q=${encodeURIComponent(`"${searchToken}"`)}`,
+		);
+		assertEqual(res.status, 200, '200');
+		const body = (await res.json()) as { pastes: Array<{ id: string }> };
+		const found = body.pastes.find((p) => p.id === searchablePaste!.id);
+		assert(found !== undefined, 'phrase search finds the paste');
+	});
+
+	await test('Private pastes are excluded from search', async () => {
+		const privateMatch = await createPaste({
+			content: 'private content',
+			title: `private-secret ${searchToken}`,
+			expiresIn: '1h',
+			visibility: 'private',
+		});
+		await new Promise((r) => setTimeout(r, 200));
+		const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(searchToken)}`);
+		const body = (await res.json()) as { pastes: Array<{ id: string }> };
+		const foundPrivate = body.pastes.find((p) => p.id === privateMatch.id);
+		assert(foundPrivate === undefined, 'private paste must not appear in search');
+	});
+
+	if (HAS_DB_ACCESS) {
+		await test('search_vector column is populated from generated expression', async () => {
+			const { data } = await sb!
+				.from('pastes')
+				.select('id, title, search_vector')
+				.eq('id', searchablePaste!.id)
+				.single();
+			assert(data !== null, 'row exists');
+			const vector = (data as { search_vector: string }).search_vector;
+			assert(typeof vector === 'string', 'search_vector is a string');
+			// The English parser tokenizes on hyphens, so `unique-search-token-NNNN`
+			// becomes multiple tokens. The numeric timestamp survives as a single
+			// token. tsvector format is `'token':position [...]'.
+			const timestamp = searchToken.split('-').pop()!;
+			assert(
+				vector.includes(`'${timestamp}'`),
+				`search_vector should contain timestamp token '${timestamp}'; got: ${vector}`,
+			);
+		});
+	}
 }
 
 // ---- Run + cleanup + report ----

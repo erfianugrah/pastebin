@@ -4,6 +4,7 @@ import { CreatePasteCommand } from '../../../application/commands/createPasteCom
 import { DeletePasteCommand, DeleteErrorCode } from '../../../application/commands/deletePasteCommand';
 import { GetPasteQuery } from '../../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../../application/queries/getRecentPastesQuery';
+import { SearchPastesQuery } from '../../../application/queries/searchPastesQuery';
 import { Logger } from '../../../infrastructure/logging/logger';
 import { Paste, PasteId, ExpirationPolicy } from '../../../domain/models/paste';
 
@@ -26,6 +27,10 @@ const mockGetQuery = {
 const mockRecentQuery = {
 	execute: vi.fn(),
 } as unknown as GetRecentPastesQuery;
+
+const mockSearchQuery = {
+	execute: vi.fn(),
+} as unknown as SearchPastesQuery;
 
 const mockLogger = {
 	debug: vi.fn(),
@@ -74,6 +79,7 @@ describe('ApiHandlers', () => {
 			mockDeleteCommand,
 			mockGetQuery,
 			mockRecentQuery,
+			mockSearchQuery,
 			mockLogger,
 		);
 	});
@@ -194,6 +200,56 @@ describe('ApiHandlers', () => {
 			await handlers.handleGetRecentPastes(req);
 
 			expect(mockRecentQuery.execute).toHaveBeenCalledWith(10);
+		});
+	});
+
+	describe('handleSearchPastes', () => {
+		it('returns empty result without calling query when q is missing', async () => {
+			const req = getRequest('https://example.com/api/search');
+			const res = await handlers.handleSearchPastes(req);
+
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as { pastes: unknown[]; query: string };
+			expect(body.pastes).toEqual([]);
+			expect(body.query).toBe('');
+			expect(mockSearchQuery.execute).not.toHaveBeenCalled();
+		});
+
+		it('returns empty result without calling query when q is whitespace', async () => {
+			const req = getRequest('https://example.com/api/search?q=%20%20');
+			await handlers.handleSearchPastes(req);
+
+			expect(mockSearchQuery.execute).not.toHaveBeenCalled();
+		});
+
+		it('calls the search query with trimmed q and default limit', async () => {
+			vi.mocked(mockSearchQuery.execute).mockResolvedValue([]);
+
+			const req = getRequest('https://example.com/api/search?q=%20foo%20bar%20');
+			const res = await handlers.handleSearchPastes(req);
+
+			expect(res.status).toBe(200);
+			expect(mockSearchQuery.execute).toHaveBeenCalledWith('foo bar', 20);
+		});
+
+		it('clamps limit to [1, 50]', async () => {
+			vi.mocked(mockSearchQuery.execute).mockResolvedValue([]);
+
+			const req = getRequest('https://example.com/api/search?q=x&limit=999');
+			await handlers.handleSearchPastes(req);
+
+			expect(mockSearchQuery.execute).toHaveBeenCalledWith('x', 50);
+		});
+
+		it('truncates pathologically long queries', async () => {
+			vi.mocked(mockSearchQuery.execute).mockResolvedValue([]);
+			const longQuery = 'a'.repeat(500);
+
+			const req = getRequest(`https://example.com/api/search?q=${longQuery}`);
+			await handlers.handleSearchPastes(req);
+
+			// 200-char cap
+			expect((mockSearchQuery.execute as any).mock.calls[0][0].length).toBe(200);
 		});
 	});
 });

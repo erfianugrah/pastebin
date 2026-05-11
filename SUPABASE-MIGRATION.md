@@ -621,19 +621,73 @@ creates a malicious table in their own schema to shadow `pastes`.
 Execution permission revoked from PUBLIC and granted only to
 `service_role`.
 
-#### 4.2: Search (next)
+#### 4.2: Full-text search ✓ COMPLETE
 
-**Search** (exercises: Postgres full-text search or `ILIKE`)
+Migration `20260511131541_add_paste_search.sql` adds a generated tsvector
+column and a GIN index. Search is exposed via the new `GET /api/search?q=...`
+endpoint backed by `PasteRepository.searchPublic(query, limit)`.
+
+**Schema:**
 
 ```sql
--- Add a search endpoint
-SELECT id, title, language, created_at
-FROM pastes
-WHERE visibility = 'public'
-  AND (title ILIKE '%query%' OR language = 'python')
-ORDER BY created_at DESC
-LIMIT 20;
+ALTER TABLE pastes
+  ADD COLUMN search_vector tsvector
+  GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(title, '') || ' ' || coalesce(language, ''))
+  ) STORED;
+
+CREATE INDEX idx_pastes_search ON pastes USING GIN (search_vector);
 ```
+
+The `STORED` generated column keeps the tsvector in sync with `title +
+language` automatically -- no trigger needed. GIN is the standard index
+type for tsvector membership (`@@`) queries.
+
+**Why title + language only, not content?** Most pastes are code or
+encrypted ciphertext. The English snowball stemmer in `to_tsvector`
+expects natural language; tokenizing `abcdefgh==` yields one big garbage
+token that matches nothing. Indexing content would bloat the GIN index
+without improving discoverability. For code search you'd want pg_trgm
+trigram indexes (different feature).
+
+**Query side:**
+
+```typescript
+await client.from('pastes')
+  .select('*')
+  .eq('visibility', 'public')
+  .gt('expires_at', new Date().toISOString())
+  .textSearch('search_vector', query, { type: 'websearch', config: 'english' })
+  .order('created_at', { ascending: false })
+  .limit(20);
+```
+
+`type: 'websearch'` translates to `websearch_to_tsquery()` which parses
+user input safely: `"foo bar"` becomes a phrase match, `foo OR bar`
+becomes an alternation, `-foo` excludes, etc. Malformed input degrades
+gracefully (no parser errors thrown to clients).
+
+`config: 'english'` must match the config used in the generated column.
+The stemmer normalizes `running -> run`, `tests -> test`, so the query
+side needs the same stemmer to align.
+
+**Domain changes:**
+- New method `PasteRepository.searchPublic(query, limit)`.
+- Supabase implementation uses `.textSearch()`.
+- KV implementation returns `[]` (no search primitive; documented as
+  intentional, not a TODO).
+- `SearchPastesQuery` application class mirrors `GetRecentPastesQuery`
+  shape (same DTO).
+- `GET /api/search?q=...&limit=...` route. Limit clamped to [1, 50].
+  Query string capped at 200 chars. Empty/whitespace `q` returns `[]`
+  without hitting the DB.
+
+**Verification:**
+- 11 new unit tests across repository implementations + handler.
+- Smoke test (`npm run test:smoke`) creates a paste with a unique
+  token-bearing title, searches for the token, asserts the paste is
+  returned. Also asserts private pastes are excluded from search
+  results, and that `search_vector` is populated correctly.
 
 **User accounts** (exercises: Supabase Auth + RLS)
 
