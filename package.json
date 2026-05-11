@@ -18,6 +18,7 @@
 		"test:e2e": "npx playwright test",
 		"test:smoke": "tsx scripts/smoke-test.ts",
 		"test:race": "tsx scripts/concurrent-burn-test.ts",
+		"test:realtime": "tsx scripts/verify-realtime.ts",
 		"test:all": "npm test && npm run test:ui && npm run test:e2e",
 		"test:watch": "vitest",
 		"lint": "eslint --ext .ts ./src",

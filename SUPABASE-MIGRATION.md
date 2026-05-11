@@ -696,10 +696,79 @@ side needs the same stemmer to align.
 - "My Pastes" page using RLS (user only sees their own)
 - Authenticated users don't need `deleteToken` -- RLS handles it
 
-**Live recent feed** (exercises: Supabase Realtime)
+#### 4.3: Live recent feed via Realtime broadcast ✓ COMPLETE
 
-- Subscribe to `INSERT` events on `pastes` table where `visibility = 'public'`
-- Recent pastes page updates without polling
+Migration `20260511132703_realtime_public_paste_feed.sql` adds a
+trigger that broadcasts public paste inserts to a private Realtime
+channel. The frontend `/recent` page subscribes and prepends new
+pastes to the list without polling.
+
+**Why broadcast and not Postgres Changes:**
+
+Supabase docs explicitly recommend Broadcast over Postgres Changes for
+production — Postgres Changes streams the entire publication to every
+subscriber and runs RLS per-row per-subscriber, which doesn't scale.
+Broadcast lets the trigger build a curated payload (no sensitive
+fields) and emit it once per public insert.
+
+**Defense in depth: three independent layers protect against private-paste leaks:**
+
+1. **Trigger filter (`visibility = 'public'`)** — private pastes never
+   reach `realtime.send()`. Earliest possible filter.
+2. **Curated payload** — only `id`, `title`, `language`, `createdAt`,
+   `expiresAt`, `readCount`, `isEncrypted`, `version` are broadcast.
+   Never `content`, `delete_token`, or `user_id`. Even if the schema
+   grows new fields, they don't accidentally leak.
+3. **Private channel + RLS** — `is_private = true` requires
+   subscribers to satisfy a SELECT policy on `realtime.messages`.
+   The policy only allows `anon` and `authenticated` to receive from
+   the exact topic `recent:public`. Any other topic from a buggy
+   trigger would be filtered server-side.
+
+**Encryption / visibility dimension matrix:**
+
+Pastes have two orthogonal dimensions: visibility (public | private)
+and encryption (plaintext | client-side E2EE). All four combinations
+handled:
+
+| Visibility | Encryption | Broadcast? | Notes |
+|------------|-----------|------------|-------|
+| public | plaintext | yes (metadata only) | mirrors `/api/recent` |
+| public | E2EE | yes (metadata only) | title may itself be ciphertext; client renders accordingly |
+| private | plaintext | **no** | trigger filter blocks |
+| private | E2EE | **no** | trigger filter blocks |
+
+E2EE encryption keys live only in the URL fragment (`#hash`), never
+in the DB, so they cannot reach Realtime under any path. Passwords
+were removed entirely in the earlier Phase 4 cleanup.
+
+**Trigger semantics for upsert:**
+
+`save()` upserts the row on every read-count increment. `AFTER INSERT
+OR UPDATE` would fire on every read. `AFTER INSERT` only fires on
+*actual* INSERT, not on `INSERT ... ON CONFLICT DO UPDATE` that
+resolved to UPDATE. Verified empirically (see `npm run test:realtime`).
+
+**Verification (`npm run test:realtime`):**
+
+13 checks across 3 groups:
+
+1. End-to-end pipeline:
+   - Subscribe as anon to `recent:public` (private channel)
+   - Create public paste → broadcast received
+   - Create private paste → no broadcast (trigger filter)
+   - Payload contains only the 8 safe fields
+   - Read-count upsert (UPDATE) does NOT fire the INSERT trigger
+2. Compatibility matrix (key types × channel types × setAuth) — all
+   key formats work with private channels.
+3. Negative tests — subscribing to a disallowed topic returns
+   `Unauthorized: You do not have permission to receive messages from
+   this topic`.
+
+See `postgres-learnings.md` "Supabase Realtime" section for the full
+limitations matrix.
+
+#### 4.4: Auth + RLS (next)
 
 **Analytics** (exercises: Postgres aggregation)
 
@@ -737,7 +806,7 @@ SELECT version, count(*) FROM pastes GROUP BY version;
 | **Frontend** (Astro/React) | No | Frontend never knew about the backend. Zero changes. |
 | **wrangler.jsonc** | Yes | `SUPABASE_URL`, `STORAGE_BACKEND` vars added. `SUPABASE_SECRET_KEY` is a Wrangler secret (not in file). |
 | **Tests** | Yes | 25 new tests: 14 for `SupabasePasteRepository`, 11 for `DualWriteRepository`. |
-| **Migrations** | Yes | 9 migration files in `supabase/migrations/` (7 baseline + trigger fix + `view_paste()` RPC). |
+| **Migrations** | Yes | 11 migration files in `supabase/migrations/` (7 baseline + trigger fix + `view_paste()` RPC + FTS + Realtime). |
 
 ---
 

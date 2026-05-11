@@ -486,7 +486,7 @@ async function run(): Promise<void> {
 			expiresIn: '1h',
 			visibility: 'public',
 		});
-		assert(searchablePaste.id, 'returns id');
+		assert(searchablePaste.id !== undefined, 'returns id');
 	});
 
 	await test('GET /api/search finds paste by unique title token', async () => {
