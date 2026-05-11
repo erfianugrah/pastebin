@@ -1,27 +1,43 @@
 # Pasteriser
 
-A modern, secure code sharing service built on Cloudflare Workers with Domain-Driven Design principles. Create and share code snippets with syntax highlighting, password protection, and burn-after-reading functionality.
+A code-sharing service on Cloudflare Workers + Supabase Postgres. Syntax-highlighted pastes, client-side end-to-end encryption, burn-after-reading, full-text search, and optional Supabase Auth for user-owned pastes. DDD architecture (domain → application → infrastructure → interfaces).
+
+Live at [paste.erfi.dev](https://paste.erfi.dev).
 
 ## Features
 
-- **Advanced Code Sharing**
-  - Create and view text/code pastes with rich formatting
-  - Syntax highlighting for 40+ programming languages with Prism.js
-  - Custom expiration times (1 hour to 1 year)
-  - Public and private visibility options
+- **Paste core**
+  - Plain text or syntax-highlighted code (40+ languages via Prism.js)
+  - Expiration: 1 hour to 1 year (enforced by pg_cron)
+  - Public or private visibility
   - View limits with automatic deletion
+  - Burn-after-reading (atomic via Postgres `view_paste()` RPC with `FOR UPDATE` row lock)
+  - Vanity slugs (`/p/<slug>`)
+  - Multi-file pastes
   
-- **Security & Privacy**
-  - End-to-end encryption for sensitive content
-  - Password protection with strong key derivation
-  - "Burn after reading" self-destructing pastes
-  - Client-side encryption with secure key sharing
-  - Enterprise-grade security with comprehensive protections
-  - Encrypted local storage for sensitive data
-  - Rate limiting with bypass prevention
-  - Admin endpoint authentication
-  - XSS prevention and CSP headers
-  - Private pastes hidden from listings
+- **Encryption & privacy**
+  - End-to-end encryption (client-side, AES-GCM via Web Crypto API)
+  - Key in URL fragment — server never sees plaintext or keys
+  - Password mode (PBKDF2 key derivation) and key mode (256-bit random)
+  - Decryption happens in a Web Worker for non-blocking UX
+  - Encrypted localStorage for any sensitive client state
+
+- **Auth & ownership** (optional)
+  - Supabase Auth (email + password)
+  - Pastes optionally linked to a user via `user_id`
+  - `/my` page lists user's pastes (browser → Supabase direct, filtered by RLS)
+  - Anonymous use unchanged — `user_id = NULL`, `deleteToken` flow
+
+- **Discovery**
+  - Recent public pastes feed
+  - Live Realtime broadcast on new public pastes (no polling)
+  - Full-text search (Postgres tsvector + GIN, websearch syntax)
+  
+- **Hardening**
+  - Rate limiting (per-IP, in-memory + KV-backed)
+  - CSP, X-Frame-Options, HSTS, X-Content-Type-Options
+  - CORS allowlist
+  - XSS prevention (no `innerHTML` on user data, programmatic DOM creation)
   
 - **Enhanced User Experience**
   - Modern UI with dark mode support

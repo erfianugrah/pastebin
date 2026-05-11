@@ -929,58 +929,239 @@ in Phase 4.3 for the live recent feed.
 6. Other users do NOT see your private paste (verified
    programmatically by `npm run test:rls`).
 
-**Analytics** (exercises: Postgres aggregation)
+#### 4.4d: OAuth providers (planned, not yet started)
+
+Email + password is implemented (`AuthForm.tsx`). Next iteration adds
+OAuth — GitHub first because it's the most useful for developers and
+needs no email-server config. Reference: `~/supabase/acme-corp/src/app/login/page.tsx`
+shows the exact `signInWithOAuth` pattern.
+
+**What to add (estimated ~1 hour of work):**
+
+1. Configure GitHub OAuth in the Supabase Dashboard
+   (Authentication → Providers → GitHub). Add a GitHub OAuth app
+   with callback `https://<project-ref>.supabase.co/auth/v1/callback`.
+
+2. Add a "Continue with GitHub" button to `AuthForm.tsx`:
+
+   ```tsx
+   async function handleGitHub() {
+     await supabase.auth.signInWithOAuth({
+       provider: 'github',
+       options: { redirectTo: `${window.location.origin}/auth/callback` },
+     });
+   }
+   ```
+
+3. Create `astro/src/pages/auth/callback.astro` that calls
+   `supabase.auth.exchangeCodeForSession(code)` from the URL and
+   redirects to `/my`. (For Astro static + supabase-js with
+   `detectSessionInUrl: true` this is often handled automatically;
+   only need a callback page if the project uses the PKCE flow.)
+
+No backend changes — the JWT from any OAuth provider is just another
+Supabase Auth JWT, validated by the existing `AuthService`. RLS
+policies match on `auth.uid()` which is the same UUID regardless of
+the sign-in method.
+
+**Other providers worth considering:** Google (broadest reach),
+Magic Link / OTP (no password to manage, low-friction).
+
+#### 4.5: Analytics (planned)
+
+**Goal:** Lightweight aggregate stats over public pastes.
+
+**Implementation:** Postgres function `paste_stats()` returning a
+jsonb object with three aggregates:
 
 ```sql
--- Pastes by language
-SELECT language, count(*) FROM pastes
-WHERE visibility = 'public' GROUP BY language ORDER BY count DESC;
-
--- Paste creation over time
-SELECT date_trunc('hour', created_at) AS hour, count(*)
-FROM pastes GROUP BY hour ORDER BY hour DESC LIMIT 48;
-
--- Encryption adoption (column is `version`: 0=plaintext, 2=client-side E2E)
-SELECT version, count(*) FROM pastes GROUP BY version;
+CREATE OR REPLACE FUNCTION public.paste_stats()
+RETURNS jsonb
+LANGUAGE sql STABLE
+AS $$
+  SELECT jsonb_build_object(
+    'totalPublic', (SELECT count(*) FROM pastes WHERE visibility = 'public'),
+    'byLanguage', (
+      SELECT jsonb_agg(jsonb_build_object('language', language, 'count', c))
+      FROM (
+        SELECT coalesce(language, 'unknown') AS language, count(*) AS c
+        FROM pastes WHERE visibility = 'public'
+        GROUP BY language ORDER BY c DESC LIMIT 20
+      ) t
+    ),
+    'byHour', (
+      SELECT jsonb_agg(jsonb_build_object('hour', hour, 'count', c) ORDER BY hour DESC)
+      FROM (
+        SELECT date_trunc('hour', created_at) AS hour, count(*) AS c
+        FROM pastes WHERE visibility = 'public'
+          AND created_at > now() - interval '48 hours'
+        GROUP BY hour
+      ) t
+    ),
+    'encryption', (
+      SELECT jsonb_object_agg(version, c)
+      FROM (
+        SELECT version, count(*) AS c FROM pastes
+        WHERE visibility = 'public' GROUP BY version
+      ) t
+    )
+  );
+$$;
 ```
 
-**Expiration done right** (exercises: pg_cron)
+`LANGUAGE sql STABLE` not `plpgsql` — pure aggregates, no control
+flow needed, lets the planner inline if useful.
 
-- Already handled by the `cleanup-expired-pastes` cron job
-- KV TTL was the only cleanup mechanism before -- now you have both automatic expiry AND queryable expired-but-not-yet-cleaned data
+**Exposure:**
+- `GET /api/stats` endpoint (Worker calls `client.rpc('paste_stats')`)
+- Cached at edge (5min maxAge + SWR) — stats don't change second-by-second
+- Optional `/stats` Astro page with charts (skip first iteration; the
+  JSON endpoint is the deliverable)
+
+**Tests:** 1 unit test for the repo method (mocked RPC), 1 smoke
+test that hits `/api/stats` and asserts shape.
+
+#### 4.6: Expiration (already done)
+
+Handled by the `cleanup-expired-pastes` pg_cron job since Phase 0.
+KV TTL was the only cleanup mechanism before — Postgres gives both
+automatic expiry AND queryable expired-but-not-yet-cleaned data.
+
+---
+
+## Phase 5: KV removal (planned)
+
+After a confidence period running on Supabase, remove the KV bindings
+and `KVPasteRepository` for good. Concretely:
+
+1. Confirm no active KV pastes worth keeping (none expected; TTL was
+   matched on creation).
+2. Remove `kv_namespaces` block from `wrangler.jsonc`.
+3. Remove `PASTES: KVNamespace` from `src/types.ts`.
+4. Remove `KVPasteRepository` instantiation from `src/index.ts`.
+5. Delete `src/infrastructure/storage/kvPasteRepository.ts` +
+   its test file.
+6. Delete `DualWriteRepository` + its test file (only useful during
+   the KV → Supabase migration; `STORAGE_BACKEND=dual` is no
+   longer a meaningful mode).
+7. Simplify the `STORAGE_BACKEND` env var or remove it entirely.
+
+Net change: -300 LOC, simpler env. No user-visible change.
+
+---
+
+## Phase 6: Discord bot integration (idea, not scoped)
+
+Concept: a Discord bot that wraps Pasteriser, addressing Discord's
+text + image limits:
+
+- **Long messages**: bot intercepts `/paste <code>` or messages above
+  a threshold (Discord limit is 2000 chars for free, 4000 for Nitro;
+  4 MiB for image attachments) and uploads them as Pasteriser pastes,
+  returning a URL.
+- **Server-scoped**: each Discord guild gets a derived `user_id` (or
+  a Supabase Auth identity), so pastes from a guild are visible only
+  to members of that guild. Implementable as a `guild_id` column on
+  pastes + an RLS policy that joins on a `guild_members` table the
+  bot maintains.
+- **Auto-encryption**: bot generates the E2EE key client-side (in the
+  bot's runtime), posts the ciphertext + key fragment, hands the
+  fragment URL back to the channel. Discord users see a normal URL;
+  the key never enters the database.
+- **Self-hosted deployment**: viable on Unraid as a Docker container.
+
+### Viability of running Deno + Discord.js on Unraid
+
+**Why Deno specifically?** Supabase Edge Functions are Deno-based;
+running the same runtime locally means the bot can share code with
+future Edge Functions (if needed) and uses modern web APIs (fetch,
+Web Crypto) without polyfills. Discord.py / discord.js / Discord
+gateway libraries all work in Deno via `npm:` specifiers.
+
+**Containerisation:** Standard Deno container is `denoland/deno:latest`
+(~50 MiB Alpine image). Pasteriser's bot would be:
+
+```dockerfile
+FROM denoland/deno:alpine-2
+WORKDIR /app
+COPY . .
+RUN deno cache main.ts
+CMD ["deno", "run", "--allow-net", "--allow-env", "main.ts"]
+```
+
+Unraid template wires up:
+- `DISCORD_TOKEN` (Wrangler-style secret)
+- `PASTERISER_API_URL` (paste.erfi.dev)
+- `SUPABASE_URL` + `SUPABASE_PUBLISHABLE_KEY` (for direct DB reads
+  in the bot, if needed)
+- Persistent volume for SQLite if the bot tracks its own state
+  (guild → user_id mapping, etc.)
+
+**Resource footprint:** Deno + Discord gateway is small —
+~80-150 MiB RAM in steady state for a single bot connection.
+
+**Networking:** Bot is a Discord WebSocket client, no inbound ports
+required. Pasteriser API calls go out via HTTPS. No reverse-proxy
+config needed.
+
+**Trade-offs:**
+
+| Aspect | Verdict |
+|--------|---------|
+| Latency | Low — Unraid → Discord WS is fast; bot → Pasteriser is the same CF edge as anyone else |
+| Reliability | Acceptable for prep/dev. Discord rate-limits and the bot's uptime depend on Unraid's reliability; for "real" deployment migrate to Fly.io or a Workers cron+queue model. |
+| Auth model | Bot acts as a service account. For server-scoped RLS, add a `guild_id` column + policies. Alternative: bot creates one Supabase Auth user per Discord user via the admin API, and impersonates them with their JWT. |
+| Cost | $0 — Unraid is already running. Discord bot tier is free. |
+| Maintenance | Auto-rebuild on push via Watchtower or a CI hook (existing Composer setup handles this). |
+
+**MVP scope:** read-only command, `/paste <url>` and `/paste-long
+<text>`. No server-scoped encryption initially; just upload as
+anonymous Pasteriser pastes. Phase 2 of the bot work: add per-guild
+encryption + RLS scoping.
+
+This phase is **not committed** to the migration plan — captured here
+so the design notes don't get lost.
 
 ---
 
 ## What Changed, What Didn't
 
+This table tracks cumulative impact across all phases (0 through 4.4):
+
 | Layer | Changed? | Details |
 |-------|----------|---------|
-| **Domain model** (`paste.ts`) | No | Untouched. Same `Paste` class, same value objects. |
-| **Repository interface** | No | Same 6 methods. The abstraction worked exactly as designed. |
-| **Application commands/queries** | No | Commands and queries are unaware of which backend is active. |
-| **Factory** (`pasteFactory.ts`) | No | Same rehydration logic from `PasteData`. |
-| **Infrastructure/storage** | Yes | Added `SupabasePasteRepository` + `DualWriteRepository`. `KVPasteRepository` retained. |
-| **Entry point** (`index.ts`) | Yes | Feature-flag logic; `pasteRepository` added to Hono context. |
-| **Types** (`types.ts`) | Yes | `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STORAGE_BACKEND` added to `Env`. |
-| **Frontend** (Astro/React) | No | Frontend never knew about the backend. Zero changes. |
-| **wrangler.jsonc** | Yes | `SUPABASE_URL`, `STORAGE_BACKEND` vars added. `SUPABASE_SECRET_KEY` is a Wrangler secret (not in file). |
-| **Tests** | Yes | 25 new tests: 14 for `SupabasePasteRepository`, 11 for `DualWriteRepository`. |
-| **Migrations** | Yes | 12 migration files in `supabase/migrations/` (7 baseline + trigger fix + `view_paste()` RPC + FTS + Realtime + authenticated RLS). |
+| **Domain model** (`paste.ts`) | Yes (Phase 4.4) | Added `userId?: string` field for `auth.users(id)` linkage. Untouched through Phases 0-4.3. |
+| **Repository interface** | Yes (Phase 4) | Grew from 6 to 8 methods: `save`, `findById`, `view` (4.1), `delete`, `findRecentPublic`, `searchPublic` (4.2), `resolveSlug`, `saveSlug`. Atomicity guarantees now per-backend. |
+| **Application commands/queries** | Yes (Phase 4) | `CreatePasteCommand.execute(params, opts: { userId? })` for auth. New `SearchPastesQuery`. `GetPasteQuery.execute()` collapsed to a 3-line wrapper since orchestration moved into the repo. |
+| **Factory** (`pasteFactory.ts`) | Yes (Phase 4.4) | `fromData` now propagates `userId`. |
+| **Infrastructure/storage** | Yes | Added `SupabasePasteRepository`, `DualWriteRepository`. `KVPasteRepository` retained for rollback. |
+| **Infrastructure/auth** | Yes (Phase 4.4) | New `AuthService.getUserIdFromRequest()` validates `Authorization: Bearer <jwt>` via `supabase.auth.getUser()`. |
+| **Entry point** (`index.ts`) | Yes | Feature-flag logic, DI of all services in Hono context, new routes for `/login`, `/signup`, `/my`, `/api/search`. |
+| **Types** (`types.ts`) | Yes | `Env` gained `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STORAGE_BACKEND`. |
+| **Frontend** (Astro/React) | Yes (Phase 4.3-4.4) | New: `UserMenu`, `AuthForm`, `MyPastes`, `useAuth` hook, supabase client singleton. Updated: `Header` (UserMenu), `RecentPastes` (Realtime subscription), `PasteForm` (sends JWT when signed in). |
+| **wrangler.jsonc** | Yes | `SUPABASE_URL`, `STORAGE_BACKEND` vars. `SUPABASE_SECRET_KEY` as Wrangler secret. |
+| **astro/.env** | Yes (Phase 4.3-4.4) | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY` baked into client bundle. |
+| **Unit tests** | Yes | 151 total (was 0 baseline → 113 through Phase 1 → 135 through Phase 4.3 → 151 through 4.4). |
+| **Live test scripts** | Yes (Phases 3.5-4.4) | `test:smoke`, `test:race`, `test:realtime`, `test:rls`, `test:all-live` orchestrator. |
+| **Migrations** | Yes | 12 files: 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3) + authenticated RLS (4.4a). |
 
 ---
 
 ## Supabase Features Exercised
 
-| Feature            | How it's used                                         | Prep value                      |
-| ------------------ | ----------------------------------------------------- | ------------------------------- |
-| **Postgres**       | Paste storage, search, aggregation, atomic operations | Core skill                      |
-| **RLS**            | Public/private visibility, user-scoped "my pastes"    | Most important Supabase feature |
-| **Auth**           | Optional user accounts, "my pastes"                   | Phase 4                         |
-| **Realtime**       | Live recent paste feed                                | Phase 4                         |
-| **pg_cron**        | Expired paste cleanup                                 | Phase 0                         |
-| **Edge Functions** | Not needed (Worker is the compute layer)              | N/A                             |
-| **Storage**        | Not needed (content is in Postgres `text` column)     | N/A                             |
-| **supabase-js**    | From a Cloudflare Worker context (not Next.js)        | Real-world pattern              |
+| Feature            | How it's used                                         | Status |
+| ------------------ | ----------------------------------------------------- | ------ |
+| **Postgres**       | Paste storage, FTS via tsvector + GIN, aggregations, PL/pgSQL functions with row locks | ✓ Phases 0-4 |
+| **RLS**            | Anon: public pastes / non-expired slugs. Authenticated: 5 own-row policies (SELECT public, SELECT/INSERT/UPDATE/DELETE own). Realtime: scoped to `recent:public` topic | ✓ Phases 0, 4.4a |
+| **Auth (email+pw)** | Signup, login, session refresh, `auth.users(id)` FK from `pastes.user_id`. `/login`, `/signup`, `/my` pages with React islands. | ✓ Phase 4.4 |
+| **Auth (OAuth)**   | GitHub provider — pattern documented (acme-corp reference), not yet implemented | ⏳ 4.4d |
+| **Realtime**       | Live recent paste feed. `AFTER INSERT` trigger calls `realtime.send()` to private channel `recent:public`. RLS on `realtime.messages` enforces topic scoping. | ✓ Phase 4.3 |
+| **pg_cron**        | Expired paste cleanup every 5min, expired slug cleanup daily at 03:00 | ✓ Phase 0 |
+| **pg_proc / PL/pgSQL** | `view_paste()` RPC with `SELECT ... FOR UPDATE` for atomic burn-after-reading. `broadcast_public_paste_insert()` trigger function. Both `SECURITY DEFINER` + `SET search_path = ''`. | ✓ Phases 4.1, 4.3 |
+| **Storage**        | Not needed (paste content in Postgres `text` column; 25 MiB limit acceptable) | N/A |
+| **Edge Functions** | Not needed (Cloudflare Worker is the compute layer) | N/A |
+| **supabase-js**    | From a Cloudflare Worker (`service_role`) and from the browser (`anon` + user JWT). Two-client testing pattern matches official docs. | ✓ Phases 1-4 |
+| **Aggregations**   | `paste_stats()` function with `jsonb_build_object` returning language/hour/encryption breakdowns | ⏳ 4.5 |
 
 ---
 
