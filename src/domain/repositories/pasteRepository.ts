@@ -14,6 +14,20 @@ export interface ViewResult {
   wasViewLimited: boolean;
 }
 
+/**
+ * Aggregate stats returned by `getPublicStats()`. Mirrors the shape of
+ * the `paste_stats()` Postgres function for the Supabase backend.
+ */
+export interface PasteStats {
+  totalPublic: number;
+  byLanguage: Array<{ language: string; count: number }>;
+  byHour: Array<{ hour: string; count: number }>;
+  /** Map from encryption version (as string, e.g. "0", "2") to count. */
+  encryption: Record<string, number>;
+  /** ISO timestamp of when the snapshot was generated. */
+  generatedAt: string;
+}
+
 export interface PasteRepository {
   /**
    * Save a paste to the repository
@@ -71,6 +85,15 @@ export interface PasteRepository {
    *          else by created_at desc.
    */
   searchPublic(query: string, limit: number): Promise<Paste[]>;
+
+  /**
+   * Aggregate stats over public pastes: total count, by language (top 20),
+   * by hour (last 48h), encryption-version breakdown.
+   *
+   * Backed by the `paste_stats()` Postgres function in the Supabase
+   * implementation. KV returns null (no aggregation primitive).
+   */
+  getPublicStats(): Promise<PasteStats | null>;
 
   /**
    * Resolve a vanity slug to a paste ID

@@ -1,6 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Paste, PasteData, PasteId } from '../../domain/models/paste';
-import { PasteRepository, ViewResult } from '../../domain/repositories/pasteRepository';
+import { PasteRepository, PasteStats, ViewResult } from '../../domain/repositories/pasteRepository';
 import { PasteFactory } from '../../application/factories/pasteFactory';
 import { Logger } from '../logging/logger';
 
@@ -184,6 +184,23 @@ export class SupabasePasteRepository implements PasteRepository {
 		}
 
 		return (data ?? []).map((row) => PasteFactory.fromData(this.mapRow(row)));
+	}
+
+	async getPublicStats(): Promise<PasteStats | null> {
+		this.logger.debug('Supabase: getting paste_stats()');
+
+		const { data, error } = await this.client.rpc('paste_stats');
+
+		if (error) {
+			this.logger.error('Supabase: paste_stats RPC failed', { error });
+			return null;
+		}
+
+		// The function returns a single jsonb object; supabase-js delivers
+		// that as the `data` value directly (not wrapped in an array).
+		if (!data || typeof data !== 'object') return null;
+
+		return data as PasteStats;
 	}
 
 	async resolveSlug(slug: string): Promise<string | null> {

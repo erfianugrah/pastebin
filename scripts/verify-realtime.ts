@@ -158,54 +158,57 @@ async function endToEnd() {
 		received.push(p);
 	});
 
-	const subscribed = await new Promise<boolean>((res) => {
-		channel.subscribe((s) => {
-			if (s === 'SUBSCRIBED') res(true);
-			if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') res(false);
+	let pub: { id: string; deleteToken: string } | null = null;
+	let priv: { id: string; deleteToken: string } | null = null;
+
+	try {
+		const subscribed = await new Promise<boolean>((res) => {
+			channel.subscribe((s) => {
+				if (s === 'SUBSCRIBED') res(true);
+				if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') res(false);
+			});
 		});
-	});
-	assert(subscribed, 'subscribe to recent:public as anon');
-	if (!subscribed) {
-		await supabase.removeAllChannels();
-		return;
+		assert(subscribed, 'subscribe to recent:public as anon');
+		if (!subscribed) return;
+
+		const pubMarker = `rt-pub-${Date.now()}`;
+		const privMarker = `rt-priv-${Date.now()}`;
+		pub = await createPaste({ content: 'x', title: pubMarker, visibility: 'public' });
+		priv = await createPaste({ content: 'x', title: privMarker, visibility: 'private' });
+
+		await new Promise((r) => setTimeout(r, 2500));
+
+		const pubMatch = received.find((p) => p.title === pubMarker);
+		const privMatch = received.find((p) => p.title === privMarker);
+
+		assert(!!pubMatch, 'public paste insert broadcasts to recent:public');
+		assert(!privMatch, 'private paste insert does NOT broadcast (trigger filter)');
+
+		if (pubMatch) {
+			const leakedKeys = Object.keys(pubMatch).filter((k) => !SAFE_PAYLOAD_KEYS.has(k));
+			assert(leakedKeys.length === 0, 'payload contains only safe fields', leakedKeys.join(','));
+			assert(typeof pubMatch.isEncrypted === 'boolean', 'isEncrypted is broadcast as boolean');
+			assert(typeof pubMatch.version === 'number', 'version is broadcast as number');
+		}
+
+		// Side-effect test: viewing the public paste increments read_count
+		// via upsert. Should NOT fire the broadcast trigger (AFTER INSERT only,
+		// not AFTER UPDATE).
+		const beforeCount = received.length;
+		await fetch(`${API}/pastes/${pub.id}`, { headers: { Accept: 'application/json' } });
+		await fetch(`${API}/pastes/${pub.id}`, { headers: { Accept: 'application/json' } });
+		await new Promise((r) => setTimeout(r, 1500));
+		assert(
+			received.length === beforeCount,
+			'read-count upsert (UPDATE) does NOT fire INSERT trigger',
+			`received ${received.length - beforeCount} extra broadcasts after reads`,
+		);
+	} finally {
+		// Always clean up, even on assertion failure or early return.
+		await supabase.removeAllChannels().catch(() => {});
+		if (pub) await deletePaste(pub.id, pub.deleteToken);
+		if (priv) await deletePaste(priv.id, priv.deleteToken);
 	}
-
-	const pubMarker = `rt-pub-${Date.now()}`;
-	const privMarker = `rt-priv-${Date.now()}`;
-	const pub = await createPaste({ content: 'x', title: pubMarker, visibility: 'public' });
-	const priv = await createPaste({ content: 'x', title: privMarker, visibility: 'private' });
-
-	await new Promise((r) => setTimeout(r, 2500));
-
-	const pubMatch = received.find((p) => p.title === pubMarker);
-	const privMatch = received.find((p) => p.title === privMarker);
-
-	assert(!!pubMatch, 'public paste insert broadcasts to recent:public');
-	assert(!privMatch, 'private paste insert does NOT broadcast (trigger filter)');
-
-	if (pubMatch) {
-		const leakedKeys = Object.keys(pubMatch).filter((k) => !SAFE_PAYLOAD_KEYS.has(k));
-		assert(leakedKeys.length === 0, 'payload contains only safe fields', leakedKeys.join(','));
-		assert(typeof pubMatch.isEncrypted === 'boolean', 'isEncrypted is broadcast as boolean');
-		assert(typeof pubMatch.version === 'number', 'version is broadcast as number');
-	}
-
-	// Side-effect test: viewing the public paste increments read_count
-	// via upsert. Should NOT fire the broadcast trigger (AFTER INSERT only,
-	// not AFTER UPDATE).
-	const beforeCount = received.length;
-	await fetch(`${API}/pastes/${pub.id}`, { headers: { Accept: 'application/json' } });
-	await fetch(`${API}/pastes/${pub.id}`, { headers: { Accept: 'application/json' } });
-	await new Promise((r) => setTimeout(r, 1500));
-	assert(
-		received.length === beforeCount,
-		'read-count upsert (UPDATE) does NOT fire INSERT trigger',
-		`received ${received.length - beforeCount} extra broadcasts after reads`,
-	);
-
-	await supabase.removeAllChannels();
-	await deletePaste(pub.id, pub.deleteToken);
-	await deletePaste(priv.id, priv.deleteToken);
 }
 
 // ---------- Group 2: compatibility matrix ----------

@@ -2,10 +2,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { Env } from './types';
 import { ConfigurationService } from './infrastructure/config/config';
-import { KVPasteRepository } from './infrastructure/storage/kvPasteRepository';
 import { SupabasePasteRepository } from './infrastructure/storage/supabasePasteRepository';
 import { AuthService } from './infrastructure/auth/authService';
-import { DualWriteRepository } from './infrastructure/storage/dualWriteRepository';
 import { PasteRepository } from './domain/repositories/pasteRepository';
 import { CloudflareUniqueIdService } from './infrastructure/services/cloudflareUniqueIdService';
 import { DefaultExpirationService } from './domain/services/expirationService';
@@ -14,6 +12,7 @@ import { DeletePasteCommand } from './application/commands/deletePasteCommand';
 import { GetPasteQuery } from './application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery';
 import { SearchPastesQuery } from './application/queries/searchPastesQuery';
+import { GetPasteStatsQuery } from './application/queries/getPasteStatsQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
 import { securityHeaders } from './interfaces/api/middleware';
 import { AppError } from './infrastructure/errors/AppError';
@@ -34,7 +33,7 @@ type AppEnv = {
 		logger: Logger;
 		handlers: ApiHandlers;
 		pasteRepository: PasteRepository;
-		authService: AuthService | null;
+		authService: AuthService;
 	};
 };
 
@@ -83,19 +82,11 @@ app.use('*', async (c, next) => {
 		},
 	});
 
-	const kvRepo = new KVPasteRepository(c.env.PASTES, logger);
-
-	let pasteRepository: PasteRepository;
-	const backend = c.env.STORAGE_BACKEND ?? 'kv';
-
-	if (backend === 'supabase') {
-		pasteRepository = new SupabasePasteRepository(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger);
-	} else if (backend === 'dual') {
-		const supabaseRepo = new SupabasePasteRepository(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger);
-		pasteRepository = new DualWriteRepository(kvRepo, supabaseRepo, logger);
-	} else {
-		pasteRepository = kvRepo;
-	}
+	const pasteRepository: PasteRepository = new SupabasePasteRepository(
+		c.env.SUPABASE_URL,
+		c.env.SUPABASE_SECRET_KEY,
+		logger,
+	);
 
 	const createPasteCommand = new CreatePasteCommand(
 		pasteRepository,
@@ -107,13 +98,9 @@ app.use('*', async (c, next) => {
 	const getPasteQuery = new GetPasteQuery(pasteRepository);
 	const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
 	const searchPastesQuery = new SearchPastesQuery(pasteRepository, logger);
+	const getPasteStatsQuery = new GetPasteStatsQuery(pasteRepository, logger);
 
-	// AuthService is only useful when Supabase is configured. When using KV
-	// backend without Supabase, we skip auth entirely (all pastes are anon).
-	const authService =
-		c.env.SUPABASE_URL && c.env.SUPABASE_SECRET_KEY
-			? new AuthService(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger)
-			: null;
+	const authService = new AuthService(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger);
 
 	const apiHandlers = new ApiHandlers(
 		createPasteCommand,
@@ -121,6 +108,7 @@ app.use('*', async (c, next) => {
 		getPasteQuery,
 		getRecentPastesQuery,
 		searchPastesQuery,
+		getPasteStatsQuery,
 		logger,
 		pasteRepository,
 		authService,
@@ -194,6 +182,14 @@ app.get('/api/search', async (c) => {
 	return addCacheHeaders(await c.get('handlers').handleSearchPastes(c.req.raw), {
 		maxAge: 30,
 		staleWhileRevalidate: 120,
+	});
+});
+
+// GET /api/stats — aggregate stats over non-expired public pastes
+app.get('/api/stats', async (c) => {
+	return addCacheHeaders(await c.get('handlers').handlePasteStats(c.req.raw), {
+		maxAge: 300,
+		staleWhileRevalidate: 900,
 	});
 });
 

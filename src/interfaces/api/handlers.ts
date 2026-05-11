@@ -5,6 +5,7 @@ import { DeletePasteCommand, DeleteErrorCode } from '../../application/commands/
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../application/queries/getRecentPastesQuery';
 import { SearchPastesQuery } from '../../application/queries/searchPastesQuery';
+import { GetPasteStatsQuery } from '../../application/queries/getPasteStatsQuery';
 import { AuthService } from '../../infrastructure/auth/authService';
 import { Logger } from '../../infrastructure/logging/logger';
 import { AppError, ValidationError, NotFoundError } from '../../infrastructure/errors/AppError';
@@ -47,9 +48,10 @@ export class ApiHandlers {
 		private readonly getPasteQuery: GetPasteQuery,
 		private readonly getRecentPastesQuery: GetRecentPastesQuery,
 		private readonly searchPastesQuery: SearchPastesQuery,
+		private readonly getPasteStatsQuery: GetPasteStatsQuery,
 		private readonly logger: Logger,
 		private readonly repository?: PasteRepository,
-		private readonly authService: AuthService | null = null,
+		private readonly authService?: AuthService,
 	) {}
 
 	async handleCreatePaste(request: Request): Promise<Response> {
@@ -225,5 +227,14 @@ export class ApiHandlers {
 
 		const results = await this.searchPastesQuery.execute(query, limit);
 		return json({ pastes: results, query });
+	}
+
+	async handlePasteStats(_request: Request): Promise<Response> {
+		this.logger.debug('Handling paste stats request');
+		const stats = await this.getPasteStatsQuery.execute();
+		if (!stats) {
+			return json({ error: { code: 'unavailable', message: 'Stats not available on this backend' } }, 503);
+		}
+		return json(stats);
 	}
 }

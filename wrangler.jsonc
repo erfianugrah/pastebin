@@ -7,7 +7,6 @@
 	"name": "pastebin",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-04-10",
-	"migrations": [],
 	"logpush": true,
 	"assets": {
 		"binding": "ASSETS",
@@ -18,14 +17,7 @@
 	},
 	"vars": {
 		"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co",
-		"STORAGE_BACKEND": "supabase",
 	},
-	"kv_namespaces": [
-		{
-			"binding": "PASTES",
-			"id": "7ab6cc1ce0744c119c50554173707600",
-		},
-	],
 	"observability": {
 		"enabled": true,
 		"logs": {
@@ -43,18 +35,11 @@
 			"name": "pastebin-prod",
 			"vars": {
 				"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co",
-				"STORAGE_BACKEND": "supabase",
 			},
 			"routes": [
 				{
 					"pattern": "paste.erfi.dev",
 					"custom_domain": true,
-				},
-			],
-			"kv_namespaces": [
-				{
-					"binding": "PASTES",
-					"id": "7ab6cc1ce0744c119c50554173707600",
 				},
 			],
 		},

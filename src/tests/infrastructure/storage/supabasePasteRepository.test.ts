@@ -503,4 +503,47 @@ describe('SupabasePasteRepository', () => {
 			);
 		});
 	});
+
+	describe('getPublicStats (paste_stats RPC)', () => {
+		it('calls the paste_stats RPC and returns the parsed payload', async () => {
+			const fakeStats = {
+				totalPublic: 42,
+				byLanguage: [{ language: 'typescript', count: 10 }],
+				byHour: [{ hour: '2026-05-11T15:00:00+00:00', count: 5 }],
+				encryption: { '0': 30, '2': 12 },
+				generatedAt: '2026-05-11T15:30:00.000Z',
+			};
+			mockClient = makeSupabaseMock({ rpcResult: { data: fakeStats, error: null } });
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.getPublicStats();
+
+			expect(mockClient.rpc).toHaveBeenCalledWith('paste_stats');
+			expect(result).toEqual(fakeStats);
+		});
+
+		it('returns null and logs on RPC error', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: null, error: { message: 'function not found' } },
+			});
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.getPublicStats();
+
+			expect(result).toBeNull();
+			expect(mockLogger.error).toHaveBeenCalled();
+		});
+
+		it('returns null when RPC returns a non-object', async () => {
+			mockClient = makeSupabaseMock({ rpcResult: { data: null, error: null } });
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.getPublicStats();
+
+			expect(result).toBeNull();
+		});
+	});
 });

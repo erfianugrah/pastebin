@@ -5,6 +5,7 @@ import { DeletePasteCommand, DeleteErrorCode } from '../../../application/comman
 import { GetPasteQuery } from '../../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../../application/queries/getRecentPastesQuery';
 import { SearchPastesQuery } from '../../../application/queries/searchPastesQuery';
+import { GetPasteStatsQuery } from '../../../application/queries/getPasteStatsQuery';
 import { AuthService } from '../../../infrastructure/auth/authService';
 import { Logger } from '../../../infrastructure/logging/logger';
 import { Paste, PasteId, ExpirationPolicy } from '../../../domain/models/paste';
@@ -32,6 +33,10 @@ const mockRecentQuery = {
 const mockSearchQuery = {
 	execute: vi.fn(),
 } as unknown as SearchPastesQuery;
+
+const mockStatsQuery = {
+	execute: vi.fn(),
+} as unknown as GetPasteStatsQuery;
 
 const mockAuthService = {
 	getUserIdFromRequest: vi.fn(),
@@ -85,6 +90,7 @@ describe('ApiHandlers', () => {
 			mockGetQuery,
 			mockRecentQuery,
 			mockSearchQuery,
+			mockStatsQuery,
 			mockLogger,
 		);
 	});
@@ -124,6 +130,7 @@ describe('ApiHandlers', () => {
 				mockGetQuery,
 				mockRecentQuery,
 				mockSearchQuery,
+				mockStatsQuery,
 				mockLogger,
 				undefined,
 				mockAuthService,
@@ -176,6 +183,7 @@ describe('ApiHandlers', () => {
 				mockGetQuery,
 				mockRecentQuery,
 				mockSearchQuery,
+				mockStatsQuery,
 				mockLogger,
 				undefined,
 				mockAuthService,
@@ -339,6 +347,37 @@ describe('ApiHandlers', () => {
 
 			// 200-char cap
 			expect((mockSearchQuery.execute as any).mock.calls[0][0].length).toBe(200);
+		});
+	});
+
+	describe('handlePasteStats', () => {
+		it('returns the stats payload when the repo provides it', async () => {
+			const fakeStats = {
+				totalPublic: 7,
+				byLanguage: [{ language: 'typescript', count: 5 }],
+				byHour: [{ hour: '2026-05-11T15:00:00Z', count: 3 }],
+				encryption: { '0': 7 },
+				generatedAt: '2026-05-11T15:30:00Z',
+			};
+			vi.mocked(mockStatsQuery.execute).mockResolvedValue(fakeStats);
+
+			const req = getRequest('https://example.com/api/stats');
+			const res = await handlers.handlePasteStats(req);
+
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body).toEqual(fakeStats);
+		});
+
+		it('returns 503 when the repo returns null (backend has no aggregation)', async () => {
+			vi.mocked(mockStatsQuery.execute).mockResolvedValue(null);
+
+			const req = getRequest('https://example.com/api/stats');
+			const res = await handlers.handlePasteStats(req);
+
+			expect(res.status).toBe(503);
+			const body = (await res.json()) as { error: { code: string } };
+			expect(body.error.code).toBe('unavailable');
 		});
 	});
 });
