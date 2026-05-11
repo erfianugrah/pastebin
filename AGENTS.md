@@ -21,12 +21,13 @@ Two separate packages with **independent `node_modules`**:
 - **Storage abstraction**: `PasteRepository` interface (9 methods: `save`, `findById`, `view`, `delete`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`). One implementation: `SupabasePasteRepository`. KV bindings + `DualWriteRepository` removed in Phase 5.
 - **Env bindings** (`src/types.ts`):
   - `ASSETS: Fetcher` — Astro static assets
-  - `SUPABASE_URL: string` — project URL (var in `wrangler.jsonc`)
+  - `SUPABASE_URL: string` — project URL (Wrangler secret, never in source)
   - `SUPABASE_SECRET_KEY: string` — `sb_secret_...` (Wrangler secret, never in source)
+  - `wrangler.jsonc` has no `vars` block; the two required secrets are listed only in the JSONC comment at the top of the file
 
 ## Supabase migrations
 
-- All schema in `supabase/migrations/` — 13 files, applied to `dewddkcmwrzbpynylyhg`
+- All schema in `supabase/migrations/` — 14 files, applied to `dewddkcmwrzbpynylyhg`
 - Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema and Phase 3.5 audit fixes)
 - `set_updated_at` trigger has a `WHEN (OLD.x IS DISTINCT FROM NEW.x)` clause — required because `upsert()` sends all columns and `UPDATE OF col` fires on column presence, not value change
 - `createClient()` always passes `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }` — Supabase-recommended for server-side contexts
@@ -34,7 +35,8 @@ Two separate packages with **independent `node_modules`**:
 - `search_vector` is a STORED generated tsvector column (`to_tsvector('english', title || ' ' || language)`) backed by a GIN index. Query via `.textSearch('search_vector', q, { type: 'websearch', config: 'english' })`
 - Realtime: `AFTER INSERT` trigger on `pastes` calls `realtime.send()` to topic `recent:public` (private channel) when `visibility = 'public'`. Payload is curated to safe fields only. RLS policies on `realtime.messages` restrict `anon`/`authenticated` to the exact topic. INSERT trigger does NOT fire on upsert-induced UPDATEs.
 - RLS for authenticated users: 5 policies on `public.pastes` (view public, view own, create own, update own, delete own). Worker still uses `service_role` (RLS bypass); these policies activate when the frontend queries Supabase directly with a user JWT.
-- Auth: Worker validates `Authorization: Bearer <jwt>` via `AuthService.getUserIdFromRequest()` which calls `supabase.auth.getUser(jwt)`. user_id comes from the verified JWT, never from the request body. Anonymous requests get `user_id = NULL`.
+- Auth: Worker validates the session via `AuthService.getUserIdFromRequest()` which reads the `sb-access-token` HttpOnly cookie first (cookie wins over `Authorization: Bearer`) and calls `supabase.auth.getUser(jwt)`. user_id comes from the verified JWT, never from the request body. Anonymous requests get `user_id = NULL`.
+- Email confirmation flow (Path C): the Worker hosts `/auth/confirm` (in `src/index.ts`), which calls `supabase.auth.verifyOtp({ token_hash, type })` server-side and sets the HttpOnly session cookies, then 302s to a same-origin `next` (default `/`). Supabase Site URL is `https://paste.erfi.dev` and the confirmation email template uses `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type={{ .EmailActionType }}&next=/my`. Manage via Supabase Management API (`PATCH /v1/projects/{ref}/config/auth`), not the Dashboard.
 - Never run DDL directly via pgcli — always create a new migration file
 - Verify with `supabase db query --linked "SELECT ..."` or via `pgpasteriser` alias
 
@@ -66,6 +68,16 @@ npm run test:realtime    # tsx scripts/verify-realtime.ts — broadcast pipeline
 npm run test:rls         # tsx scripts/verify-rls.ts — Supabase Auth + RLS end-to-end (2 test users)
 npm run test:all-live    # runs all 4 live suites in sequence with cooldowns
 npm run test:all         # test + test:ui + test:e2e
+
+# Same live scripts wrapped with `wrangler tail --env production`
+# so Worker logs (errors, exceptions, console.log) stream interleaved
+# with the test output. Useful when prod returns 500 + opaque error body.
+npm run test:smoke:tail
+npm run test:race:tail
+npm run test:realtime:tail
+npm run test:rls:tail
+npm run test:all-live:tail
+npm run test:e2e:tail
 
 # Codegen
 npm run cf-typegen       # wrangler types → worker-configuration.d.ts

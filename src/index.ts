@@ -206,6 +206,12 @@ app.post('/api/auth/login', async (c) => preventCaching(await c.get('authHandler
 app.post('/api/auth/logout', async (c) => preventCaching(await c.get('authHandlers').handleLogout(c.req.raw)));
 app.get('/api/auth/session', async (c) => preventCaching(await c.get('authHandlers').handleSession(c.req.raw)));
 
+// GET /auth/confirm — landing page Supabase Auth redirects to from
+// confirmation emails (signup, password recovery, email change). The
+// Worker verifies the token, sets HttpOnly session cookies, and 302s to
+// `?next=` (defaults to `/`). Same-origin redirect target only.
+app.get('/auth/confirm', async (c) => preventCaching(await c.get('authHandlers').handleConfirm(c.req.raw)));
+
 // GET /api/my — current user's pastes (browser via Worker, RLS-bypass + filter)
 app.get('/api/my', async (c) => preventCaching(await c.get('authHandlers').handleMyPastes(c.req.raw)));
 

@@ -208,4 +208,62 @@ export class AuthHandlers {
 		if (error || !data?.user) return null;
 		return data.user.id;
 	}
+
+	/**
+	 * GET /auth/confirm — landing page for Supabase Auth confirmation
+	 * emails (signup, password recovery, email change). Supabase sends
+	 * the user here with `?token_hash=...&type=...&next=...` query
+	 * params. The Worker exchanges the token for a session, sets cookies,
+	 * and 302s to `next` (defaults to `/`).
+	 *
+	 * Supabase Dashboard config required:
+	 *   - Authentication → URL Configuration → Site URL = https://paste.erfi.dev
+	 *   - Authentication → URL Configuration → Redirect URLs (allow-list):
+	 *       https://paste.erfi.dev/auth/confirm
+	 *
+	 * Email templates in Supabase need their {{ .ConfirmationURL }} or
+	 * equivalent set to:
+	 *   {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type={{ .EmailActionType }}&next=/my
+	 */
+	async handleConfirm(request: Request): Promise<Response> {
+		const url = new URL(request.url);
+		const tokenHash = url.searchParams.get('token_hash');
+		const type = url.searchParams.get('type');
+		const next = url.searchParams.get('next') || '/';
+
+		// Whitelist `next` to same-origin paths only to avoid open-redirect.
+		const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '/';
+
+		if (!tokenHash || !type) {
+			return Response.redirect(new URL('/login?error=missing_token', request.url).toString(), 302);
+		}
+
+		// type can be: 'signup' | 'recovery' | 'invite' | 'email_change' | 'magiclink' | 'email'
+		// supabase.auth.verifyOtp accepts these via the EmailOtpType union.
+		const validTypes = new Set(['signup', 'recovery', 'invite', 'email_change', 'magiclink', 'email']);
+		if (!validTypes.has(type)) {
+			return Response.redirect(new URL('/login?error=invalid_type', request.url).toString(), 302);
+		}
+
+		const { data, error } = await this.client.auth.verifyOtp({
+			token_hash: tokenHash,
+			type: type as 'signup' | 'recovery' | 'invite' | 'email_change' | 'magiclink' | 'email',
+		});
+
+		if (error || !data.session) {
+			this.logger.debug('Auth: confirm verifyOtp failed', { type, code: error?.code, message: error?.message });
+			return Response.redirect(
+				new URL(`/login?error=${encodeURIComponent(error?.code ?? 'confirm_failed')}`, request.url).toString(),
+				302,
+			);
+		}
+
+		// Build a 302 redirect, then attach the session cookies. Browser
+		// follows the redirect with the cookies set.
+		const redirect = new Response(null, {
+			status: 302,
+			headers: { Location: new URL(safeNext, request.url).toString() },
+		});
+		return applySessionCookies(redirect, data.session.access_token, data.session.refresh_token);
+	}
 }

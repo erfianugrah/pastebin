@@ -929,12 +929,124 @@ in Phase 4.3 for the live recent feed.
 6. Other users do NOT see your private paste (verified
    programmatically by `npm run test:rls`).
 
-#### 4.4d: OAuth providers (planned, not yet started)
+#### 4.4d: Server-side email confirmation (Path C) ✓ COMPLETE
 
-Email + password is implemented (`AuthForm.tsx`). Next iteration adds
-OAuth — GitHub first because it's the most useful for developers and
-needs no email-server config. Reference: `~/supabase/acme-corp/src/app/login/page.tsx`
-shows the exact `signInWithOAuth` pattern.
+The Worker is now the landing page for Supabase Auth confirmation
+emails (signup, recovery, magic-link, email change). This is the
+"Path C" pattern from the official Supabase Next.js SSR guide,
+adapted to a Hono + Workers + Astro BFF.
+
+**Why:** the default Supabase confirmation email points to
+`https://<project>.supabase.co/auth/v1/verify?token=...&redirect_to=<SiteURL>`,
+which lands on Supabase's domain and sets session cookies for
+`.supabase.co` — useless to us because our cookies are scoped to
+`paste.erfi.dev` and CSP forbids browser→Supabase calls. Path C
+flips the verification flow: the email link points to our domain,
+the Worker does the token exchange server-side, the Worker sets
+its own HttpOnly cookies, then 302s the user into the app.
+
+**Worker route (`src/index.ts:213`):**
+
+```ts
+app.get('/auth/confirm', async (c) =>
+  preventCaching(await c.get('authHandlers').handleConfirm(c.req.raw)));
+```
+
+**Handler (`src/interfaces/api/authHandlers.ts:228`):**
+
+1. Read `?token_hash=...&type=...&next=...` from the URL.
+2. Whitelist `next` to same-origin paths only (`startsWith('/')
+   && !startsWith('//')`) — defends against open-redirect attacks.
+3. Whitelist `type` to the set Supabase Auth accepts:
+   `signup | recovery | invite | email_change | magiclink | email`.
+4. Call `supabase.auth.verifyOtp({ token_hash, type })` — server-side
+   token exchange. Returns a `Session` with `access_token` +
+   `refresh_token` on success.
+5. Build a 302 to `next` (default `/`), attach the standard
+   `applySessionCookies(response, access, refresh)` cookies.
+6. On any failure (missing params, invalid type, expired token),
+   302 to `/login?error=<code>` so the user lands somewhere with a
+   clear failure message and no half-set cookies.
+
+**Supabase Auth config — patched via Management API (no Dashboard
+click-ops):**
+
+```bash
+SB_TOKEN=$(cat ~/.supabase/access-token)
+curl -X PATCH \
+  -H "Authorization: Bearer $SB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @auth-patch.json \
+  "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth"
+```
+
+Where `auth-patch.json` sets:
+
+- `site_url`: `https://paste.erfi.dev` (was `http://localhost:3000`)
+- `uri_allow_list`: `https://paste.erfi.dev/auth/confirm,https://paste.erfi.dev/my,https://paste.erfi.dev/`
+- `mailer_templates_confirmation_content`: rewritten to use
+  `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type={{ .EmailActionType }}&next=/my`
+
+The Management API endpoint is `PATCH /v1/projects/{ref}/config/auth`.
+GET the same endpoint to inspect current config. The field names
+are stable across the Supabase Auth (GoTrue) version — `site_url`,
+`uri_allow_list` (comma-separated string, not JSON array),
+`mailer_templates_*_content` (full HTML body).
+
+**Other email templates** (recovery, magic-link, invite,
+email-change) still point to `{{ .ConfirmationURL }}` — the Supabase
+default. They're untouched for now because the recovery/magic-link
+flows aren't enabled in the app yet. When the password-reset page
+ships, repeat the same template-patch pattern.
+
+**End-to-end live verification (run after deploy):**
+
+```bash
+# 1. Generate a real hashed_token via admin API
+RESPONSE=$(curl -s -X POST \
+  -H "Authorization: Bearer $SUPABASE_SECRET_KEY" \
+  -H "apikey: $SUPABASE_SECRET_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"signup","email":"test@example.com","password":"testpassword123"}' \
+  "$SUPABASE_URL/auth/v1/admin/generate_link")
+HASHED=$(echo "$RESPONSE" | jq -r .hashed_token)
+
+# 2. Hit /auth/confirm with that token
+curl -s -i "https://paste.erfi.dev/auth/confirm?token_hash=$HASHED&type=signup&next=/my" \
+  -o /tmp/confirm.txt
+grep -iE "^(http|location:|set-cookie:)" /tmp/confirm.txt
+
+# Expected:
+#   HTTP/2 302
+#   location: https://paste.erfi.dev/my
+#   set-cookie: sb-access-token=<JWT>; HttpOnly; Secure; SameSite=Strict; Max-Age=3600
+#   set-cookie: sb-refresh-token=<token>; HttpOnly; Secure; SameSite=Strict; Max-Age=604800
+```
+
+Decode the JWT and confirm `sub` matches the user, `role=authenticated`,
+`user_metadata.email_verified=true`.
+
+**Unit tests (5 new cases in `authHandlers.test.ts`):**
+
+- `redirects to /login?error=missing_token when token_hash missing`
+- `redirects to /login?error=invalid_type for unknown type`
+- `sets cookies and 302s to next on successful verifyOtp`
+- `rejects external-host next` (open-redirect defense)
+- `302s to /login?error=... when verifyOtp fails`
+
+**Patterns deliberately reused** from `acme-corp/src/app/auth/callback/route.ts`
+(the Next.js SSR reference): same `verifyOtp({ token_hash, type })`
+call, same query param shape, same same-origin redirect guard. The
+Workers port is ~30 lines because the BFF cookie helpers are
+already in place.
+
+#### 4.4e: OAuth providers (planned, not yet started)
+
+Email + password and email-confirm flows are implemented. Next
+iteration adds OAuth — GitHub first because it's the most useful
+for developers and needs no email-server config. Reference:
+`~/supabase/acme-corp/src/app/login/page.tsx` shows the exact
+`signInWithOAuth` pattern.
 
 **What to add (estimated ~1 hour of work):**
 
@@ -1465,11 +1577,11 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Entry point** (`index.ts`) | DI of all services in Hono context. Routes for paste CRUD, `/api/recent`, `/api/search`, `/api/stats`, `/login`, `/signup`, `/my`. | `STORAGE_BACKEND` branching removed in Phase 5. |
 | **Types** (`types.ts`) | `Env`: `ASSETS`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`. | `PASTES`/`STORAGE_BACKEND` removed in Phase 5. |
 | **Frontend** (Astro/React) | `UserMenu`, `AuthForm`, `MyPastes`, `RecentPastes` (Realtime), `PasteForm` (sends JWT when signed in), `useAuth` hook, supabase client singleton. | Phases 4.3-4.4. |
-| **wrangler.jsonc** | `SUPABASE_URL` var only. `SUPABASE_SECRET_KEY` as Wrangler secret. | KV bindings + `STORAGE_BACKEND` var removed in Phase 5. |
+| **wrangler.jsonc** | No `vars` block. Both `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are Wrangler secrets; required pair documented in a JSONC comment at the top of the file. | KV bindings + `STORAGE_BACKEND` var removed in Phase 5. `SUPABASE_URL` promoted from var to secret in 3.4.0. |
 | **astro/.env** | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`. | Phases 4.3-4.4. |
-| **Unit tests** | 109 passing. | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 (-28 KV/dual tests, -17 integration tests, +5 stats tests). |
-| **Live test scripts** | `test:smoke`, `test:race`, `test:realtime`, `test:rls`, `test:all-live`. | Phases 3.5-4.4. |
-| **Migrations** | 13 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3) + authenticated RLS (4.4a) + `paste_stats()` (4.5). |
+| **Unit tests** | 147 passing. | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm` cases). |
+| **Live test scripts** | `test:smoke`, `test:race`, `test:realtime`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. |
+| **Migrations** | 14 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix). |
 
 ---
 

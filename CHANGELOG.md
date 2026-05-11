@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.4.0] - 2026-05-11
+
+### Auth — server-side email confirmation (Path C)
+
+- **`GET /auth/confirm` route + `AuthHandlers.handleConfirm()`** — Worker is now the landing page for Supabase Auth confirmation emails (signup, recovery, magic-link, email change). Reads `?token_hash=...&type=...&next=...`, calls `supabase.auth.verifyOtp({ token_hash, type })` server-side, sets HttpOnly `sb-access-token` + `sb-refresh-token` cookies, then 302s to `next`. Same-origin-only redirect target (rejects `//evil.com` and external hosts; falls back to `/`).
+- **Email template + Site URL** updated via the Supabase Management API (`PATCH /v1/projects/{ref}/config/auth`) — no Dashboard click-ops:
+  - `site_url`: `http://localhost:3000` → `https://paste.erfi.dev`
+  - `uri_allow_list`: `https://paste.erfi.dev/auth/confirm,https://paste.erfi.dev/my,https://paste.erfi.dev/`
+  - `mailer_templates_confirmation_content`: rewritten to use `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type={{ .EmailActionType }}&next=/my`
+- End-to-end verified against production: admin `generate_link` → real `hashed_token` → `/auth/confirm` → 302 to `/my` with a valid JWT cookie (sub matches the user, `email_verified=true`, `role=authenticated`).
+
+### Database
+
+- **Migration `20260511180117_title_nullable.sql`** — `ALTER TABLE pastes ALTER COLUMN title DROP NOT NULL`. The original schema marked `title NOT NULL` but the domain model + Zod schema treat title as optional; POSTing without title hit `null value in column "title" violates not-null constraint` (Postgres code 23502) and returned 500. Smoke tests bypassed the bug because they always send a title; Playwright caught it.
+
+### Operations
+
+- **`SUPABASE_URL` promoted** from a Wrangler `var` (visible in committed `wrangler.jsonc`) to a Wrangler `secret`. The project URL is now treated as a secret like `SUPABASE_SECRET_KEY`. `wrangler.jsonc` has no `vars` block; both required secrets are listed only in a JSONC comment at the top of the file.
+- **`scripts/with-wrangler-tail.ts`** — wraps any live test script with a concurrent `wrangler tail --env production` so Worker logs (errors, exceptions, `console.log`) stream interleaved with the test output, prefixed `[tail]` in dim gray. Waits 3s for tail to attach before launching the test. Forwards SIGINT to both processes. Six new npm scripts: `test:smoke:tail`, `test:race:tail`, `test:realtime:tail`, `test:rls:tail`, `test:all-live:tail`, `test:e2e:tail`.
+
+### Tests
+
+- 147 unit tests (was 142): 5 new `handleConfirm` cases covering missing token, invalid type, success path with cookies + redirect, open-redirect defense, and `verifyOtp` error surface.
+- Playwright 10/10 (was 7/10 — three failures all downstream of the `POST /pastes` 500).
+
+### Breaking changes
+
+None.
+
+---
+
 ## [3.3.0] - 2026-05-11
 
 ### Database

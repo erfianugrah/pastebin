@@ -27,6 +27,7 @@ interface MockAuth {
 	signInWithPassword?: ReturnType<typeof vi.fn>;
 	getUser?: ReturnType<typeof vi.fn>;
 	refreshSession?: ReturnType<typeof vi.fn>;
+	verifyOtp?: ReturnType<typeof vi.fn>;
 	admin?: { signOut?: ReturnType<typeof vi.fn> };
 }
 
@@ -381,6 +382,83 @@ describe('AuthHandlers', () => {
 				getRequest('https://x.test/api/my?limit=999', { Cookie: `${ACCESS_TOKEN_COOKIE}=v` }),
 			);
 			expect(chain.limit).toHaveBeenCalledWith(100);
+		});
+	});
+
+	describe('handleConfirm', () => {
+		it('redirects to /login?error=missing_token when token_hash missing', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleConfirm(getRequest('https://x.test/auth/confirm?type=signup'));
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('/login?error=missing_token');
+		});
+
+		it('redirects to /login?error=invalid_type for unknown type', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleConfirm(
+				getRequest('https://x.test/auth/confirm?token_hash=t&type=evil'),
+			);
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('/login?error=invalid_type');
+		});
+
+		it('sets cookies and 302s to next on successful verifyOtp', async () => {
+			const verifyOtp = vi.fn().mockResolvedValue({
+				data: {
+					user: { id: 'u9' },
+					session: { access_token: 'a.jwt', refresh_token: 'r.jwt' },
+				},
+				error: null,
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ verifyOtp }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleConfirm(
+				getRequest('https://x.test/auth/confirm?token_hash=tok&type=signup&next=/my'),
+			);
+
+			expect(verifyOtp).toHaveBeenCalledWith({ token_hash: 'tok', type: 'signup' });
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toBe('https://x.test/my');
+			expect(getSetCookies(res).length).toBe(2);
+		});
+
+		it('rejects external-host `next` (defends against open-redirect)', async () => {
+			const verifyOtp = vi.fn().mockResolvedValue({
+				data: {
+					user: { id: 'u10' },
+					session: { access_token: 'a', refresh_token: 'r' },
+				},
+				error: null,
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ verifyOtp }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleConfirm(
+				getRequest('https://x.test/auth/confirm?token_hash=t&type=signup&next=//evil.com/'),
+			);
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toBe('https://x.test/');
+		});
+
+		it('302s to /login?error=... when verifyOtp fails', async () => {
+			const verifyOtp = vi.fn().mockResolvedValue({
+				data: { user: null, session: null },
+				error: { code: 'otp_expired', message: 'expired' },
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ verifyOtp }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleConfirm(
+				getRequest('https://x.test/auth/confirm?token_hash=t&type=signup'),
+			);
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('/login?error=otp_expired');
+			expect(getSetCookies(res).length).toBe(0);
 		});
 	});
 

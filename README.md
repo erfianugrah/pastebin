@@ -23,7 +23,7 @@ Live at [paste.erfi.dev](https://paste.erfi.dev).
   - Encrypted localStorage for any sensitive client state
 
 - **Auth & ownership** (optional)
-  - Supabase Auth (email + password)
+  - Supabase Auth (email + password, server-side email confirmation via `/auth/confirm`)
   - Pastes optionally linked to a user via `user_id`
   - `/my` page lists user's pastes (browser → Supabase direct, filtered by RLS)
   - Anonymous use unchanged — `user_id = NULL`, `deleteToken` flow
@@ -489,9 +489,11 @@ Run `npm run test:realtime` to verify the pipeline end-to-end.
 Pasteriser supports optional Supabase Auth (email + password). When signed in:
 
 - New pastes are linked to the authenticated user via `user_id`.
-- The Worker validates `Authorization: Bearer <jwt>` and derives `user_id` from the verified token (never from the request body).
-- The `/my` page queries Supabase directly using the user's JWT — RLS policies on `pastes` filter the result to the user's own rows. No Worker endpoint is involved in this read path.
-- Authenticated users can delete their own pastes directly via the DB (RLS-gated); the `deleteToken` flow still works for anonymous pastes.
+- All Supabase Auth calls are proxied through the Worker (`/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/session`). The session is stored in HttpOnly `sb-access-token` + `sb-refresh-token` cookies (Secure, SameSite=Strict). Browser never receives the JWT directly — XSS-safe.
+- Email confirmation uses the Path C server-side pattern: the email link points to `/auth/confirm?token_hash=...&type=...&next=/my` on Pasteriser's domain (not Supabase's). The Worker calls `supabase.auth.verifyOtp({ token_hash, type })`, sets cookies, then 302s into the app. `next` is whitelisted to same-origin paths only.
+- The Worker derives `user_id` from the verified JWT (cookie wins over `Authorization: Bearer` header), never from the request body.
+- The `/api/my` Worker endpoint returns the calling user's pastes by filtering with `user_id` on the verified JWT — RLS is doubled up because the Worker uses `service_role`.
+- Authenticated users can delete their own pastes via the same `/pastes/:id/delete` endpoint; the `deleteToken` flow still works for anonymous pastes.
 
 Anonymous use is unchanged: pastes created without a JWT get `user_id = NULL` and are managed via the `deleteToken` returned at creation.
 
@@ -570,34 +572,25 @@ cd ..
 
 ### Required Configuration
 
-The Worker needs three things to talk to Supabase:
-
-**1. wrangler.jsonc vars** (committed to source — non-sensitive):
-
-```jsonc
-{
-  "vars": {
-    "SUPABASE_URL": "https://<your-project-ref>.supabase.co"
-  }
-}
-```
-
-**2. Wrangler secret** (never in source):
+The Worker needs two Wrangler secrets to talk to Supabase. **Neither value is committed to source** — `wrangler.jsonc` has no `vars` block, only a JSONC comment at the top of the file listing the required secrets.
 
 ```bash
+wrangler secret put SUPABASE_URL --env production
+# Paste https://<your-project-ref>.supabase.co when prompted
+
 wrangler secret put SUPABASE_SECRET_KEY --env production
 # Paste an sb_secret_... value when prompted
 ```
 
-**3. Astro public env vars** (`astro/.env` — baked into the client bundle):
+The project URL is treated as a secret too — not because it's cryptographically sensitive, but because it identifies the backing project and there's no reason to ship it in source.
+
+**Astro public env** (`astro/.env` — baked into the client bundle at build time):
 
 ```bash
 PUBLIC_API_URL=https://paste.erfi.dev
-PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
-PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
 
-The publishable key is safe to ship in the bundle; it represents the `anon` Postgres role and is RLS-gated.
+That's the only public var. The browser bundle does not contain any Supabase identifier — all Supabase Auth calls and `/my` reads are proxied through the Worker (BFF pattern). CSP `connect-src` is `'self'` only.
 
 Cloudflare KV is no longer used — Phase 5 removed the binding, the namespace, and all KV code. Supabase Postgres is the sole storage backend.
 
@@ -648,6 +641,7 @@ npm run deploy
 - `npm run test:realtime` - Realtime broadcast pipeline + RLS compatibility matrix
 - `npm run test:rls` - Supabase Auth + RLS end-to-end (creates 2 real test users)
 - `npm run test:all-live` - All 4 live suites in sequence with cooldowns
+- `npm run test:smoke:tail` (and `test:race:tail`, `test:realtime:tail`, `test:rls:tail`, `test:all-live:tail`, `test:e2e:tail`) — same scripts wrapped with `wrangler tail --env production` so Worker logs stream interleaved with the test output
 - `npm run lint` - Run ESLint
 - `npm run check` - Run TypeScript typechecking
 
@@ -795,11 +789,13 @@ flowchart TD
 
 See [SUPABASE-MIGRATION.md](./SUPABASE-MIGRATION.md) for the in-flight plan. Highlights:
 
-- **Phase 4.4d** — OAuth providers (GitHub first, Google second). Email/password is shipped.
+- **Phase 4.4d** — Server-side email confirmation (Path C). Worker hosts `/auth/confirm`, calls `verifyOtp({ token_hash, type })`, sets HttpOnly cookies, 302s to `/my`. Site URL + email template patched via Supabase Management API. ✓ Shipped.
+- **Phase 4.4e** — OAuth providers (GitHub first, Google second). Email/password and email-confirm are shipped.
 - **Phase 4.5** — Analytics: `paste_stats()` PL/pgSQL function returning a JSONB summary (by language, by hour, encryption adoption) exposed via `GET /api/stats`. ✓ Shipped.
-- **Phase 4.7** — Rate-limit hardening at the Supabase layer (Auth signup throttling, paste size caps for anon, Cloudflare Turnstile CAPTCHA, custom SMTP). Worker has in-memory per-IP throttling already; gaps are on the browser-direct paths (Auth, Realtime, RLS-gated reads).
+- **Phase 4.7** — Anti-abuse and rate-limit hardening. Per-IP signup rate limit at the Worker, honeypot field, anonymous paste size cap (64 KiB), Supabase Auth dashboard rate-limit tightening, custom SMTP via Resend before re-enabling email confirmation at scale. Scoped, not committed.
 - **Phase 5** — Remove `KVPasteRepository`, `DualWriteRepository`, and the Cloudflare KV namespace itself. ✓ Shipped.
-- **Phase 6** — Deno-based Discord bot on Unraid that wraps Pasteriser to bypass Discord's 2000/4000-char message limits and 25 MiB attachment limits. Three sub-phases scoped in detail in `SUPABASE-MIGRATION.md`: **6a** anonymous-paste pipe (MVP, ~1 day), **6b** per-paste E2EE (+half day), **6c** guild-scoped pastes via `pastes.guild_id` + `private.guild_members` + RLS via SECURITY DEFINER `is_in_guild()` function (+2 days). Bot lives in `bot/` directory.
+
+Phase 6 (Deno-based Discord bot) was scoped and then dropped — pastebin-bot integration is a UX shortcut that doesn't overcome Discord's hard limits any more cleanly than existing tools (PasteThing, mclo.gs). See git history for the design notes if needed.
 
 Lower-priority ideas: GitHub Gist import/export, VS Code extension, optional paste collections.
 
@@ -852,7 +848,7 @@ For more detailed security information, configuration guides, and security check
 
 **Domain**: https://paste.erfi.dev
 **Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
-**Migrations**: 13 applied — see `supabase/migrations/`
+**Migrations**: 14 applied — see `supabase/migrations/`
 
 ### Storage Backend
 
@@ -873,7 +869,7 @@ See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration jo
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), and `paste_stats()` RPC + complete KV removal (3.3.0).
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), `paste_stats()` RPC + complete KV removal (3.3.0), and the BFF auth proxy + server-side email confirmation + `title` NOT-NULL fix + `wrangler tail` test wrapper + `SUPABASE_URL` secret promotion (3.4.0).
 
 ### Quick verification
 
