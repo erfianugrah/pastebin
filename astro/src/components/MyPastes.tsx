@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AlertCircle, Eye, Trash2, Lock, Globe, LogIn } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { getSupabase, AUTH_ENABLED } from '../lib/supabase';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { T } from '../lib/typography';
@@ -21,6 +20,8 @@ function formatDate(date: Date): string {
 	return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+const FETCH_OPTS: RequestInit = { credentials: 'same-origin' };
+
 export default function MyPastes() {
 	const { user, loading: authLoading } = useAuth();
 	const [pastes, setPastes] = useState<MyPaste[]>([]);
@@ -34,33 +35,26 @@ export default function MyPastes() {
 			return;
 		}
 
-		const supabase = getSupabase();
-		if (!supabase) {
-			setError('Auth not configured');
-			setLoading(false);
-			return;
-		}
-
 		let cancelled = false;
-		async function load() {
-			// RLS: this query returns ONLY pastes where user_id = auth.uid().
-			// No server-side filter needed -- the policies enforce it.
-			const { data, error } = await supabase!
-				.from('pastes')
-				.select('id, title, language, visibility, read_count, created_at, expires_at')
-				.eq('user_id', user!.id)
-				.order('created_at', { ascending: false });
-
-			if (cancelled) return;
-
-			if (error) {
-				setError(error.message);
-			} else {
-				setPastes((data ?? []) as MyPaste[]);
+		(async () => {
+			try {
+				const res = await fetch('/api/my?limit=100', FETCH_OPTS);
+				if (cancelled) return;
+				if (!res.ok) {
+					const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+					setError(body.error?.message ?? `HTTP ${res.status}`);
+					setLoading(false);
+					return;
+				}
+				const data = (await res.json()) as { pastes: MyPaste[] };
+				setPastes(data.pastes ?? []);
+				setLoading(false);
+			} catch (err) {
+				if (cancelled) return;
+				setError(err instanceof Error ? err.message : 'Failed to load');
+				setLoading(false);
 			}
-			setLoading(false);
-		}
-		void load();
+		})();
 
 		return () => {
 			cancelled = true;
@@ -69,24 +63,20 @@ export default function MyPastes() {
 
 	async function handleDelete(id: string) {
 		if (!confirm('Delete this paste? This cannot be undone.')) return;
-		const supabase = getSupabase();
-		if (!supabase) return;
 
-		// RLS: DELETE only succeeds when user_id = auth.uid().
-		const { error } = await supabase.from('pastes').delete().eq('id', id);
-		if (error) {
-			alert(`Delete failed: ${error.message}`);
+		// Use the existing /pastes/:id/delete endpoint. Worker reads the
+		// session cookie and authorizes the delete via user_id match.
+		const res = await fetch(`/pastes/${id}/delete`, {
+			method: 'DELETE',
+			...FETCH_OPTS,
+		});
+
+		if (!res.ok) {
+			const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+			alert(`Delete failed: ${body.error?.message ?? `HTTP ${res.status}`}`);
 			return;
 		}
 		setPastes((prev) => prev.filter((p) => p.id !== id));
-	}
-
-	if (!AUTH_ENABLED) {
-		return (
-			<div className="py-12 text-center text-muted-foreground">
-				Authentication is not configured for this deployment.
-			</div>
-		);
 	}
 
 	if (authLoading || loading) {
@@ -148,7 +138,8 @@ export default function MyPastes() {
 	return (
 		<div className="space-y-3">
 			<p className="text-sm text-muted-foreground">
-				{pastes.length} paste{pastes.length === 1 ? '' : 's'}. Filtered by Postgres RLS — only your rows are returned.
+				{pastes.length} paste{pastes.length === 1 ? '' : 's'}. Listed via the Worker; Supabase access goes
+				through service_role + an explicit `user_id` filter.
 			</p>
 			{pastes.map((p) => (
 				<Card key={p.id}>

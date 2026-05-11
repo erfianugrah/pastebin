@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Logger } from '../logging/logger';
+import { ACCESS_TOKEN_COOKIE, getCookie } from '../../interfaces/api/cookies';
 
 /**
  * Worker-side Supabase Auth verification.
@@ -33,11 +34,17 @@ export class AuthService {
 	}
 
 	/**
-	 * Extract and validate the bearer token from a request's Authorization header.
-	 * Returns the authenticated user_id or null if no/invalid token was present.
+	 * Extract and validate a JWT from a request. Looks at two places, in order:
+	 *
+	 *  1. `sb-access-token` HttpOnly cookie (set by /api/auth/login on the
+	 *     Worker BFF path)
+	 *  2. `Authorization: Bearer <jwt>` header (for non-browser API clients
+	 *     or programmatic callers)
+	 *
+	 * Returns the authenticated user_id or null if no/invalid token was found.
 	 */
 	async getUserIdFromRequest(request: Request): Promise<string | null> {
-		const jwt = this.extractBearer(request);
+		const jwt = getCookie(request, ACCESS_TOKEN_COOKIE) ?? this.extractBearer(request);
 		if (!jwt) return null;
 
 		try {

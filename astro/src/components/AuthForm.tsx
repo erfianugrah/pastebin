@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { AUTH_ENABLED } from '../lib/supabase';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 
@@ -16,16 +15,6 @@ export default function AuthForm({ mode }: Props) {
 	const [error, setError] = useState<string | null>(null);
 	const [info, setInfo] = useState<string | null>(null);
 	const [submitting, setSubmitting] = useState(false);
-
-	if (!AUTH_ENABLED) {
-		return (
-			<Card>
-				<CardContent className="p-6 text-sm text-muted-foreground">
-					Authentication is not configured for this deployment.
-				</CardContent>
-			</Card>
-		);
-	}
 
 	async function onSubmit(e: FormEvent) {
 		e.preventDefault();

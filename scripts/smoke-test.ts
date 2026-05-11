@@ -554,6 +554,170 @@ async function run(): Promise<void> {
 			);
 		});
 	}
+
+	// ---- 12. BFF auth flow (browser → Worker → Supabase, HttpOnly cookies) ----
+	if (HAS_DB_ACCESS) {
+		const authEmail = `smoke-auth-${Date.now()}@pasteriser.test`;
+		const authPassword = `pw-${crypto.randomUUID().slice(0, 16)}`;
+		let authUserId: string | null = null;
+
+		try {
+			// Pre-create a confirmed user via admin API so signup/login flows
+			// don't depend on email-confirmation status of the project.
+			const { data: created, error: createErr } = await sb!.auth.admin.createUser({
+				email: authEmail,
+				password: authPassword,
+				email_confirm: true,
+			});
+			if (createErr || !created.user) throw new Error(`admin.createUser failed: ${createErr?.message}`);
+			authUserId = created.user.id;
+
+			// Tiny cookie jar shared across the auth requests.
+			let cookieJar = '';
+			function rememberSetCookies(res: Response) {
+				const set = res.headers.getSetCookie?.() ?? [];
+				for (const c of set) {
+					const kv = c.split(';')[0];
+					const name = kv.split('=')[0];
+					// drop any existing entry with this name then append
+					cookieJar = cookieJar
+						.split('; ')
+						.filter((x) => x && !x.startsWith(`${name}=`))
+						.concat([kv])
+						.join('; ');
+				}
+			}
+			function withCookies(init: RequestInit = {}): RequestInit {
+				return cookieJar ? { ...init, headers: { ...(init.headers || {}), Cookie: cookieJar } } : init;
+			}
+
+			await test('GET /api/auth/session returns { user: null } before login', async () => {
+				const res = await fetch(`${API_URL}/api/auth/session`);
+				assertEqual(res.status, 200, 'status');
+				const body = (await res.json()) as { user: null | { id: string } };
+				assertEqual(body.user, null, 'user');
+			});
+
+			await test('POST /api/auth/login with wrong password returns 401', async () => {
+				const res = await fetch(`${API_URL}/api/auth/login`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email: authEmail, password: 'wrong-password' }),
+				});
+				assertEqual(res.status, 401, 'status');
+			});
+
+			await test('POST /api/auth/login sets HttpOnly session cookies', async () => {
+				const res = await fetch(`${API_URL}/api/auth/login`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email: authEmail, password: authPassword }),
+				});
+				assertEqual(res.status, 200, 'status');
+
+				const setCookies = res.headers.getSetCookie?.() ?? [];
+				assert(setCookies.length >= 2, `expected ≥2 Set-Cookie headers, got ${setCookies.length}`);
+
+				const access = setCookies.find((c) => c.startsWith('sb-access-token='));
+				const refresh = setCookies.find((c) => c.startsWith('sb-refresh-token='));
+				assert(!!access, 'sb-access-token cookie set');
+				assert(!!refresh, 'sb-refresh-token cookie set');
+				assert(access!.includes('HttpOnly'), 'access cookie is HttpOnly');
+				assert(access!.includes('Secure'), 'access cookie is Secure');
+				assert(access!.includes('SameSite=Strict'), 'access cookie is SameSite=Strict');
+
+				rememberSetCookies(res);
+
+				const body = (await res.json()) as { user: { id: string } };
+				assertEqual(body.user.id, authUserId!, 'user.id');
+			});
+
+			await test('GET /api/auth/session returns the user when cookie is sent', async () => {
+				const res = await fetch(`${API_URL}/api/auth/session`, withCookies());
+				assertEqual(res.status, 200, 'status');
+				const body = (await res.json()) as { user: { id: string } | null };
+				assert(body.user !== null, 'user is present');
+				assertEqual(body.user!.id, authUserId!, 'user.id matches');
+			});
+
+			let myPasteId: string | null = null;
+			await test('POST /pastes with cookie attaches user_id to the paste', async () => {
+				const res = await fetch(`${API_URL}/pastes`, {
+					method: 'POST',
+					...withCookies({
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							content: 'authed paste content',
+							title: `smoke-auth-${Date.now()}`,
+							expiresIn: '1h',
+							visibility: 'public',
+						}),
+					}),
+				});
+				assertEqual(res.status, 201, 'status');
+				const body = (await res.json()) as { id: string };
+				myPasteId = body.id;
+				createdIds.push(body.id);
+
+				const { data } = await sb!.from('pastes').select('user_id').eq('id', body.id).single();
+				assertEqual(
+					(data as { user_id: string | null }).user_id,
+					authUserId!,
+					'user_id on created paste',
+				);
+			});
+
+			await test('GET /api/my returns the authenticated user\'s pastes', async () => {
+				const res = await fetch(`${API_URL}/api/my`, withCookies());
+				assertEqual(res.status, 200, 'status');
+				const body = (await res.json()) as { pastes: Array<{ id: string }> };
+				const found = body.pastes.find((p) => p.id === myPasteId);
+				assert(!!found, 'created paste appears in /api/my');
+			});
+
+			await test('GET /api/my returns 401 without cookie', async () => {
+				const res = await fetch(`${API_URL}/api/my`);
+				assertEqual(res.status, 401, 'status');
+			});
+
+			await test('POST /api/auth/logout clears the session cookies', async () => {
+				const res = await fetch(`${API_URL}/api/auth/logout`, {
+					method: 'POST',
+					...withCookies(),
+				});
+				assertEqual(res.status, 200, 'status');
+
+				const setCookies = res.headers.getSetCookie?.() ?? [];
+				assert(setCookies.length >= 2, 'two clear cookies returned');
+				assert(
+					setCookies.every((c) => c.includes('Max-Age=0')),
+					'cookies are cleared (Max-Age=0)',
+				);
+
+				cookieJar = ''; // simulate the browser dropping the cookies
+			});
+
+			await test('GET /api/auth/session returns null after logout', async () => {
+				const res = await fetch(`${API_URL}/api/auth/session`);
+				const body = (await res.json()) as { user: null | { id: string } };
+				assertEqual(body.user, null, 'user is null');
+			});
+
+			await test('POST /api/auth/signup with weak password rejected', async () => {
+				const res = await fetch(`${API_URL}/api/auth/signup`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email: 'x@y.test', password: 'short' }),
+				});
+				assertEqual(res.status, 400, 'status');
+			});
+		} finally {
+			// Always clean up the test auth user, even if a test threw.
+			if (authUserId) {
+				await sb!.auth.admin.deleteUser(authUserId).catch(() => {});
+			}
+		}
+	}
 }
 
 // ---- Run + cleanup + report ----

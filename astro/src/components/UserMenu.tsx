@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { LogIn, LogOut, User as UserIcon, FolderOpen } from 'lucide-react';
+import { LogIn, LogOut, FolderOpen } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { AUTH_ENABLED } from '../lib/supabase';
 import { Button } from './ui/button';
 
 export default function UserMenu() {
@@ -19,8 +18,6 @@ export default function UserMenu() {
 		document.addEventListener('mousedown', onClick);
 		return () => document.removeEventListener('mousedown', onClick);
 	}, [open]);
-
-	if (!AUTH_ENABLED) return null;
 
 	if (loading) {
 		return <div className="h-8 w-8 rounded-full bg-muted animate-pulse" />;

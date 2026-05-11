@@ -14,6 +14,7 @@ import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery
 import { SearchPastesQuery } from './application/queries/searchPastesQuery';
 import { GetPasteStatsQuery } from './application/queries/getPasteStatsQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
+import { AuthHandlers } from './interfaces/api/authHandlers';
 import { securityHeaders } from './interfaces/api/middleware';
 import { AppError } from './infrastructure/errors/AppError';
 import { Logger } from './infrastructure/logging/logger';
@@ -32,6 +33,7 @@ type AppEnv = {
 		requestId: string;
 		logger: Logger;
 		handlers: ApiHandlers;
+		authHandlers: AuthHandlers;
 		pasteRepository: PasteRepository;
 		authService: AuthService;
 	};
@@ -101,6 +103,7 @@ app.use('*', async (c, next) => {
 	const getPasteStatsQuery = new GetPasteStatsQuery(pasteRepository, logger);
 
 	const authService = new AuthService(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger);
+	const authHandlers = new AuthHandlers(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger);
 
 	const apiHandlers = new ApiHandlers(
 		createPasteCommand,
@@ -115,6 +118,7 @@ app.use('*', async (c, next) => {
 	);
 
 	c.set('handlers', apiHandlers);
+	c.set('authHandlers', authHandlers);
 	c.set('pasteRepository', pasteRepository);
 	c.set('authService', authService);
 
@@ -192,6 +196,18 @@ app.get('/api/stats', async (c) => {
 		staleWhileRevalidate: 900,
 	});
 });
+
+// ---- Auth (browser → Worker → Supabase) ----
+// All Supabase Auth calls are proxied through the Worker so the browser
+// never speaks to Supabase directly. Session is stored in HttpOnly cookies.
+
+app.post('/api/auth/signup', async (c) => preventCaching(await c.get('authHandlers').handleSignup(c.req.raw)));
+app.post('/api/auth/login', async (c) => preventCaching(await c.get('authHandlers').handleLogin(c.req.raw)));
+app.post('/api/auth/logout', async (c) => preventCaching(await c.get('authHandlers').handleLogout(c.req.raw)));
+app.get('/api/auth/session', async (c) => preventCaching(await c.get('authHandlers').handleSession(c.req.raw)));
+
+// GET /api/my — current user's pastes (browser via Worker, RLS-bypass + filter)
+app.get('/api/my', async (c) => preventCaching(await c.get('authHandlers').handleMyPastes(c.req.raw)));
 
 // DELETE|POST /pastes/:id/delete — delete paste (API)
 app.on(['DELETE', 'POST'], '/pastes/:id/delete', async (c) => {

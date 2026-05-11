@@ -1,69 +1,108 @@
 import { useEffect, useState, useCallback } from 'react';
-import type { User, Session, AuthError } from '@supabase/supabase-js';
-import { getSupabase } from '../lib/supabase';
+
+/**
+ * Browser-side auth hook. Does NOT talk to Supabase directly — every
+ * call goes to the Worker (same-origin) which proxies to Supabase
+ * and stores the session in HttpOnly cookies. The browser never sees
+ * the Supabase URL, key, or any session JWT in JS-readable storage.
+ *
+ * Design choice: this is the BFF (Backend-For-Frontend) pattern.
+ *  - Browser → Worker → Supabase
+ *  - CSP stays at `connect-src 'self'`
+ *  - Tokens in HttpOnly cookies (XSS-safe)
+ *  - One rate-limit surface (the Worker), not two
+ */
+
+interface User {
+	id: string;
+	email?: string;
+	[key: string]: unknown;
+}
 
 interface AuthState {
 	user: User | null;
-	session: Session | null;
 	loading: boolean;
 }
 
 export interface UseAuthResult extends AuthState {
-	signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
-	signUp: (email: string, password: string) => Promise<{ error: AuthError | null; needsConfirm: boolean }>;
+	signIn: (email: string, password: string) => Promise<{ error: { message: string } | null }>;
+	signUp: (email: string, password: string) => Promise<{ error: { message: string } | null; needsConfirm: boolean }>;
 	signOut: () => Promise<void>;
+	refresh: () => Promise<void>;
+}
+
+const FETCH_OPTS: RequestInit = { credentials: 'same-origin' };
+
+async function readJsonOrNull<T>(res: Response): Promise<T | null> {
+	try {
+		return (await res.json()) as T;
+	} catch {
+		return null;
+	}
 }
 
 export function useAuth(): UseAuthResult {
-	const [state, setState] = useState<AuthState>({ user: null, session: null, loading: true });
+	const [state, setState] = useState<AuthState>({ user: null, loading: true });
 
-	useEffect(() => {
-		const supabase = getSupabase();
-		if (!supabase) {
-			setState({ user: null, session: null, loading: false });
-			return;
+	const refresh = useCallback(async () => {
+		try {
+			const res = await fetch('/api/auth/session', FETCH_OPTS);
+			const data = await readJsonOrNull<{ user: User | null }>(res);
+			setState({ user: data?.user ?? null, loading: false });
+		} catch {
+			setState({ user: null, loading: false });
 		}
-
-		let cancelled = false;
-
-		void supabase.auth.getSession().then(({ data }) => {
-			if (cancelled) return;
-			setState({ user: data.session?.user ?? null, session: data.session, loading: false });
-		});
-
-		const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-			if (cancelled) return;
-			setState({ user: session?.user ?? null, session, loading: false });
-		});
-
-		return () => {
-			cancelled = true;
-			subscription.subscription.unsubscribe();
-		};
 	}, []);
 
+	useEffect(() => {
+		void refresh();
+	}, [refresh]);
+
 	const signIn = useCallback(async (email: string, password: string) => {
-		const supabase = getSupabase();
-		if (!supabase) return { error: { message: 'Auth not configured' } as AuthError };
-		const { error } = await supabase.auth.signInWithPassword({ email, password });
-		return { error };
+		const res = await fetch('/api/auth/login', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email, password }),
+			...FETCH_OPTS,
+		});
+
+		if (!res.ok) {
+			const data = await readJsonOrNull<{ error?: { message?: string } }>(res);
+			return { error: { message: data?.error?.message ?? `HTTP ${res.status}` } };
+		}
+
+		const data = await readJsonOrNull<{ user: User }>(res);
+		setState({ user: data?.user ?? null, loading: false });
+		return { error: null };
 	}, []);
 
 	const signUp = useCallback(async (email: string, password: string) => {
-		const supabase = getSupabase();
-		if (!supabase) return { error: { message: 'Auth not configured' } as AuthError, needsConfirm: false };
-		const { data, error } = await supabase.auth.signUp({ email, password });
-		// If the project requires email confirmation, signUp returns a user
-		// but no session. session === null => user must check their email.
-		const needsConfirm = !error && !data.session;
-		return { error, needsConfirm };
+		const res = await fetch('/api/auth/signup', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email, password }),
+			...FETCH_OPTS,
+		});
+
+		if (!res.ok) {
+			const data = await readJsonOrNull<{ error?: { message?: string } }>(res);
+			return { error: { message: data?.error?.message ?? `HTTP ${res.status}` }, needsConfirm: false };
+		}
+
+		const data = await readJsonOrNull<{ user: User; needsConfirm: boolean }>(res);
+		if (data && !data.needsConfirm) {
+			setState({ user: data.user, loading: false });
+		}
+		return { error: null, needsConfirm: data?.needsConfirm ?? false };
 	}, []);
 
 	const signOut = useCallback(async () => {
-		const supabase = getSupabase();
-		if (!supabase) return;
-		await supabase.auth.signOut();
+		try {
+			await fetch('/api/auth/logout', { method: 'POST', ...FETCH_OPTS });
+		} finally {
+			setState({ user: null, loading: false });
+		}
 	}, []);
 
-	return { ...state, signIn, signUp, signOut };
+	return { ...state, signIn, signUp, signOut, refresh };
 }

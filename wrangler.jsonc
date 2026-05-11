@@ -1,6 +1,13 @@
 /**
  * For more details on how to configure Wrangler, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * Secrets (set via `wrangler secret put <name> --env production`):
+ *   - SUPABASE_URL          — Supabase project URL (e.g. https://<ref>.supabase.co)
+ *   - SUPABASE_SECRET_KEY   — sb_secret_... key. RLS bypass; never expose
+ *
+ * Keeping the URL as a secret too means the Supabase project ref isn't
+ * discoverable from the source tree. Worker code reads both from `c.env`.
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -14,9 +21,6 @@
 		"html_handling": "none",
 		"not_found_handling": "none",
 		"run_worker_first": true,
-	},
-	"vars": {
-		"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co",
 	},
 	"observability": {
 		"enabled": true,
@@ -33,9 +37,6 @@
 	"env": {
 		"production": {
 			"name": "pastebin-prod",
-			"vars": {
-				"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co",
-			},
 			"routes": [
 				{
 					"pattern": "paste.erfi.dev",

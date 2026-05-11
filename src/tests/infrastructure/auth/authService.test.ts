@@ -123,4 +123,35 @@ describe('AuthService', () => {
 			},
 		});
 	});
+
+	it('reads JWT from sb-access-token cookie when no Authorization header', async () => {
+		const client = makeClient({ data: { user: { id: 'cookie-user' } }, error: null });
+		vi.mocked(createClient).mockReturnValue(client as any);
+		service = new AuthService('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+		const result = await service.getUserIdFromRequest(
+			makeRequest({ Cookie: 'sb-access-token=cookie.jwt.value' }),
+		);
+
+		expect(client.auth.getUser).toHaveBeenCalledWith('cookie.jwt.value');
+		expect(result).toBe('cookie-user');
+	});
+
+	it('prefers cookie over Authorization header when both are present', async () => {
+		const client = makeClient({ data: { user: { id: 'cookie-user' } }, error: null });
+		vi.mocked(createClient).mockReturnValue(client as any);
+		service = new AuthService('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+		await service.getUserIdFromRequest(
+			makeRequest({
+				Cookie: 'sb-access-token=from.cookie',
+				Authorization: 'Bearer from.header',
+			}),
+		);
+
+		// Cookie wins — matches the BFF pattern where browsers can't access
+		// the cookie via JS and shouldn't be tricked into sending a stale
+		// Authorization header via XSS.
+		expect(client.auth.getUser).toHaveBeenCalledWith('from.cookie');
+	});
 });
