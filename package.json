@@ -16,6 +16,7 @@
 		"test": "vitest run",
 		"test:ui": "cd astro && npx vitest run",
 		"test:e2e": "npx playwright test",
+		"test:smoke": "tsx scripts/smoke-test.ts",
 		"test:all": "npm test && npm run test:ui && npm run test:e2e",
 		"test:watch": "vitest",
 		"lint": "eslint --ext .ts ./src",
@@ -40,6 +41,7 @@
 		"eslint": "^9.39.2",
 		"jsdom": "^29.0.0",
 		"playwright": "^1.58.2",
+		"tsx": "^4.21.0",
 		"typescript": "^5.9.3",
 		"vitest": "^4.0.18",
 		"wrangler": "^4.63.0"

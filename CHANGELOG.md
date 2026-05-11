@@ -1,5 +1,38 @@
 # Changelog
 
+## [3.0.0] - 2026-05-11
+
+### Infrastructure
+
+#### Storage backend migrated from Cloudflare KV to Supabase Postgres
+
+- **Database**: Supabase project `dewddkcmwrzbpynylyhg` (Frankfurt, `eu-central-1`)
+- **Schema**: 7 migrations covering `pastes` + `slugs` tables, trigger for `updated_at`, 3 indexes, RLS policies, pg_cron cleanup jobs
+- **Implementation**:
+  - New `SupabasePasteRepository` implementing `PasteRepository`
+  - New `DualWriteRepository` shadow-write wrapper (used in Phase 1 of migration)
+  - Feature-flagged via `STORAGE_BACKEND` env var (`kv` | `dual` | `supabase`)
+  - `pasteRepository` added to Hono context for slug handler reuse
+- **Tests**: 25 new tests (14 for Supabase repo, 11 for dual-write), 113 total passing
+- **Rollback**: Change `STORAGE_BACKEND` to `kv` in `wrangler.jsonc` and redeploy. KV namespace retained in bindings.
+- **Documentation**: Full migration journey in `SUPABASE-MIGRATION.md`
+
+### Frontend
+
+- **Astro**: upgraded `6.0.2 → 6.3.1`, `@astrojs/react 5.0.0 → 5.0.4`
+
+### Why
+
+- KV is key-value only — no search, no filtering, no aggregation, no user accounts
+- Postgres enables: search by title/language, "my pastes" page (Phase 4), live recent feed via Realtime (Phase 4), proper analytics
+- Fixes documented concurrency bug in burn-after-reading (Phase 4 via `view_paste()` RPC with `FOR UPDATE`)
+
+### Breaking changes
+
+None for end users. The Worker API is unchanged. Storage backend swap is invisible to clients.
+
+---
+
 ## [2.0.0] - 2026-02-27
 
 ### Security

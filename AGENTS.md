@@ -4,6 +4,8 @@
 
 Pasteriser — code-sharing service on Cloudflare Workers (Hono) with Astro+React frontend. Live at `paste.erfi.dev`.
 
+Storage: **Supabase Postgres** (Frankfurt, project `dewddkcmwrzbpynylyhg`). Migrated from Cloudflare KV in May 2026 — see `SUPABASE-MIGRATION.md`.
+
 ## Structure
 
 Two separate packages with **independent `node_modules`**:
@@ -16,7 +18,20 @@ Two separate packages with **independent `node_modules`**:
 - **Worker entry**: `src/index.ts` — Hono app, all routing, serves Astro static assets via `ASSETS` binding
 - **Worker config**: `wrangler.jsonc` — `run_worker_first: true`, assets from `./astro/dist`
 - **DDD layers** in `src/`: `domain/` → `application/` → `infrastructure/` → `interfaces/`
-- **Env bindings** (`src/types.ts`): `PASTES` (KV), `ASSETS` (Fetcher), plus optional env vars `NODE_ENV`, `API_URL`, `API_SECRET`
+- **Storage abstraction**: `PasteRepository` interface, three implementations: `KVPasteRepository`, `SupabasePasteRepository`, `DualWriteRepository` — selected via `STORAGE_BACKEND` env var
+- **Env bindings** (`src/types.ts`):
+  - `PASTES: KVNamespace` — retained for rollback, unused with current `STORAGE_BACKEND=supabase`
+  - `ASSETS: Fetcher` — Astro static assets
+  - `SUPABASE_URL: string` — project URL (var in `wrangler.jsonc`)
+  - `SUPABASE_SECRET_KEY: string` — `sb_secret_...` key (Wrangler secret, never in source)
+  - `STORAGE_BACKEND?: 'kv' | 'supabase' | 'dual'` — defaults to `supabase` in production
+
+## Supabase migrations
+
+- All schema in `supabase/migrations/` — 7 files, applied to `dewddkcmwrzbpynylyhg`
+- Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema)
+- Never run DDL directly via pgcli — always create a new migration file
+- Verify with `supabase db query --linked "SELECT ..."` or via `pgpasteriser` alias
 
 ## Commands
 
@@ -40,6 +55,7 @@ npm run lint             # eslint — src/**/*.ts only, not astro code
 npm test                 # vitest run (src/tests/** + astro/src/lib/**)
 npm run test:ui          # cd astro && npx vitest run (component tests, jsdom)
 npm run test:e2e         # playwright — runs against PRODUCTION (paste.erfi.dev)
+npm run test:smoke       # tsx scripts/smoke-test.ts — live API + Supabase verification
 npm run test:all         # test + test:ui + test:e2e
 
 # Codegen

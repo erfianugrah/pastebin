@@ -106,7 +106,7 @@ graph TD
     end
     
     subgraph "Infrastructure"
-      KV[Storage]
+      DB[Supabase Postgres]
       Log[Logging]
       Cfg[Config]
       Sec[Security]
@@ -129,7 +129,7 @@ The application is structured in four primary layers following Domain-Driven Des
    - Factories for domain object creation
 
 3. **Infrastructure Layer**: Technical capabilities
-   - KV storage implementation
+   - Supabase Postgres storage implementation (with KV fallback via `STORAGE_BACKEND` env var)
    - Logging services
    - Security services
    - Error handling
@@ -146,7 +146,7 @@ The application is structured in four primary layers following Domain-Driven Des
 ```mermaid
 graph TD
     Client[Client Browser] --> |HTTP Request| Worker[Cloudflare Worker]
-    Worker --> |Store/Retrieve| KV[Cloudflare KV]
+    Worker --> |Store/Retrieve| DB[(Supabase Postgres)]
     
     subgraph "Frontend (Astro + React)"
         UI[User Interface] --> CryptoClient[Client-side Crypto]
@@ -161,8 +161,8 @@ graph TD
         Handlers --> Queries[Queries]
         Commands --> Services[Domain Services]
         Queries --> Services
-        Services --> Repositories[Repositories]
-        Repositories --> KV
+        Services --> Repositories[SupabasePasteRepository]
+        Repositories --> DB
     end
 ```
 
@@ -226,16 +226,16 @@ sequenceDiagram
     participant Worker as Web Worker
     participant API
     participant Backend
-    participant KV
-    
+    participant DB as Supabase
+
     User->>Browser: Enter paste content & select encryption
     Browser->>Worker: Generate key & encrypt content
     Worker-->>Browser: Progress updates
     Worker-->>Browser: Encrypted content & key
     Browser->>API: POST /pastes (encrypted content only)
     API->>Backend: Create paste command
-    Backend->>KV: Store encrypted paste
-    KV-->>Backend: Success
+    Backend->>DB: Store encrypted paste
+    DB-->>Backend: Success
     Backend-->>API: Paste ID & URL
     API-->>Browser: Paste ID & URL
     Browser->>User: Display URL with encryption key
