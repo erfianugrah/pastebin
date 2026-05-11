@@ -25,8 +25,9 @@ interface AuthState {
 }
 
 export interface UseAuthResult extends AuthState {
-	signIn: (email: string, password: string) => Promise<{ error: { message: string } | null }>;
-	signUp: (email: string, password: string) => Promise<{ error: { message: string } | null; needsConfirm: boolean }>;
+	signIn: (email: string, password: string) => Promise<{ error: { code?: string; message: string } | null }>;
+	signUp: (email: string, password: string) => Promise<{ error: { code?: string; message: string } | null; needsConfirm: boolean }>;
+	resendConfirmation: (email: string) => Promise<{ error: { message: string } | null }>;
 	signOut: () => Promise<void>;
 	refresh: () => Promise<void>;
 }
@@ -67,8 +68,13 @@ export function useAuth(): UseAuthResult {
 		});
 
 		if (!res.ok) {
-			const data = await readJsonOrNull<{ error?: { message?: string } }>(res);
-			return { error: { message: data?.error?.message ?? `HTTP ${res.status}` } };
+			const data = await readJsonOrNull<{ error?: { code?: string; message?: string } }>(res);
+			return {
+				error: {
+					code: data?.error?.code,
+					message: data?.error?.message ?? `HTTP ${res.status}`,
+				},
+			};
 		}
 
 		const data = await readJsonOrNull<{ user: User }>(res);
@@ -85,8 +91,14 @@ export function useAuth(): UseAuthResult {
 		});
 
 		if (!res.ok) {
-			const data = await readJsonOrNull<{ error?: { message?: string } }>(res);
-			return { error: { message: data?.error?.message ?? `HTTP ${res.status}` }, needsConfirm: false };
+			const data = await readJsonOrNull<{ error?: { code?: string; message?: string } }>(res);
+			return {
+				error: {
+					code: data?.error?.code,
+					message: data?.error?.message ?? `HTTP ${res.status}`,
+				},
+				needsConfirm: false,
+			};
 		}
 
 		const data = await readJsonOrNull<{ user: User; needsConfirm: boolean }>(res);
@@ -94,6 +106,20 @@ export function useAuth(): UseAuthResult {
 			setState({ user: data.user, loading: false });
 		}
 		return { error: null, needsConfirm: data?.needsConfirm ?? false };
+	}, []);
+
+	const resendConfirmation = useCallback(async (email: string) => {
+		const res = await fetch('/api/auth/resend-confirmation', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email }),
+			...FETCH_OPTS,
+		});
+		if (!res.ok) {
+			const data = await readJsonOrNull<{ error?: { message?: string } }>(res);
+			return { error: { message: data?.error?.message ?? `HTTP ${res.status}` } };
+		}
+		return { error: null };
 	}, []);
 
 	const signOut = useCallback(async () => {
@@ -104,5 +130,5 @@ export function useAuth(): UseAuthResult {
 		}
 	}, []);
 
-	return { ...state, signIn, signUp, signOut, refresh };
+	return { ...state, signIn, signUp, signOut, refresh, resendConfirmation };
 }

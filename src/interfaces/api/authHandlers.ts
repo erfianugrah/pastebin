@@ -74,6 +74,25 @@ export class AuthHandlers {
 			return json({ error: { code: 'signup_failed', message: error.message } }, 400);
 		}
 
+		// Detect Supabase's anti-enumeration response: when the email is
+		// already registered, Supabase returns a normal-looking success
+		// payload but with `user.identities = []`. The "no session" path
+		// below would otherwise tell the UI to show "check your email" —
+		// no email was sent, the user is left confused. Surface a clear
+		// error instead.
+		//
+		// Trade-off: this leaks "email exists" to anyone who tries it.
+		// Acceptable for Pasteriser — bot-signup defense lives in Phase
+		// 4.7 (Worker-side rate limit + future captcha/honeypot), not in
+		// hiding existence. Documented in SECURITY.md.
+		if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+			this.logger.debug('Auth: signup duplicate email', { email });
+			return json(
+				{ error: { code: 'email_taken', message: 'An account with this email already exists. Try logging in.' } },
+				409,
+			);
+		}
+
 		// If email confirmation is required, no session is returned; respond
 		// with a needsConfirm flag so the UI can show the "check your email"
 		// state without claiming the user is signed in.
@@ -105,11 +124,62 @@ export class AuthHandlers {
 
 		if (error || !data.session) {
 			this.logger.debug('Auth: login error', { code: error?.code, message: error?.message });
+
+			// Distinguish email-not-confirmed from wrong-password so the UI
+			// can guide the user. Supabase returns code 'email_not_confirmed'
+			// in this case (GoTrue >= 2.150). Falls through to a generic
+			// invalid_credentials otherwise.
+			if (error?.code === 'email_not_confirmed') {
+				return json(
+					{
+						error: {
+							code: 'email_not_confirmed',
+							message:
+								'Please confirm your email first. Check your inbox for the confirmation link we sent.',
+						},
+					},
+					403,
+				);
+			}
+
 			return json({ error: { code: 'invalid_credentials', message: 'Invalid email or password' } }, 401);
 		}
 
 		const res = json({ user: data.user });
 		return applySessionCookies(res, data.session.access_token, data.session.refresh_token);
+	}
+
+	/**
+	 * POST /api/auth/resend-confirmation — re-send the signup confirmation
+	 * email. Used by the login form when it detects `email_not_confirmed`,
+	 * and by the signup success panel as a "didn't get it" link.
+	 *
+	 * Body: { email: string }
+	 *
+	 * Always returns 200 (even if the email doesn't exist) to avoid leaking
+	 * enumeration, except for malformed bodies. Supabase's own per-email
+	 * rate limit (smtp_max_frequency + rate_limit_email_sent) gates abuse.
+	 */
+	async handleResendConfirmation(request: Request): Promise<Response> {
+		let body: { email?: string };
+		try {
+			body = (await request.json()) as { email?: string };
+		} catch {
+			return json({ error: { code: 'bad_request', message: 'Invalid JSON' } }, 400);
+		}
+
+		const email = body.email?.trim();
+		if (!email) {
+			return json({ error: { code: 'bad_request', message: 'Email is required' } }, 400);
+		}
+
+		const { error } = await this.client.auth.resend({ type: 'signup', email });
+		if (error) {
+			// Log for diagnostics but don't leak detail to the client.
+			this.logger.debug('Auth: resend error', { code: error.code, message: error.message });
+		}
+
+		return json({ ok: true });
 	}
 
 	async handleLogout(request: Request): Promise<Response> {

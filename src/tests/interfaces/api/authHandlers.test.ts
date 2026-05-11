@@ -142,6 +142,33 @@ describe('AuthHandlers', () => {
 			expect(cookies.some((c) => c.includes(REFRESH_TOKEN_COOKIE))).toBe(true);
 		});
 
+		it('returns 409 email_taken when Supabase returns empty identities (duplicate email)', async () => {
+			// Supabase's anti-enumeration response: success-shaped payload
+			// with user.identities = [] when the email is already registered.
+			const signUp = vi.fn().mockResolvedValue({
+				data: {
+					user: { id: 'u-existing', email: 'a@b.c', identities: [] },
+					session: null,
+				},
+				error: null,
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ signUp }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleSignup(
+				jsonRequest('https://x.test/api/auth/signup', {
+					email: 'a@b.c',
+					password: 'longenough',
+				}),
+			);
+
+			expect(res.status).toBe(409);
+			const body = (await res.json()) as { error: { code: string; message: string } };
+			expect(body.error.code).toBe('email_taken');
+			expect(body.error.message).toMatch(/already exists/i);
+			expect(getSetCookies(res).length).toBe(0);
+		});
+
 		it('surfaces Supabase signup error as 400', async () => {
 			const signUp = vi.fn().mockResolvedValue({
 				data: { user: null, session: null },

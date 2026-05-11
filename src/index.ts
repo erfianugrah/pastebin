@@ -205,6 +205,9 @@ app.post('/api/auth/signup', async (c) => preventCaching(await c.get('authHandle
 app.post('/api/auth/login', async (c) => preventCaching(await c.get('authHandlers').handleLogin(c.req.raw)));
 app.post('/api/auth/logout', async (c) => preventCaching(await c.get('authHandlers').handleLogout(c.req.raw)));
 app.get('/api/auth/session', async (c) => preventCaching(await c.get('authHandlers').handleSession(c.req.raw)));
+app.post('/api/auth/resend-confirmation', async (c) =>
+	preventCaching(await c.get('authHandlers').handleResendConfirmation(c.req.raw)),
+);
 
 // GET /auth/confirm — landing page Supabase Auth redirects to from
 // confirmation emails (signup, password recovery, email change). The

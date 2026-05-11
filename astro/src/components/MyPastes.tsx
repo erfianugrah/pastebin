@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AlertCircle, Eye, Trash2, Lock, Globe, LogIn } from 'lucide-react';
+import { AlertCircle, Eye, Trash2, Lock, Globe, LogIn, Plus } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -137,10 +137,17 @@ export default function MyPastes() {
 
 	return (
 		<div className="space-y-3">
-			<p className="text-sm text-muted-foreground">
-				{pastes.length} paste{pastes.length === 1 ? '' : 's'}. Listed via the Worker; Supabase access goes
-				through service_role + an explicit `user_id` filter.
-			</p>
+			<div className="flex items-center justify-between gap-3">
+				<p className="text-sm text-muted-foreground">
+					{pastes.length} paste{pastes.length === 1 ? '' : 's'}
+				</p>
+				<Button asChild size="sm" variant="outline">
+					<a href="/">
+						<Plus className="h-4 w-4" />
+						New paste
+					</a>
+				</Button>
+			</div>
 			{pastes.map((p) => (
 				<Card key={p.id}>
 					<CardContent className="p-4 flex flex-col md:flex-row justify-between gap-2">
