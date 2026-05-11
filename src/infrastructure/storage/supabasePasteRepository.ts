@@ -12,7 +12,18 @@ export class SupabasePasteRepository implements PasteRepository {
 		key: string, // sb_secret_... key -- bypasses RLS
 		private readonly logger: Logger,
 	) {
-		this.client = createClient(url, key);
+		// Server-side client — disable session management (Supabase recommended
+		// pattern for non-browser contexts). The Worker uses a secret key which
+		// doesn't need refresh; persistSession would try to use localStorage
+		// (unavailable in Workers) and autoRefreshToken would set a setTimeout
+		// that does nothing useful.
+		this.client = createClient(url, key, {
+			auth: {
+				autoRefreshToken: false,
+				persistSession: false,
+				detectSessionInUrl: false,
+			},
+		});
 	}
 
 	async save(paste: Paste): Promise<void> {

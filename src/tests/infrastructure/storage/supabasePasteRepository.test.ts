@@ -114,7 +114,13 @@ describe('SupabasePasteRepository', () => {
 
 	describe('constructor', () => {
 		it('creates a Supabase client with the provided URL and key', () => {
-			expect(createClient).toHaveBeenCalledWith('https://test.supabase.co', 'sb_secret_test');
+			expect(createClient).toHaveBeenCalledWith('https://test.supabase.co', 'sb_secret_test', {
+				auth: {
+					autoRefreshToken: false,
+					persistSession: false,
+					detectSessionInUrl: false,
+				},
+			});
 		});
 	});
 

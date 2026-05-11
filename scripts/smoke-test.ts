@@ -57,7 +57,15 @@ if (!HAS_DB_ACCESS) {
 	console.warn('\x1b[33m   Find the secret key at: Dashboard → Integrations → Data API → Settings → API Keys\x1b[0m\n');
 }
 
-const sb: SupabaseClient | null = HAS_DB_ACCESS ? createClient(SUPABASE_URL, SUPABASE_SECRET_KEY) : null;
+// Server-side client options (Supabase-recommended for non-browser contexts):
+// disable session management since we're a one-shot script.
+const SERVER_CLIENT_OPTS = {
+	auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+};
+
+const sb: SupabaseClient | null = HAS_DB_ACCESS
+	? createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, SERVER_CLIENT_OPTS)
+	: null;
 
 // ---- Test runner ----
 
@@ -453,13 +461,13 @@ async function run(): Promise<void> {
 	const publishableKey = env.SUPABASE_PUBLISHABLE_KEY ?? '';
 	if (publishableKey && privateId) {
 		await test('RLS: anon (publishable key) cannot SELECT private pastes', async () => {
-			const anonClient = createClient(SUPABASE_URL, publishableKey);
+			const anonClient = createClient(SUPABASE_URL, publishableKey, SERVER_CLIENT_OPTS);
 			const { data } = await anonClient.from('pastes').select('id, visibility').eq('id', privateId);
 			assert(data === null || data.length === 0, 'anon should NOT see private paste via direct DB');
 		});
 
 		await test('RLS: anon (publishable key) CAN SELECT public pastes', async () => {
-			const anonClient = createClient(SUPABASE_URL, publishableKey);
+			const anonClient = createClient(SUPABASE_URL, publishableKey, SERVER_CLIENT_OPTS);
 			const { data } = await anonClient.from('pastes').select('id').eq('id', created!.id);
 			// public paste should be visible (if not yet deleted by other tests)
 			// data may be empty if the paste was view-limited/burned -- not a failure here
