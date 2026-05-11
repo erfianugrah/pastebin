@@ -1,173 +1,165 @@
 # Security Configuration Guide
 
-This document outlines the security measures implemented in the Pastebin application and how to configure them properly.
+Threat model, deployment configuration, and operational guidance for Pasteriser.
 
-## Environment Variables
+## Threat model
 
-### Required Security Environment Variables
+| Asset | Defended against | Defense |
+|-------|------------------|---------|
+| Plaintext paste content | Server compromise, log exposure | Optional client-side E2EE (AES-GCM, key in URL fragment) |
+| Encryption keys / passwords | Server-side leakage | Never sent to server — key in URL fragment, password used client-side for PBKDF2 only |
+| Paste authorship | Unauthorized creation as another user | JWT validated by Worker; `user_id` set from verified token, never from request body |
+| Owned-paste access | Cross-user reads / writes / deletes | 5 RLS policies on `public.pastes` for `authenticated` role: SELECT public, SELECT/INSERT/UPDATE/DELETE own |
+| Anonymous paste deletion | Anyone-knows-the-id deletion | `deleteToken` (UUID) issued at creation; required for `DELETE /pastes/:id/delete` |
+| Burn-after-reading content | Race-condition double-serve | Postgres `view_paste()` RPC with `SELECT ... FOR UPDATE` row lock |
+| Realtime broadcasts | Private-paste metadata leakage | 3-layer defense: trigger filters `visibility = 'public'`, payload curates to safe fields, RLS on `realtime.messages` scopes to the `recent:public` topic |
+| Cross-site exploits | XSS via paste content | `textContent` only for user data; no `innerHTML`; programmatic DOM creation; strict CSP without `unsafe-eval` |
+| Cross-origin abuse | CORS-credentials with `*` origin | Explicit allowlist in production |
 
-#### `ADMIN_API_KEY`
-- **Required**: Yes
-- **Purpose**: Secures administrative endpoints (`/api/analytics`, `/api/logs`, `/api/webhooks`)
-- **Format**: Strong random string (minimum 32 characters)
-- **Example**: `ADMIN_API_KEY=your-super-secure-random-api-key-here`
-- **Generation**: 
-  ```bash
-  openssl rand -hex 32
-  # or
-  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+## Configuration
+
+### Required Wrangler secret
+
+```bash
+wrangler secret put SUPABASE_SECRET_KEY --env production
+# Paste an sb_secret_... value when prompted.
+```
+
+This is the only secret the Worker needs at runtime. It bypasses RLS — every code path that uses it must enforce its own authorization (the Worker does this for paste creation by deriving `user_id` from the verified JWT, never from the request body).
+
+### Public env
+
+`wrangler.jsonc` vars (committed):
+
+```jsonc
+{
+  "vars": {
+    "SUPABASE_URL": "https://<ref>.supabase.co",
+    "STORAGE_BACKEND": "supabase"
+  }
+}
+```
+
+`astro/.env` (gitignored, baked into the client bundle at build):
+
+```bash
+PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
+PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+```
+
+The publishable key is safe to ship — it maps to the `anon` Postgres role and is RLS-gated.
+
+### Optional
+
+- `ALLOWED_ORIGINS` (comma-separated) — restricts CORS. Defaults to localhost-only in development.
+
+## Implementation details
+
+### Authentication and authorization
+
+- **Worker JWT verification** (`src/infrastructure/auth/authService.ts`) — extracts `Authorization: Bearer <jwt>`, validates via `supabase.auth.getUser()` (network call to Supabase Auth). Invalid/expired/revoked tokens return `null` cleanly.
+- **`user_id` derivation** — the verified user id is passed to `CreatePasteCommand.execute(params, { userId })`. Request body cannot override it.
+- **RLS policies on `public.pastes`** (Postgres `pg_policy`):
+  - `anon`: SELECT where `visibility = 'public'`
+  - `authenticated`: SELECT public (mirrors anon), SELECT own (`auth.uid() = user_id`), INSERT with `WITH CHECK auth.uid() = user_id`, UPDATE with USING + WITH CHECK both pinned, DELETE own
+  - All use `(SELECT auth.uid())` not `auth.uid()` for initPlan caching (per Supabase RLS-Performance benchmarks: 94-99% improvement at scale)
+- **Realtime channel authorization** (`realtime.messages`) — two SELECT policies restrict `anon`/`authenticated` to the exact topic `recent:public`. A malicious broadcast to any other topic could not reach those roles.
+- **Paste deletion** — anonymous pastes require the `deleteToken` (UUID returned at creation). Authenticated users can also delete via direct DB (RLS-gated by `auth.uid() = user_id`).
+
+### Content security
+
+- **XSS prevention** — every user-supplied string rendered via React's escaping; pastes/titles/languages are never injected as raw HTML. No `dangerouslySetInnerHTML`.
+- **CSP** — strict `script-src 'self'`, no `unsafe-eval`, Web Workers via `worker-src blob:`:
+
+  ```
+  default-src 'self';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline';
+  connect-src 'self' https://<supabase-host> wss://<supabase-host>;
+  img-src 'self' data: blob:;
+  font-src 'self';
+  object-src 'none';
+  media-src 'self';
+  worker-src 'self' blob:;
+  frame-ancestors 'none';
+  base-uri 'self';
+  form-action 'self';
   ```
 
-### Optional Security Environment Variables
+- **HSTS** — `max-age=31536000; includeSubDomains; preload`
+- **X-Frame-Options** — `DENY`
+- **X-Content-Type-Options** — `nosniff`
+- **Referrer-Policy** — `strict-origin-when-cross-origin`
+- **Permissions-Policy** — blocks geolocation, microphone, camera by default
 
-#### `ALLOWED_ORIGINS`
-- **Purpose**: Restricts CORS to specific domains
-- **Format**: Comma-separated list of allowed origins
-- **Example**: `ALLOWED_ORIGINS=https://example.com,https://app.example.com`
-- **Default**: If not set, only localhost origins are allowed in development
+### Rate limiting
 
-## Security Features Implemented
+- Per-IP cache, bounded at 1000 entries with auto-eviction of expired entries (prevents unbounded growth).
+- KV-backed for cross-isolate consistency.
+- Stricter limits for write paths (10/min for `POST /pastes`) than reads (60/min general).
+- Path-based bypass-prevention — static assets exempt by extension allowlist, not by URL prefix that user content could spoof.
 
-### 1. **Admin Endpoint Protection** ✅
-- All administrative endpoints require Bearer token authentication
-- Uses SHA-256 hashing + constant-time XOR comparison to prevent both timing and length-oracle attacks
-- Returns proper 401 responses with WWW-Authenticate header
+### Client-side encryption
 
-### 1b. **Paste Deletion Authorization** ✅
-- Each paste receives a unique `deleteToken` (UUID) at creation time
-- Delete operations require the token via query parameter or JSON body
-- Token is stored alongside the paste in KV but never exposed in API responses
-- Without the token, deletion returns HTTP 403 Forbidden
+- **AES-GCM-256** via Web Crypto API. Encryption happens in a Web Worker for non-blocking UX.
+- **Password mode** — PBKDF2 with the project's iteration count for key derivation. Password never leaves the browser.
+- **Key mode** — 256-bit random key in the URL fragment (`#key=...`). Fragment is never sent in HTTP requests.
+- **Storage** — paste content stored as ciphertext + IV. Server cannot derive the plaintext under any path.
 
-### 2. **CORS Security** ✅ 
-- Strict origin validation with explicit allowlist
-- No wildcard CORS in production
-- Proper preflight handling
+## Security checklist
 
-### 3. **XSS Prevention** ✅
-- All user content uses `textContent` instead of `innerHTML`
-- Safe DOM element creation throughout the application
-- No template string interpolation with user data
+Before deploying:
 
-### 4. **Content Security Policy** ✅
-```
-default-src 'self';
-script-src 'self';
-style-src 'self' 'unsafe-inline';
-connect-src 'self';
-img-src 'self' data: blob:;
-font-src 'self';
-object-src 'none';
-media-src 'self';
-worker-src 'self' blob:;
-child-src 'self';
-frame-ancestors 'none';
-base-uri 'self';
-form-action 'self'
-```
+- [ ] `SUPABASE_SECRET_KEY` set via `wrangler secret put` (not in `wrangler.jsonc`)
+- [ ] `SUPABASE_URL` and `STORAGE_BACKEND` set in `wrangler.jsonc` vars
+- [ ] `astro/.env` populated with `PUBLIC_SUPABASE_URL` + `PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- [ ] `astro/.env` gitignored
+- [ ] CSP headers loaded by every response (verify in browser DevTools → Network → Response Headers)
+- [ ] Paste deletion requires `deleteToken` (test with and without token via `npm run test:smoke`)
+- [ ] RLS policies live and enforced (verify via `npm run test:rls`)
+- [ ] Realtime broadcasts curated correctly (verify via `npm run test:realtime`)
+- [ ] Burn-after-reading is race-free (verify via `npm run test:race`)
 
-> Note: `unsafe-eval` has been removed from `script-src`. Web Workers load via `worker-src 'self' blob:` and do not require `unsafe-eval`.
+## Monitoring
 
-### 5. **Secure Storage** ✅
-- Encryption keys stored using AES-GCM encryption in localStorage
-- Master key generated per browser session
-- Automatic migration from plaintext storage
-- Secure key derivation using PBKDF2
+Worker logs include:
 
-### 6. **Rate Limiting** ✅
-- Path-based validation for static asset bypass prevention
-- Stricter limits for POST operations (10/min for paste creation, 60/min general)
-- IP-based tracking with Cloudflare KV
-- In-memory cache bounded at 1000 entries with automatic expired-entry eviction
+- Failed JWT validations (debug level — these are often noise from probing)
+- Rate-limit triggers (info level)
+- Repository errors (error level)
+- RLS denial responses (surfaced as Postgres errors at error level)
+- Cron job runs (visible in `cron.job_run_details`)
 
-### 6b. **Webhook SSRF Prevention** ✅
-- Webhook URLs validated on registration and update
-- Only HTTPS URLs allowed
-- Blocked destinations: private IPs (RFC 1918), loopback addresses, link-local (169.254.x.x), `.local`/`.internal` hostnames, cloud metadata endpoints
+For ongoing monitoring, point Cloudflare's logs to a sink and query for:
+- HTTP 401 / 403 spikes (potential auth abuse)
+- HTTP 429 spikes (potential DDoS or aggressive scraper)
+- Postgres errors mentioning `row-level security policy` (potential client misuse)
 
-### 7. **Information Disclosure Prevention** ✅
-- Stack traces only shown in development
-- Generic error messages in production
-- Sensitive debug logging restricted to localhost
+## Reporting security issues
 
-### 8. **Security Headers** ✅
-- `X-Content-Type-Options: nosniff`
-- `X-Frame-Options: DENY` 
-- `X-XSS-Protection: 1; mode=block`
-- `Referrer-Policy: strict-origin-when-cross-origin`
-- `Permissions-Policy: geolocation=(), microphone=(), camera=()`
-- `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload`
+If you discover a security vulnerability:
 
-### 9. **Client-Side Encryption Security** ✅
-- End-to-end encryption using NaCl (XSalsa20-Poly1305)
-- Secure key generation and management
-- Protected inter-component communication with session tokens
-- Memory-safe blob URL handling
+1. Do **not** open a public GitHub issue.
+2. Contact the maintainer privately.
+3. Provide steps to reproduce and the scope of impact.
+4. Allow reasonable time for a fix before public disclosure.
 
-## Usage Examples
+## Inherent limitations
 
-### Admin API Authentication
-```bash
-# Get analytics (replace YOUR_API_KEY with actual key)
-curl -H "Authorization: Bearer YOUR_API_KEY" https://your-domain.com/api/analytics
+### Client-side encryption can't protect against the client
 
-# Get logs
-curl -H "Authorization: Bearer YOUR_API_KEY" https://your-domain.com/api/logs
+- Decrypted content is visible in browser memory, DevTools, and to other extensions / scripts running in the same origin.
+- Locked-down browsers with no DevTools / no extensions raise the bar but the content is still loaded in JS-readable memory.
+- This is a fundamental limitation, not specific to Pasteriser.
 
-# Manage webhooks
-curl -H "Authorization: Bearer YOUR_API_KEY" https://your-domain.com/api/webhooks
-```
+### Key management
 
-### Development vs Production
-- **Development**: Debug logging enabled for localhost
-- **Production**: All sensitive logging disabled, stack traces hidden
+- Encryption keys are derived from URLs or passwords. URL-based keys are exposed to anyone with the link; password-based keys are only as strong as the password.
+- Keys saved to localStorage are encrypted with a per-session master key, but a local attacker with disk access can still recover them.
+- No key-rotation flow is implemented; encrypted pastes are immutable.
 
-## Security Checklist
+### Browser requirements
 
-Before deploying to production:
-
-- [ ] `ADMIN_API_KEY` environment variable set with strong random key
-- [ ] `ALLOWED_ORIGINS` configured with production domains
-- [ ] All environment variables properly configured in Cloudflare Workers
-- [ ] CSP headers tested with application functionality
-- [ ] Admin endpoints tested with authentication
-- [ ] Rate limiting tested and configured appropriately
-- [ ] Verify paste deletion requires `deleteToken` (test with and without token)
-- [ ] Verify webhook secrets are not exposed in `GET /api/webhooks` responses
-- [ ] Verify webhook registration rejects non-HTTPS and internal URLs
-
-## Security Monitoring
-
-The application logs security-relevant events:
-- Failed authentication attempts
-- CORS violations
-- Rate limit violations  
-- Decryption failures
-- Invalid session tokens
-
-Monitor these logs regularly and set up alerts for suspicious activity.
-
-## Reporting Security Issues
-
-If you discover a security vulnerability, please report it responsibly:
-1. Do not create public issues for security vulnerabilities
-2. Contact the maintainers privately
-3. Provide detailed information about the vulnerability
-4. Allow time for the issue to be fixed before disclosure
-
-## Security Considerations
-
-### Client-Side Encryption Limitations
-- Decrypted content is visible in browser memory and developer tools
-- This is an inherent limitation of client-side encryption
-- Users should be aware that content is not protected from malicious browser extensions or local attacks
-
-### Key Management
-- Encryption keys are derived from URLs or passwords
-- Keys stored in secure localStorage are encrypted but not protected from local attacks
-- Consider implementing key rotation for long-term security
-
-### Browser Compatibility  
-- Modern browsers with Web Crypto API support required
-- Fallback to regular localStorage for key storage if secure storage fails
-- Service Worker caching may need periodic updates
+- Modern browser with Web Crypto API (everything > 2017).
+- Web Workers required for non-blocking encryption of large pastes (>500 KB). Main-thread fallback present but blocks the UI.
+- Service Workers used for caching; Safari's private-browsing mode degrades this gracefully.

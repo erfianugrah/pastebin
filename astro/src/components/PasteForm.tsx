@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle2, ChevronDown, Copy, Lock, Key, Shield, Info, Plus, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Copy, Key, Shield, Info, Plus, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from './ui/card';
 import { Checkbox } from './ui/checkbox';

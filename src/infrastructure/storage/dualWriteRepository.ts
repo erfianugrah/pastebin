@@ -3,14 +3,17 @@ import { PasteRepository, ViewResult } from '../../domain/repositories/pasteRepo
 import { Logger } from '../logging/logger';
 
 /**
- * Dual-write repository for Phase 1 migration.
+ * Shadow-write repository: forwards every write to a primary AND a
+ * secondary backend, but reads only from the primary. Secondary write
+ * failures are logged, never thrown.
  *
- * Writes to both primary (KV) and secondary (Supabase).
- * All reads come from primary -- KV remains source of truth.
+ * Originally introduced for the KV -> Supabase migration (Phase 1):
+ * primary = KV, secondary = Supabase. Activated via STORAGE_BACKEND=dual.
  *
- * Secondary failures are logged but never propagate -- KV is still
- * authoritative. This lets us verify Supabase is receiving data correctly
- * before trusting it with reads in Phase 2.
+ * Currently inactive in production (STORAGE_BACKEND=supabase). Retained
+ * because it's the right escape hatch for any future "verify writes land
+ * in a new backend before trusting reads" workflow. Scheduled for removal
+ * in Phase 5 if no longer needed.
  */
 export class DualWriteRepository implements PasteRepository {
 	constructor(
@@ -74,8 +77,8 @@ export class DualWriteRepository implements PasteRepository {
 		// view() has side effects (read_count++, possible burn/delete) -- only
 		// the primary is authoritative. Don't shadow-view to secondary: that
 		// would double-count reads and could burn the paste twice. The
-		// secondary's read_count diverges, which is acceptable in Phase 1
-		// (it gets reconciled on the next save()).
+		// secondary's read_count may diverge, which is acceptable -- it gets
+		// reconciled on the next save().
 		return this.primary.view(id);
 	}
 

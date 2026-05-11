@@ -34,31 +34,21 @@ export class GetPasteQuery {
 	}
 
 	/**
-	 * Get paste summary without content (for listing and access control)
+	 * Same as execute() but returns derived metadata alongside the paste.
+	 * Used by `handlers.handleGetPaste` to decide whether to return the
+	 * E2E-encrypted-content branch vs the plain content branch.
+	 *
+	 * Returns null if the paste was not found / expired / burned / view-limited.
 	 */
 	async executeSummary(id: string): Promise<{
 		paste: Paste;
-		requiresPassword: boolean;
 		isE2EEncrypted: boolean;
 	} | null> {
 		const paste = await this.execute(id);
+		if (!paste) return null;
 
-		if (!paste) {
-			return null;
-		}
-
-		// Phase 4: All security is client-side E2E encryption
-
-		// Server-side passwords are completely removed in Phase 4
-		const requiresPassword = false;
-
-		// All pastes are either unencrypted or use client-side E2E encryption
 		const isE2EEncrypted = paste.getIsEncrypted() && paste.getVersion() >= 2;
 
-		return {
-			paste,
-			requiresPassword,
-			isE2EEncrypted,
-		};
+		return { paste, isE2EEncrypted };
 	}
 }

@@ -279,9 +279,8 @@ export class Paste {
       createdAt: this.createdAt.toISOString(),
       expiresAt: this.getExpiresAt().toISOString(),
       visibility: this.visibility,
-      // isPasswordProtected field removed in final cleanup
       burnAfterReading: this.burnAfterReading,
-      isEncrypted: this.isEncrypted, // Use the explicit encryption flag
+      isEncrypted: this.isEncrypted,
       hasViewLimit: this.hasViewLimit(),
       viewLimit: this.viewLimit,
       remainingViews: this.hasViewLimit() ? Math.max(0, (this.viewLimit as number) - this.readCount) : null,

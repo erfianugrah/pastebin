@@ -119,7 +119,15 @@ describe('GetPasteQuery', () => {
 
 			expect(result).not.toBeNull();
 			expect(result!.isE2EEncrypted).toBe(true);
-			expect(result!.requiresPassword).toBe(false);
+		});
+
+		it('reports isE2EEncrypted=false for plaintext pastes', async () => {
+			const paste = makePaste('plain', { isEncrypted: false, version: 0 });
+			vi.mocked(mockRepository.view).mockResolvedValue(viewResult(paste));
+
+			const result = await query.executeSummary('plain');
+
+			expect(result!.isE2EEncrypted).toBe(false);
 		});
 
 		it('returns null when paste not found', async () => {

@@ -568,115 +568,48 @@ npm install
 cd ..
 ```
 
-### Security Configuration
+### Required Configuration
 
-Before deployment, configure these security settings:
+The Worker needs three things to talk to Supabase:
 
-#### Required Environment Variables
-
-```bash
-# Generate a strong admin API key (required)
-ADMIN_API_KEY=$(openssl rand -hex 32)
-```
-
-**Security Best Practice**: Use Wrangler secrets for sensitive values:
-
-```bash
-# Add ADMIN_API_KEY as a secret (recommended for production)
-wrangler secret put ADMIN_API_KEY
-# When prompted, paste your generated key
-
-# For development/staging, you can use vars in wrangler.jsonc:
-```
+**1. wrangler.jsonc vars** (committed to source — non-sensitive):
 
 ```jsonc
 {
   "vars": {
-    "ADMIN_API_KEY": "your-dev-key-here"
-  },
-  "env": {
-    "production": {
-      // Use secrets for production, not vars
-    }
+    "SUPABASE_URL": "https://<your-project-ref>.supabase.co",
+    "STORAGE_BACKEND": "supabase"
   }
 }
 ```
 
-**CORS Configuration**: Configure allowed origins via the config service. The system will:
-- Mirror the `Origin` header when `*` is in the allowlist (supports credentials)
-- Fall back to `*` only when no Origin header is present
-- Validate against explicit allowlist when configured
-
-#### Admin API Usage
-
-Access administrative endpoints with Bearer token authentication:
+**2. Wrangler secret** (never in source):
 
 ```bash
-# View analytics
-curl -H "Authorization: Bearer YOUR_API_KEY" https://yourdomain.com/api/analytics
-
-# View logs  
-curl -H "Authorization: Bearer YOUR_API_KEY" https://yourdomain.com/api/logs
-
-# Manage webhooks
-curl -H "Authorization: Bearer YOUR_API_KEY" https://yourdomain.com/api/webhooks
+wrangler secret put SUPABASE_SECRET_KEY --env production
+# Paste an sb_secret_... value when prompted
 ```
 
-### Configure Cloudflare KV Namespaces
-
-Create KV namespaces for storing pastes, logs, rate limiting, analytics, and webhooks:
+**3. Astro public env vars** (`astro/.env` — baked into the client bundle):
 
 ```bash
-# Required: Main paste storage
+PUBLIC_API_URL=https://paste.erfi.dev
+PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+```
+
+The publishable key is safe to ship in the bundle; it represents the `anon` Postgres role and is RLS-gated.
+
+### KV (rollback only)
+
+The `PASTES` KV binding is retained in `wrangler.jsonc` solely as a rollback path. With `STORAGE_BACKEND=supabase` (the default), no code reads from it. Set `STORAGE_BACKEND=kv` and redeploy to revert to KV-only mode if Supabase has an outage.
+
+A fresh deployment doesn't need to populate KV. Create one empty namespace and bind it:
+
+```bash
 wrangler kv:namespace create PASTES
-
-# Required: Rate limiting
-wrangler kv:namespace create PASTE_RL
-
-# Required: Application logs
-wrangler kv:namespace create PASTE_LOGS
-
-# Optional but recommended: Analytics data
-wrangler kv:namespace create ANALYTICS
-
-# Optional: Webhook configurations
-wrangler kv:namespace create WEBHOOKS
+# Add the returned id to wrangler.jsonc under kv_namespaces[]
 ```
-
-Update the `wrangler.jsonc` file with your KV namespace IDs:
-
-```jsonc
-{
-  // ...
-  "kv_namespaces": [
-    {
-      "binding": "PASTES",
-      "id": "your-pastes-namespace-id"
-    },
-    {
-      "binding": "PASTE_RL",
-      "id": "your-ratelimit-namespace-id"
-    },
-    {
-      "binding": "PASTE_LOGS",
-      "id": "your-logs-namespace-id"
-    },
-    {
-      "binding": "ANALYTICS",
-      "id": "your-analytics-namespace-id"
-    },
-    {
-      "binding": "WEBHOOKS",
-      "id": "your-webhooks-namespace-id"
-    }
-  ],
-  // ...
-}
-```
-
-**Note**: If `ANALYTICS` or `WEBHOOKS` namespaces are not configured, the application will gracefully degrade:
-- Without `ANALYTICS`: Analytics tracking will be skipped with a warning log
-- Without `WEBHOOKS`: Webhook features will be disabled automatically
 
 ### Development
 
@@ -729,9 +662,7 @@ npm run deploy
 - `npm run check` - Run TypeScript typechecking
 
 ### Security
-- Generate admin API key: `openssl rand -hex 32`
-- Test admin endpoints: `curl -H "Authorization: Bearer YOUR_KEY" /api/analytics`
-- Review security config: See [SECURITY.md](./SECURITY.md) for complete guide
+- Review security config: See [SECURITY.md](./SECURITY.md) for the full surface area.
 
 ## Testing End-to-End Encryption
 
@@ -810,7 +741,6 @@ This section outlines how to test the encryption features in the application.
 - Server should never receive encryption keys or passwords
 - Decryption should always happen entirely client-side
 - Encryption keys should be properly secured in URL fragments
-- Admin endpoints should require proper authentication
 - CORS should be properly restricted in production
 - Debug information should not leak in production builds
 
@@ -871,32 +801,16 @@ flowchart TD
    - Visible focus indicators that meet WCAG standards
    - Non-color-dependent status indicators
 
-## Future Enhancements
+## Roadmap
 
-1. **Enhanced Security Features**
-   - Two-factor authentication for admin operations
-   - Content scanning for harmful material
-   - Advanced rate limiting strategies
-   - Improved encryption key management
+See [SUPABASE-MIGRATION.md](./SUPABASE-MIGRATION.md) for the in-flight plan. Highlights:
 
-2. **User Experience Improvements**
-   - User accounts (optional)
-   - Paste collections and organization
-   - Enhanced code editor with more features
-   - Collaborative editing capabilities
-   - Improved mobile experience
+- **Phase 4.4d** — OAuth providers (GitHub first, Google second). Email/password is shipped.
+- **Phase 4.5** — Analytics: `paste_stats()` PL/pgSQL function returning a JSONB summary (by language, by hour, encryption adoption) exposed via `GET /api/stats`.
+- **Phase 5** — Remove `KVPasteRepository` and `DualWriteRepository` once the Supabase cutover has soaked long enough.
+- **Phase 6 (idea, not scoped)** — Deno-based Discord bot on Unraid that wraps Pasteriser to bypass Discord's 2000/4000-char message limits and 4 MiB image limits. Server-scoped pastes via `guild_id` + RLS join policies. Bot-side E2EE.
 
-3. **Performance Optimizations**
-   - Implement code splitting for faster loading
-   - Add progressive enhancement for core functionality
-   - Optimize large file handling
-   - Enhance caching strategies
-
-4. **Integrations**
-   - GitHub Gist import/export
-   - VS Code extension
-   - Webhook notifications
-   - Integration with CI/CD systems
+Lower-priority ideas: GitHub Gist import/export, VS Code extension, optional paste collections.
 
 ## Browser Compatibility
 
@@ -920,101 +834,17 @@ Pasteriser implements comprehensive security measures to protect user data and s
 
 ### Security Highlights
 
-#### Authentication & Authorization ✅
-- **Admin API Protection**: All administrative endpoints (`/api/analytics`, `/api/logs`, `/api/webhooks`) require Bearer token authentication
-- **Timing-Safe Validation**: Uses SHA-256 hashing with constant-time comparison to prevent both timing and length-oracle attacks
-- **Paste Deletion Authorization**: Delete operations require a `deleteToken` issued at creation time
-- **Proper Error Handling**: Returns standard HTTP 401/403 responses with appropriate headers
+- **Client-side E2EE** — content encryption (AES-GCM), key derivation (PBKDF2), key in URL fragment. Server sees ciphertext only.
+- **Paste deletion authorization** — `deleteToken` (UUID) issued at creation; required for `DELETE /pastes/:id/delete`. Authenticated users can also delete via RLS-gated direct DB queries.
+- **Supabase Auth + RLS** — when users sign in, paste ownership is enforced by 5 RLS policies on `public.pastes` (SELECT public, SELECT/INSERT/UPDATE/DELETE own). Worker validates JWTs via `supabase.auth.getUser()` before assigning `user_id`.
+- **XSS prevention** — user content rendered via `textContent` only; no `innerHTML` for any user-supplied data.
+- **Content Security Policy** — `script-src 'self'`, no `unsafe-eval`. Web Workers via `worker-src blob:`.
+- **CORS** — explicit allowlist (no wildcard in production with credentials).
+- **Rate limiting** — per-IP cache bounded at 1000 entries with auto-eviction; KV-backed for cross-isolate consistency.
+- **Encrypted localStorage** — sensitive client state encrypted with a per-session master key.
+- **Security headers** — `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` (with preload), `Referrer-Policy`, `Permissions-Policy`.
 
-#### Cross-Site Scripting (XSS) Prevention ✅
-- **Complete HTML Injection Prevention**: All user content uses `textContent` instead of `innerHTML`
-- **Safe DOM Creation**: Programmatic element creation throughout the application
-- **No Template Interpolation**: Zero template string interpolation with user data
-
-#### Cross-Origin Resource Sharing (CORS) Security ✅
-- **Strict Origin Validation**: Explicit allowlist-based CORS configuration
-- **No Wildcard Origins**: Wildcard CORS completely eliminated in production
-- **Development Fallback**: Localhost-only origins allowed in development
-
-#### Content Security Policy (CSP) ✅
-- **Comprehensive Directives**: Covers all resource types with minimal permissions
-- **No unsafe-eval**: `script-src` restricted to `'self'` only; Web Workers load via `worker-src blob:`
-- **No Inline Scripts**: Prevents injection of arbitrary JavaScript
-
-#### Rate Limiting Security ✅
-- **Path-Based Validation**: Prevents bypass via crafted file extensions
-- **Static Asset Protection**: Legitimate assets exempt without security holes
-- **Granular Limits**: Different limits for different operation types
-- **Bounded Memory**: In-memory cache capped at 1000 entries with automatic eviction of expired entries
-
-#### Secure Data Storage ✅
-- **Encrypted localStorage**: AES-GCM encryption for all sensitive data
-- **Master Key Management**: Per-session master keys with secure generation
-- **Backward Compatibility**: Graceful fallback to plaintext storage when needed
-
-#### Information Disclosure Prevention ✅
-- **Production-Safe Logging**: Debug information only shown in development
-- **Generic Error Messages**: Stack traces and sensitive details hidden in production
-- **Development Detection**: Hostname-based environment detection
-
-#### Security Headers ✅
-- **X-Content-Type-Options**: Prevents MIME type sniffing
-- **X-Frame-Options**: Clickjacking protection
-- **Strict-Transport-Security**: HTTPS enforcement with preload
-- **Referrer-Policy**: Controlled referrer information leakage
-- **Permissions-Policy**: Blocks unnecessary browser APIs
-
-### Security Architecture
-
-```mermaid
-graph TB
-    subgraph "Frontend Security"
-        XSS[XSS Prevention]
-        CSP[Content Security Policy]
-        SecureStorage[Encrypted Storage]
-        E2EE[End-to-End Encryption]
-    end
-    
-    subgraph "Backend Security"
-        Auth[Admin Authentication]
-        RateLimit[Rate Limiting]
-        CORS[CORS Protection]
-        Headers[Security Headers]
-    end
-    
-    subgraph "Infrastructure Security"
-        TLS[TLS/HTTPS]
-        Workers[Cloudflare Workers]
-        KV[Secure KV Storage]
-        EdgeSecurity[Edge Security]
-    end
-    
-    XSS --> SecureApp[Secure Application]
-    CSP --> SecureApp
-    SecureStorage --> SecureApp
-    E2EE --> SecureApp
-    
-    Auth --> SecureAPI[Secure API]
-    RateLimit --> SecureAPI
-    CORS --> SecureAPI
-    Headers --> SecureAPI
-    
-    TLS --> SecureInfra[Secure Infrastructure]
-    Workers --> SecureInfra
-    KV --> SecureInfra
-    EdgeSecurity --> SecureInfra
-    
-    SecureApp --> Production[Production Ready]
-    SecureAPI --> Production
-    SecureInfra --> Production
-```
-
-### Security Compliance
-
-- **OWASP Top 10 2021**: Addresses all major web application security risks
-- **Content Security Policy Level 3**: Modern CSP implementation
-- **Secure Headers**: Implements security.txt recommendations
-- **Timing Attack Resistance**: Constant-time operations for sensitive comparisons
+For the threat model, configuration guide, and disclosure policy see [SECURITY.md](./SECURITY.md).
 
 ### Responsible Disclosure
 
@@ -1031,7 +861,7 @@ For more detailed security information, configuration guides, and security check
 
 **Domain**: https://paste.erfi.dev
 **Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
-**Migrations**: 11 applied — see `supabase/migrations/`
+**Migrations**: 12 applied — see `supabase/migrations/`
 
 ### Storage Backend
 
@@ -1050,87 +880,26 @@ Migrated from Cloudflare KV to **Supabase Postgres** in May 2026.
 
 See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey including Phase 3.5 audit fixes (`updated_at` trigger `WHEN` clause, server-side `createClient` opts) and Phase 4 feature work (atomic view RPC, FTS, Realtime, Auth+RLS).
 
-## Recent Updates
+## Changelog
 
-### February 2026 - Security & Code Quality Audit
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), and Supabase Auth + RLS + frontend login/`/my` page (3.2.0).
 
-A comprehensive code review identified and fixed 16 issues across security, correctness, and performance:
-
-#### Critical Fixes
-- **Burn-After-Reading Fix**: Creating a paste no longer increments its read count (previously, fetching the paste for webhook payload triggered a view, causing burn-after-reading pastes to self-destruct on creation)
-- **View Limit Deletion**: Replaced unreliable `setTimeout` with synchronous deletion — Cloudflare Workers may terminate before deferred callbacks fire
-- **Paste Deletion Authorization**: Pastes now require a `deleteToken` (returned at creation time) to delete. Previously, anyone who knew a paste ID could delete it
-
-#### Security Hardening
-- **Webhook Secret Redaction**: Webhook endpoints no longer expose their `secret` field in API responses
-- **SSRF Prevention**: Webhook registration now validates URLs — blocks private IPs, loopback addresses, non-HTTPS, and internal hostnames
-- **Timing-Safe Auth**: Admin auth now hashes both inputs with SHA-256 before constant-time comparison, eliminating the length-oracle side channel
-- **CSP Tightened**: Removed `unsafe-eval` from `script-src`; Web Workers use `worker-src blob:` instead
-
-#### Bug Fixes
-- **AppError Misuse**: Fixed all `AppError` constructor calls in `webhookService.ts` where arguments were swapped (`message` passed as `code`, string `'500'` passed as `message`)
-- **Error Handling Consistency**: API handlers now throw `AppError` and let the global error handler produce responses, eliminating ~100 lines of duplicate try/catch blocks
-
-#### Performance Improvements
-- **N+1 Query Fix**: Recent pastes are now fetched in parallel (`Promise.all`) instead of sequentially; paste IDs are extracted from KV key names instead of doing extra reads
-- **Rate Limiter Bounded Cache**: In-memory rate limit cache is now capped at 1000 entries with automatic eviction of expired entries, preventing unbounded memory growth
-
-#### Code Quality
-- **Static Imports**: All dynamic `await import()` calls replaced with static imports at the module level
-- **Admin Route Helper**: Extracted `adminRoute()` helper to deduplicate admin auth checks (was copy-pasted 4 times)
-- **Config Consistency**: Paste max size in config and Zod schema now both set to 25 MiB (matching Cloudflare KV limit)
-- **Stale Comment Cleanup**: Removed obsolete Phase 4 / password-hash comments throughout the codebase
-- **Unused Code Removal**: Removed dead `handleRateLimit` method from `ApiMiddleware`
-
-### December 2025 - Critical Fixes & Improvements
-
-#### View Limits & Burn After Reading Enhancement
-The view limit system has been completely rewritten for correctness:
-- **Incremental Counting**: Read count now increments on every view, not just the last one
-- **Pre-check Validation**: System validates view limit before serving content
-- **Proper Deletion**: Burn-after-reading and view-limit-reached pastes are properly deleted
-
-#### CORS Security Improvements
-- **Origin Mirroring**: When using wildcard allowlist, mirrors Origin header for credentials
-- **Consistent Headers**: CORS headers applied to all responses, not just preflight
-- **Flexible Configuration**: Supports both wildcard and explicit origin allowlists
-
-#### Analytics Infrastructure
-- **Separated Concerns**: Analytics data now in dedicated `ANALYTICS` KV namespace
-- **Graceful Degradation**: Works without ANALYTICS namespace (logs warning)
-- **30-Day Retention**: Automatic expiration of analytics events
-
-#### Admin Authentication Improvements
-- **Environment Variables**: Reads ADMIN_API_KEY from worker environment
-- **Type Safety**: Full TypeScript support for admin credentials
-
-#### Webhook Auto-Configuration
-- **Smart Detection**: Automatically enables when WEBHOOKS KV exists
-- **Explicit Control**: Can be manually disabled via config if needed
-
-For detailed technical information about these changes, see [CHANGELOG.md](./CHANGELOG.md).
-
-### Verification & Testing
+### Quick verification
 
 ```bash
-# 1. Create a paste and note the deleteToken
-curl -X POST https://paste.erfi.dev/pastes \
+# Create an anonymous paste
+curl -sX POST https://paste.erfi.dev/pastes \
   -H "Content-Type: application/json" \
-  -d '{"content": "test", "viewLimit": 2}'
-# Response includes: { "id": "...", "deleteToken": "..." }
+  -d '{"content":"test","expiresIn":"1h"}'
 
-# 2. Delete a paste (requires token)
-curl -X DELETE "https://paste.erfi.dev/pastes/PASTE_ID/delete?token=DELETE_TOKEN"
+# Search
+curl -s "https://paste.erfi.dev/api/search?q=test"
 
-# 3. Test admin endpoints (requires ADMIN_API_KEY)
-curl -H "Authorization: Bearer YOUR_KEY" https://paste.erfi.dev/api/analytics
-
-# 4. Test burn after reading
-curl -X POST https://paste.erfi.dev/pastes \
-  -H "Content-Type: application/json" \
-  -d '{"content": "secret", "burnAfterReading": true}'
-# View once, then second view returns 404
+# Recent
+curl -s "https://paste.erfi.dev/api/recent?limit=5"
 ```
+
+For end-to-end verification of the live system see the `test:smoke`, `test:race`, `test:realtime`, `test:rls`, and `test:all-live` npm scripts.
 
 ## License
 

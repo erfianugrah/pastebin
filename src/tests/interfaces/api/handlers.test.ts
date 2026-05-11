@@ -207,7 +207,6 @@ describe('ApiHandlers', () => {
 			const paste = makePaste('abc123');
 			vi.mocked(mockGetQuery.executeSummary).mockResolvedValue({
 				paste,
-				requiresPassword: false,
 				isE2EEncrypted: false,
 			});
 

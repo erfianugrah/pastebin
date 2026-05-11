@@ -28,7 +28,7 @@ if (!title.includes('Pasteriser')) {
 
 // Default description
 if (!description) {
-  description = "A modern, secure code sharing service with syntax highlighting, password protection, and burn-after-reading functionality";
+  description = "A code-sharing service with syntax highlighting, end-to-end encryption, burn-after-reading, and full-text search.";
 }
 
 // Script to set the theme before page renders to avoid flashing
@@ -79,7 +79,7 @@ const themeScript = `
 		<title>{title}</title>
 		<meta name="title" content={title} />
 		<meta name="description" content={description} />
-		<meta name="keywords" content="pasteriser, code sharing, code snippet, syntax highlighting, secure paste, burn after reading, password protection, encryption, end-to-end encryption, developer tools" />
+		<meta name="keywords" content="pasteriser, code sharing, code snippet, syntax highlighting, secure paste, burn after reading, end-to-end encryption, full-text search, supabase, developer tools" />
 		<meta name="author" content="Erfi Anugrah" />
 		<link rel="canonical" href={Astro.url.href} />
 		
@@ -132,11 +132,12 @@ const themeScript = `
 					"priceCurrency": "USD"
 				},
 				"featureList": [
-					"Syntax highlighting for 30+ languages",
-					"Password protection",
-					"End-to-end encryption",
+					"Syntax highlighting for 40+ languages",
+					"Client-side end-to-end encryption (AES-GCM)",
 					"Burn after reading",
-					"Expiration options"
+					"Expiration options (1 hour to 1 year)",
+					"Full-text search",
+					"Live recent feed via Supabase Realtime"
 				]
 			}
 		</script>

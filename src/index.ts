@@ -304,7 +304,7 @@ app.get('/recent', async (c) => {
 	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
 });
 
-// Auth + user pages (Phase 4.4c)
+// ---- Auth + user pages ----
 app.get('/login', async (c) => {
 	const url = new URL(c.req.url);
 	const req = new Request(url.origin + '/login/index.html', c.req.raw);

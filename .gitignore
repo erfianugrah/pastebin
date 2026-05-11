@@ -172,5 +172,9 @@ dist
 .wrangler/
 gemini.md
 
+# Test outputs
+test-results/
+playwright-report/
+
 *prism-components*
 .astro/
