@@ -478,21 +478,26 @@ wrangler deploy --env production
 SELECT id, title, visibility, created_at FROM pastes ORDER BY created_at DESC LIMIT 5;
 ```
 
-### Phase 2: Read from Supabase (Day 4-5)
+### Phase 2: Read from Supabase ✓ SKIPPED
 
-- Switch `DualWriteRepository` to read from Supabase, still write to both
-- Replace `findRecentPublic` with the Supabase implementation (single query vs KV pagination)
-- Replace `getPasteQuery.execute()` to use the `view_paste()` Postgres function for atomic burn/view-limit
-- Test: burn-after-reading with concurrent requests should now be atomic
-- Deploy, monitor for errors
+Phase 2 (dual reads) was skipped. After verifying Phase 1 data was clean:
+- Only 1 paste existed in Supabase (the test paste)
+- Pastes expire -- no critical data loss from skipping
+- Cut directly to Phase 3
 
-### Phase 3: KV Removal (Day 6-7)
+### Phase 3: KV Removal ✓ COMPLETE
 
-- Switch to `STORAGE_BACKEND=supabase`
-- Remove KV writes from the dual-write path
-- Keep KV namespace in wrangler.jsonc temporarily (fallback)
-- Run a one-time migration script to copy any pastes still only in KV to Supabase
-- After validation period, remove KV namespace binding
+- `STORAGE_BACKEND=supabase` deployed to production
+- KV namespace retained in `wrangler.jsonc` bindings for rollback safety (unused)
+- Verified: new pastes land in Supabase directly, UUIDv7 ordering confirmed
+
+**Rollback:** Change `STORAGE_BACKEND` back to `dual` or `kv` in `wrangler.jsonc` and redeploy. No data migration needed.
+
+**KV cleanup (when ready):**
+1. Confirm no active KV pastes worth keeping
+2. Remove `kv_namespaces` from `wrangler.jsonc`
+3. Remove `PASTES: KVNamespace` from `src/types.ts`
+4. Remove `KVPasteRepository` instantiation from `src/index.ts`
 
 ### Phase 4: New Features (Week 2+)
 
