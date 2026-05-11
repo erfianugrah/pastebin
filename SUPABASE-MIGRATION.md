@@ -1064,22 +1064,40 @@ pattern against Supabase projects. Citations:
 
 **Mitigation order (tightest ROI first):**
 
+**Design choice: no CAPTCHA.** CAPTCHAs are user-hostile, can be
+defeated by paid solving services for ~$0.001 per solve, and the
+Cloudflare-specific tracking is something we want to avoid. The
+plan below achieves equivalent or better protection through other
+means.
+
+> **Filed for reference (not adopted):** Supabase has native support
+> for Cloudflare Turnstile and hCaptcha via Dashboard → Authentication
+> → Bot and Abuse Protection. Frontend gets a `captchaToken` from the
+> widget, passes it to `supabase.auth.signUp({ email, password,
+> options: { captchaToken } })`. Server rejects with HTTP 500
+> `captcha verification process failed` if missing. Multiple blog
+> posts (Sentinel, Discury) cite 92% bot-signup reduction in field
+> data. If the OAuth-only + honeypot + Worker-gate stack ever proves
+> insufficient, hCaptcha (not Cloudflare-owned) is the drop-in option
+> — same Supabase integration path, no CF tracking.
+
 | Priority | Action | Why first | Effort |
 |----------|--------|-----------|--------|
-| 1 | **Cloudflare Turnstile** on `/signup` form + Supabase Auth Bot and Abuse Protection. Supabase has native integration (Dashboard → Auth → Bot and Abuse Protection → CAPTCHA secret). | Highest ROI per Reddit + Supabase docs. Eliminates 92% of automated abuse per Sentinel/Discury surveys. | 1-2h |
-| 2 | **Cap anonymous paste size** (e.g., 64 KiB anon, 1 MiB authenticated, 25 MiB never). | Storage flooding is the cheapest attack and the most expensive to recover from. | 10 min |
-| 3 | **Configure custom SMTP** (Resend / Postmark) before any production email volume. | Inbuilt 4/hour is unusable. Even disabling email confirmation entirely is safer than relying on it. | 30 min + provider account |
-| 4 | **Tighten Supabase Auth rate limits** via Management API. Force conservative defaults (10 signups/hour/IP, 30 token refreshes/hour/IP). | Mitigation #2333 says config is buggy but the burst cap helps at scale. | 5 min |
-| 5 | **Move signup behind the Worker** — instead of browser calling `supabase.auth.signUp()` direct, browser POSTs to `/api/auth/signup`. Worker validates Turnstile token, checks Cloudflare bot-score, then calls Supabase Auth admin API with `Sb-Forwarded-For` header so per-IP limits work correctly. | Worker rate limit kicks in *before* Supabase Auth gets the request, doubling the gate. | 2-3h |
-| 6 | **PostgREST-side per-IP rate limit** for browser-direct paths (`/my` reads, Realtime subscribes). `private.rate_limits` table + `before insert/update/delete` triggers per `supabase/guides/api/securing-your-api.md`. | Defense in depth — Worker rate limit doesn't gate direct DB queries. | 1h |
-| 7 | **Cloudflare WAF rules** — block IPs with abusive paste-creation patterns (e.g., > 5 pastes/min, > 100 KiB body size and burst-y). | Stops obvious bots at the edge before they reach the Worker. | 30 min |
-| 8 | **Per-account daily quota** tracked in Postgres — `auth.users` daily-bytes column updated by a trigger on `pastes` insert. | Catches the rare case where a single legitimate-looking user fills the DB. | 2h |
+| 1 | **OAuth-only signup** — disable email/password signup, force GitHub (primary) + optionally Google. Pattern from `acme-corp/src/app/login/page.tsx`. Disable email confirmation in Supabase Dashboard. | 95% of bot signup traffic disappears — bots can't easily mass-create GitHub accounts. Sidesteps every email-rate-limit bug. This is Phase 4.4d folded into 4.7. | 1-2h |
+| 2 | **Cap anonymous paste size to 64 KiB** in the Zod schema. 1 MiB for authenticated users. 25 MiB never. | Storage flooding is the cheapest attack and most expensive to recover from. | 10 min |
+| 3 | **Move signup behind the Worker** (`/api/auth/signup`) — browser POSTs to Worker, Worker enforces per-IP rate limit and IP/UA fingerprint heuristics, then calls Supabase Auth admin API with `Sb-Forwarded-For` header so its per-IP limits work correctly. | Defends against upstream Supabase Auth bugs (#2333 not enforcing config, #1236 failed signups counting). Worker rate limit doubles the gate. | 2-3h |
+| 4 | **Honeypot field + timing check** in `AuthForm.tsx` and `PasteForm.tsx`. Invisible CSS-hidden `<input name="bait">` that bots fill; min-time-to-submit ≥ 1s. Reject submissions that fail either check. | Stops basic scripted bots without full browser emulation. Zero UX cost. | 30 min |
+| 5 | **Tighten Supabase Auth rate limits** via Management API. Conservative caps (10 signups/hour/IP, 30 token refreshes/hour/IP). | Belt-and-suspenders even with Auth bugs. | 5 min |
+| 6 | **Custom SMTP via Resend** for password reset / future transactional email — only relevant once email auth is re-enabled or for password-reset on OAuth-linked accounts. | Required eventually; inbuilt 4/hour is unusable. | 30 min + account |
+| 7 | **PostgREST-side per-IP rate limit** for browser-direct paths (`/my` reads, Realtime subscribes). `private.rate_limits` table + `before insert/update/delete` triggers per `supabase/guides/api/securing-your-api.md`. | Defense in depth — Worker rate limit doesn't gate direct DB queries. | 1h |
+| 8 | **Per-account daily storage quota** in Postgres — `pastes` insert trigger that sums bytes per `user_id` and rejects if over the daily cap. | Catches the rare case where a single legitimate-looking user fills the DB. | 2h |
 
-**Quick wins to ship today (~half a day for #1-4):** removes the
-most realistic abuse vectors. After this, an attacker would need to
-solve Turnstile per request, exhaust a custom-SMTP quota that's
-typically 10,000+/day, and only be able to fill the DB with ≤ 1 MiB
-pastes (and only by signing up first).
+**Quick wins to ship today (~3h for #1, #2, #5):** removes the
+most realistic abuse vectors. After:
+- Bot signups blocked by GitHub-account-creation cost (~minutes + phone verification per account)
+- Storage flooding capped at 64 KiB per anonymous paste
+- Email rate limits inapplicable because email signup is disabled
+- Worker rate limit still gates anonymous paste creation
 
 **Live verification (would add `npm run test:abuse`):**
 
