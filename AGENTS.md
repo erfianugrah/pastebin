@@ -18,17 +18,15 @@ Two separate packages with **independent `node_modules`**:
 - **Worker entry**: `src/index.ts` — Hono app, all routing, serves Astro static assets via `ASSETS` binding
 - **Worker config**: `wrangler.jsonc` — `run_worker_first: true`, assets from `./astro/dist`
 - **DDD layers** in `src/`: `domain/` → `application/` → `infrastructure/` → `interfaces/`
-- **Storage abstraction**: `PasteRepository` interface (8 methods: `save`, `findById`, `view`, `delete`, `findRecentPublic`, `searchPublic`, `resolveSlug`, `saveSlug`), three implementations: `KVPasteRepository`, `SupabasePasteRepository`, `DualWriteRepository` — selected via `STORAGE_BACKEND` env var
+- **Storage abstraction**: `PasteRepository` interface (9 methods: `save`, `findById`, `view`, `delete`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`). One implementation: `SupabasePasteRepository`. KV bindings + `DualWriteRepository` removed in Phase 5.
 - **Env bindings** (`src/types.ts`):
-  - `PASTES: KVNamespace` — retained for rollback, unused with current `STORAGE_BACKEND=supabase`
   - `ASSETS: Fetcher` — Astro static assets
   - `SUPABASE_URL: string` — project URL (var in `wrangler.jsonc`)
-  - `SUPABASE_SECRET_KEY: string` — `sb_secret_...` key (Wrangler secret, never in source)
-  - `STORAGE_BACKEND?: 'kv' | 'supabase' | 'dual'` — defaults to `supabase` in production
+  - `SUPABASE_SECRET_KEY: string` — `sb_secret_...` (Wrangler secret, never in source)
 
 ## Supabase migrations
 
-- All schema in `supabase/migrations/` — 12 files, applied to `dewddkcmwrzbpynylyhg`
+- All schema in `supabase/migrations/` — 13 files, applied to `dewddkcmwrzbpynylyhg`
 - Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema and Phase 3.5 audit fixes)
 - `set_updated_at` trigger has a `WHEN (OLD.x IS DISTINCT FROM NEW.x)` clause — required because `upsert()` sends all columns and `UPDATE OF col` fires on column presence, not value change
 - `createClient()` always passes `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }` — Supabase-recommended for server-side contexts

@@ -145,7 +145,7 @@ The application is structured in four primary layers following Domain-Driven Des
    - Factories for domain object creation
 
 3. **Infrastructure Layer**: Technical capabilities
-   - Supabase Postgres storage implementation (with KV fallback via `STORAGE_BACKEND` env var)
+   - Supabase Postgres storage backend (KV removed in Phase 5)
    - Logging services
    - Security services
    - Error handling
@@ -577,8 +577,7 @@ The Worker needs three things to talk to Supabase:
 ```jsonc
 {
   "vars": {
-    "SUPABASE_URL": "https://<your-project-ref>.supabase.co",
-    "STORAGE_BACKEND": "supabase"
+    "SUPABASE_URL": "https://<your-project-ref>.supabase.co"
   }
 }
 ```
@@ -600,16 +599,7 @@ PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 
 The publishable key is safe to ship in the bundle; it represents the `anon` Postgres role and is RLS-gated.
 
-### KV (rollback only)
-
-The `PASTES` KV binding is retained in `wrangler.jsonc` solely as a rollback path. With `STORAGE_BACKEND=supabase` (the default), no code reads from it. Set `STORAGE_BACKEND=kv` and redeploy to revert to KV-only mode if Supabase has an outage.
-
-A fresh deployment doesn't need to populate KV. Create one empty namespace and bind it:
-
-```bash
-wrangler kv:namespace create PASTES
-# Add the returned id to wrangler.jsonc under kv_namespaces[]
-```
+Cloudflare KV is no longer used — Phase 5 removed the binding, the namespace, and all KV code. Supabase Postgres is the sole storage backend.
 
 ### Development
 
@@ -806,8 +796,9 @@ flowchart TD
 See [SUPABASE-MIGRATION.md](./SUPABASE-MIGRATION.md) for the in-flight plan. Highlights:
 
 - **Phase 4.4d** — OAuth providers (GitHub first, Google second). Email/password is shipped.
-- **Phase 4.5** — Analytics: `paste_stats()` PL/pgSQL function returning a JSONB summary (by language, by hour, encryption adoption) exposed via `GET /api/stats`.
-- **Phase 5** — Remove `KVPasteRepository` and `DualWriteRepository` once the Supabase cutover has soaked long enough.
+- **Phase 4.5** — Analytics: `paste_stats()` PL/pgSQL function returning a JSONB summary (by language, by hour, encryption adoption) exposed via `GET /api/stats`. ✓ Shipped.
+- **Phase 4.7** — Rate-limit hardening at the Supabase layer (Auth signup throttling, paste size caps for anon, Cloudflare Turnstile CAPTCHA, custom SMTP). Worker has in-memory per-IP throttling already; gaps are on the browser-direct paths (Auth, Realtime, RLS-gated reads).
+- **Phase 5** — Remove `KVPasteRepository`, `DualWriteRepository`, and the Cloudflare KV namespace itself. ✓ Shipped.
 - **Phase 6 (idea, not scoped)** — Deno-based Discord bot on Unraid that wraps Pasteriser to bypass Discord's 2000/4000-char message limits and 4 MiB image limits. Server-scoped pastes via `guild_id` + RLS join policies. Bot-side E2EE.
 
 Lower-priority ideas: GitHub Gist import/export, VS Code extension, optional paste collections.
@@ -840,7 +831,7 @@ Pasteriser implements comprehensive security measures to protect user data and s
 - **XSS prevention** — user content rendered via `textContent` only; no `innerHTML` for any user-supplied data.
 - **Content Security Policy** — `script-src 'self'`, no `unsafe-eval`. Web Workers via `worker-src blob:`.
 - **CORS** — explicit allowlist (no wildcard in production with credentials).
-- **Rate limiting** — per-IP cache bounded at 1000 entries with auto-eviction; KV-backed for cross-isolate consistency.
+- **Rate limiting** — per-IP cache bounded at 1000 entries with auto-eviction.
 - **Encrypted localStorage** — sensitive client state encrypted with a per-session master key.
 - **Security headers** — `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` (with preload), `Referrer-Policy`, `Permissions-Policy`.
 
@@ -861,28 +852,28 @@ For more detailed security information, configuration guides, and security check
 
 **Domain**: https://paste.erfi.dev
 **Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
-**Migrations**: 12 applied — see `supabase/migrations/`
+**Migrations**: 13 applied — see `supabase/migrations/`
 
 ### Storage Backend
 
-Migrated from Cloudflare KV to **Supabase Postgres** in May 2026.
+Migrated from Cloudflare KV to **Supabase Postgres** in May 2026. KV was removed entirely in Phase 5.
 
 | What | Where | Notes |
 |------|-------|-------|
 | Paste data | Supabase `pastes` table | RLS enabled (6 policies: 1 anon + 5 authenticated) |
 | Vanity slugs | Supabase `slugs` table | RLS enabled (non-expired slugs visible to `anon`) |
 | Atomic view | `view_paste(uuid)` RPC | `SELECT ... FOR UPDATE` row lock — fixes burn-after-reading race |
-| Search | `search_vector` (GIN-indexed tsvector) | `websearch_to_tsquery` semantics via `/api/search` |
+| Search | `search_vector` (GIN-indexed tsvector) | `websearch_to_tsquery` via `/api/search` |
+| Stats | `paste_stats()` RPC | jsonb summary via `/api/stats`; cached 5min + SWR 15min |
 | Live feed | Realtime broadcast on `recent:public` | `AFTER INSERT` trigger; private channel; RLS on `realtime.messages` |
 | User accounts | Supabase Auth + JWT verification | Worker validates `Authorization: Bearer <jwt>`; `/my` page uses RLS |
 | Expiration | pg_cron jobs | Expired pastes every 5min, expired slugs daily at 03:00 |
-| KV namespace | Retained in bindings for rollback | Unused with `STORAGE_BACKEND=supabase` |
 
-See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey including Phase 3.5 audit fixes (`updated_at` trigger `WHEN` clause, server-side `createClient` opts) and Phase 4 feature work (atomic view RPC, FTS, Realtime, Auth+RLS).
+See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey: Phase 0-3 (KV→Supabase cutover), 3.5 (audit fixes), 4.1-4.5 (feature work), 5 (KV removal).
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), and Supabase Auth + RLS + frontend login/`/my` page (3.2.0).
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), and `paste_stats()` RPC + complete KV removal (3.3.0).
 
 ### Quick verification
 
@@ -897,6 +888,9 @@ curl -s "https://paste.erfi.dev/api/search?q=test"
 
 # Recent
 curl -s "https://paste.erfi.dev/api/recent?limit=5"
+
+# Aggregate stats
+curl -s "https://paste.erfi.dev/api/stats"
 ```
 
 For end-to-end verification of the live system see the `test:smoke`, `test:race`, `test:realtime`, `test:rls`, and `test:all-live` npm scripts.

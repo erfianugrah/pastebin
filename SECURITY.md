@@ -94,10 +94,27 @@ The publishable key is safe to ship — it maps to the `anon` Postgres role and 
 
 ### Rate limiting
 
+**Worker-level (current):**
+
 - Per-IP cache, bounded at 1000 entries with auto-eviction of expired entries (prevents unbounded growth).
-- KV-backed for cross-isolate consistency.
 - Stricter limits for write paths (10/min for `POST /pastes`) than reads (60/min general).
 - Path-based bypass-prevention — static assets exempt by extension allowlist, not by URL prefix that user content could spoof.
+- **Limitation:** in-memory cache is per Cloudflare isolate. Across many CF colos a determined attacker can sustain higher RPS than the per-IP limit suggests. Worker rate limiting is best-effort, not a hard cap.
+
+**Supabase-level (default):**
+
+- `/auth/v1/token` (sign-in + refresh): per-IP, token-bucket, 30-request capacity refilling at the project rate. Customizable via Dashboard → Auth → Rate Limits.
+- `/auth/v1/signup`: per-IP rate for anonymous signups; project-wide email-rate cap for confirmation emails (inbuilt SMTP defaults to ~4/hour).
+- Realtime: project-wide caps (Free: 200 concurrent WS connections, 100 messages/sec, 100 channel joins/sec). Exceeding returns `too_many_connections` / `too_many_joins` on the WS.
+- REST / PostgREST: no built-in rate limit on read endpoints; relies on Cloudflare gateway in front.
+
+**Known gaps (planned for Phase 4.7):**
+
+- No Cloudflare Turnstile CAPTCHA on `/signup` or `POST /pastes` — Supabase docs explicitly recommend this for anon flows.
+- Paste size cap is 25 MiB for everyone, including anonymous — a multi-IP attacker can fill the 500 MB free Supabase tier with ~20 requests.
+- No custom SMTP — inbuilt SMTP cap means email confirmations can be exhausted by a single attacker within minutes.
+
+See `SUPABASE-MIGRATION.md` "Phase 4.7" for the full mitigation roadmap.
 
 ### Client-side encryption
 

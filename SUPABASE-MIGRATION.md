@@ -967,12 +967,13 @@ the sign-in method.
 **Other providers worth considering:** Google (broadest reach),
 Magic Link / OTP (no password to manage, low-friction).
 
-#### 4.5: Analytics (planned)
+#### 4.5: Analytics ✓ COMPLETE
 
-**Goal:** Lightweight aggregate stats over public pastes.
+Migration `20260511150017_add_paste_stats.sql` adds the function;
+exposed via `GET /api/stats` (edge-cached 5min + SWR 15min). Empty-state
+verified after the Phase 5 wipe: `totalPublic: 0`, all arrays/objects empty.
 
-**Implementation:** Postgres function `paste_stats()` returning a
-jsonb object with three aggregates:
+Postgres function `paste_stats()` returns a jsonb summary with five aggregates:
 
 ```sql
 CREATE OR REPLACE FUNCTION public.paste_stats()
@@ -1018,8 +1019,60 @@ flow needed, lets the planner inline if useful.
 - Optional `/stats` Astro page with charts (skip first iteration; the
   JSON endpoint is the deliverable)
 
-**Tests:** 1 unit test for the repo method (mocked RPC), 1 smoke
-test that hits `/api/stats` and asserts shape.
+**Tests:** 3 repo tests (mocked RPC: happy path, error, non-object data) +
+2 handler tests (200 with payload, 503 when null).
+
+#### 4.7: Rate-limit hardening (planned, not yet started)
+
+**Why now:** Pasteriser exposes both Worker-mediated paths
+(`POST /pastes`, `GET /api/recent`, etc.) AND browser-direct paths
+(Supabase Auth endpoints, Realtime subscriptions, `/my` page queries).
+The Worker has an in-memory per-IP rate limit (10/min on POST,
+60/min general) but it's per-isolate; the browser-direct paths rely
+entirely on Supabase's defaults.
+
+**Concrete gaps:**
+
+1. **Storage exhaustion via large pastes.** Schema allows 25 MiB
+   per paste. A multi-IP attacker can fill the 500 MB Supabase free
+   tier in 20 requests.
+2. **Email signup lockout.** Supabase inbuilt SMTP defaults to
+   ~4 emails/hour project-wide. One attacker spamming `/signup`
+   locks out all other email-confirmation signups for an hour.
+3. **Realtime connection exhaustion.** Free tier caps at 200
+   concurrent WS connections project-wide. Visitor 201+ on `/recent`
+   gets rejected.
+4. **No CAPTCHA.** Supabase docs explicitly recommend
+   Cloudflare Turnstile for anonymous sign-ins
+   (`auth-anonymous.md:247`).
+
+**Mitigation roadmap (recommended order):**
+
+| Priority | Action | Where | Effort |
+|----------|--------|-------|--------|
+| HIGH | Tighten Supabase Auth rate limits via dashboard / Management API | Auth → Rate Limits | 5 min |
+| HIGH | Cap paste size lower for anonymous (e.g., 1 MiB; 25 MiB for signed-in) | `CreatePasteCommand` Zod schema | 10 min |
+| HIGH | Cloudflare Turnstile on `/signup` and `POST /pastes` | Astro form + Worker handler | 1-2h |
+| MED | Configure custom SMTP (Resend / Postmark) for production email volume | Auth → SMTP | 30 min + provider account |
+| MED | PostgREST-side per-IP rate-limit function backed by `private.rate_limits` table for browser-direct paths (see `supabase/guides/api/securing-your-api.md`) | New migration + trigger | 1h |
+| LOW | Cloudflare WAF rules: block IPs with abusive paste-creation patterns | CF dashboard | 30 min |
+| LOW | Per-IP storage quota (count + bytes) tracked in Postgres + enforced in `view_paste`-style RPC | New migration | 2h |
+
+**Estimated effort to ship the HIGH-priority bundle:** half a day.
+That removes the most realistic abuse vectors (storage flooding,
+signup lockout) without touching Supabase plan tiers.
+
+For the live verification we'd add a `test:rate-limit` script that:
+
+- Hammers `POST /pastes` from a single IP and asserts the Worker
+  returns 429 after the quota
+- Tries `/auth/v1/signup` 5 times in a row and asserts the second
+  one is rate-limited per project config
+- Attempts 250 simultaneous Realtime subscribes and asserts
+  `too_many_connections` errors are surfaced
+
+This phase is **scoped but not committed**. Add to the plan when
+ready to harden for non-personal traffic.
 
 #### 4.6: Expiration (already done)
 
@@ -1029,24 +1082,30 @@ automatic expiry AND queryable expired-but-not-yet-cleaned data.
 
 ---
 
-## Phase 5: KV removal (planned)
+## Phase 5: KV removal ✓ COMPLETE
 
-After a confidence period running on Supabase, remove the KV bindings
-and `KVPasteRepository` for good. Concretely:
+Executed in one commit (see `94620f6 feat(phase-4.5+5)`). Done:
 
-1. Confirm no active KV pastes worth keeping (none expected; TTL was
-   matched on creation).
-2. Remove `kv_namespaces` block from `wrangler.jsonc`.
-3. Remove `PASTES: KVNamespace` from `src/types.ts`.
-4. Remove `KVPasteRepository` instantiation from `src/index.ts`.
-5. Delete `src/infrastructure/storage/kvPasteRepository.ts` +
-   its test file.
-6. Delete `DualWriteRepository` + its test file (only useful during
-   the KV → Supabase migration; `STORAGE_BACKEND=dual` is no
-   longer a meaningful mode).
-7. Simplify the `STORAGE_BACKEND` env var or remove it entirely.
+1. ✓ Wiped 81 paste rows from Supabase (confirmed clean slate for
+   future testing).
+2. ✓ Deleted the Cloudflare KV namespace `PASTES` (id
+   `7ab6cc1ce0744c119c50554173707600`) via `wrangler kv namespace delete`.
+3. ✓ Removed `kv_namespaces` block from `wrangler.jsonc` (top-level
+   and production env) and the `STORAGE_BACKEND` var (no longer needed).
+4. ✓ Removed `PASTES: KVNamespace` and `STORAGE_BACKEND` from
+   `src/types.ts`.
+5. ✓ Removed `KVPasteRepository` + `DualWriteRepository` imports
+   and instantiation from `src/index.ts`. The Worker now instantiates
+   `SupabasePasteRepository` directly with no backend selector.
+6. ✓ Deleted `src/infrastructure/storage/kvPasteRepository.ts`,
+   `dualWriteRepository.ts`, and both test files.
+7. ✓ Deleted `src/tests/integration/routes.test.ts` (MockKV-coupled;
+   every scenario it covered is now covered by the live smoke +
+   RLS + race tests against production).
 
-Net change: -300 LOC, simpler env. No user-visible change.
+**Net change:** -926 lines across 20 files. No user-visible change.
+After the wipe, `paste_stats()` returns `totalPublic: 0` and the
+recent feed renders the empty state.
 
 ---
 
@@ -1126,24 +1185,24 @@ so the design notes don't get lost.
 
 ## What Changed, What Didn't
 
-This table tracks cumulative impact across all phases (0 through 4.4):
+This table tracks cumulative impact across all phases (0 through 5):
 
-| Layer | Changed? | Details |
-|-------|----------|---------|
-| **Domain model** (`paste.ts`) | Yes (Phase 4.4) | Added `userId?: string` field for `auth.users(id)` linkage. Untouched through Phases 0-4.3. |
-| **Repository interface** | Yes (Phase 4) | Grew from 6 to 8 methods: `save`, `findById`, `view` (4.1), `delete`, `findRecentPublic`, `searchPublic` (4.2), `resolveSlug`, `saveSlug`. Atomicity guarantees now per-backend. |
-| **Application commands/queries** | Yes (Phase 4) | `CreatePasteCommand.execute(params, opts: { userId? })` for auth. New `SearchPastesQuery`. `GetPasteQuery.execute()` collapsed to a 3-line wrapper since orchestration moved into the repo. |
-| **Factory** (`pasteFactory.ts`) | Yes (Phase 4.4) | `fromData` now propagates `userId`. |
-| **Infrastructure/storage** | Yes | Added `SupabasePasteRepository`, `DualWriteRepository`. `KVPasteRepository` retained for rollback. |
-| **Infrastructure/auth** | Yes (Phase 4.4) | New `AuthService.getUserIdFromRequest()` validates `Authorization: Bearer <jwt>` via `supabase.auth.getUser()`. |
-| **Entry point** (`index.ts`) | Yes | Feature-flag logic, DI of all services in Hono context, new routes for `/login`, `/signup`, `/my`, `/api/search`. |
-| **Types** (`types.ts`) | Yes | `Env` gained `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STORAGE_BACKEND`. |
-| **Frontend** (Astro/React) | Yes (Phase 4.3-4.4) | New: `UserMenu`, `AuthForm`, `MyPastes`, `useAuth` hook, supabase client singleton. Updated: `Header` (UserMenu), `RecentPastes` (Realtime subscription), `PasteForm` (sends JWT when signed in). |
-| **wrangler.jsonc** | Yes | `SUPABASE_URL`, `STORAGE_BACKEND` vars. `SUPABASE_SECRET_KEY` as Wrangler secret. |
-| **astro/.env** | Yes (Phase 4.3-4.4) | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY` baked into client bundle. |
-| **Unit tests** | Yes | 151 total (was 0 baseline → 113 through Phase 1 → 135 through Phase 4.3 → 151 through 4.4). |
-| **Live test scripts** | Yes (Phases 3.5-4.4) | `test:smoke`, `test:race`, `test:realtime`, `test:rls`, `test:all-live` orchestrator. |
-| **Migrations** | Yes | 12 files: 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3) + authenticated RLS (4.4a). |
+| Layer | Final state | Trajectory |
+|-------|-------------|------------|
+| **Domain model** (`paste.ts`) | `Paste` + `PasteId` + `ExpirationPolicy` value objects. Added `userId?: string` field in Phase 4.4 for `auth.users(id)` linkage. | Untouched in Phases 0-4.3; one field added in 4.4. |
+| **Repository interface** | 9 methods: `save`, `findById`, `view`, `delete`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`. | Was 6 in Phase 0; +1 (`view`) in 4.1, +1 (`searchPublic`) in 4.2, +1 (`getPublicStats`) in 4.5. |
+| **Application commands/queries** | `CreatePasteCommand.execute(params, opts: { userId? })`, `GetPasteQuery`, `GetRecentPastesQuery`, `SearchPastesQuery`, `GetPasteStatsQuery`, `DeletePasteCommand`. | `GetPasteQuery.execute()` collapsed to a 3-line wrapper in 4.1 since orchestration moved to the repo. |
+| **Factory** (`pasteFactory.ts`) | Round-trips `userId`. | Phase 4.4. |
+| **Infrastructure/storage** | `SupabasePasteRepository` only. `KVPasteRepository` + `DualWriteRepository` deleted in Phase 5. | Was KV + Supabase + DualWrite in Phases 1-4; consolidated in Phase 5. |
+| **Infrastructure/auth** | `AuthService.getUserIdFromRequest()` validates JWTs via `supabase.auth.getUser()`. | Phase 4.4b. |
+| **Entry point** (`index.ts`) | DI of all services in Hono context. Routes for paste CRUD, `/api/recent`, `/api/search`, `/api/stats`, `/login`, `/signup`, `/my`. | `STORAGE_BACKEND` branching removed in Phase 5. |
+| **Types** (`types.ts`) | `Env`: `ASSETS`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`. | `PASTES`/`STORAGE_BACKEND` removed in Phase 5. |
+| **Frontend** (Astro/React) | `UserMenu`, `AuthForm`, `MyPastes`, `RecentPastes` (Realtime), `PasteForm` (sends JWT when signed in), `useAuth` hook, supabase client singleton. | Phases 4.3-4.4. |
+| **wrangler.jsonc** | `SUPABASE_URL` var only. `SUPABASE_SECRET_KEY` as Wrangler secret. | KV bindings + `STORAGE_BACKEND` var removed in Phase 5. |
+| **astro/.env** | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`. | Phases 4.3-4.4. |
+| **Unit tests** | 109 passing. | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 (-28 KV/dual tests, -17 integration tests, +5 stats tests). |
+| **Live test scripts** | `test:smoke`, `test:race`, `test:realtime`, `test:rls`, `test:all-live`. | Phases 3.5-4.4. |
+| **Migrations** | 13 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3) + authenticated RLS (4.4a) + `paste_stats()` (4.5). |
 
 ---
 
@@ -1161,7 +1220,7 @@ This table tracks cumulative impact across all phases (0 through 4.4):
 | **Storage**        | Not needed (paste content in Postgres `text` column; 25 MiB limit acceptable) | N/A |
 | **Edge Functions** | Not needed (Cloudflare Worker is the compute layer) | N/A |
 | **supabase-js**    | From a Cloudflare Worker (`service_role`) and from the browser (`anon` + user JWT). Two-client testing pattern matches official docs. | ✓ Phases 1-4 |
-| **Aggregations**   | `paste_stats()` function with `jsonb_build_object` returning language/hour/encryption breakdowns | ⏳ 4.5 |
+| **Aggregations**   | `paste_stats()` SQL function with `jsonb_build_object` returning total/language/hour/encryption/generatedAt. Exposed via `GET /api/stats`. | ✓ Phase 4.5 |
 
 ---
 

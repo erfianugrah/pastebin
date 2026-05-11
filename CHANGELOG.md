@@ -1,5 +1,45 @@
 # Changelog
 
+## [3.3.0] - 2026-05-11
+
+### Database
+
+- **`paste_stats()` function** (migration `20260511150017_add_paste_stats.sql`): `LANGUAGE sql STABLE`, `SECURITY DEFINER`, `SET search_path = ''`. Returns a jsonb summary of non-expired public pastes: `totalPublic`, `byLanguage` (top 20), `byHour` (last 48h), `encryption` (version → count), `generatedAt`. Exposed via `GET /api/stats`.
+
+### Application
+
+- New `GetPasteStatsQuery` and `PasteRepository.getPublicStats()` method.
+- `GET /api/stats` endpoint (edge-cached 5min + SWR 15min). Returns 200 with the jsonb payload or 503 when the repo can't compute aggregates.
+
+### Phase 5: KV removal
+
+- **Database wipe** — Deleted all 81 paste rows (clean slate for future testing). Slugs cascade automatically via FK.
+- **Cloudflare KV** — Deleted the `PASTES` namespace from the account via `wrangler kv namespace delete`.
+- **`wrangler.jsonc`** — Removed `kv_namespaces[]` blocks (top-level and production env) and the `STORAGE_BACKEND` var.
+- **`src/types.ts`** — Removed `PASTES: KVNamespace` and `STORAGE_BACKEND` from the `Env` interface.
+- **`src/index.ts`** — Removed `KVPasteRepository` and `DualWriteRepository` imports + instantiation. The Worker now instantiates `SupabasePasteRepository` directly.
+- **Files deleted**:
+  - `src/infrastructure/storage/kvPasteRepository.ts` (213 lines)
+  - `src/infrastructure/storage/dualWriteRepository.ts` (96 lines)
+  - Their test files
+  - `src/tests/integration/routes.test.ts` (tightly coupled to MockKV; every scenario it covered is now covered by the live smoke + RLS + race tests)
+
+### Tests
+
+- 109 unit tests (was 152: removed 28 KV/Dual tests, removed 17 integration tests, added 5 stats tests).
+- `test:all-live` orchestrator (4 suites, deterministic with cooldowns).
+
+### Other cleanups
+
+- `verify-realtime.ts` cleanup wrapped in try/finally so paste deletion runs even when assertions fail.
+- `handlers.ts`: `authService` constructor arg changed from null-default to optional.
+
+### Breaking changes
+
+None for end users. `STORAGE_BACKEND=kv` is no longer a supported value (it was never set in production after Phase 3).
+
+---
+
 ## [3.2.0] - 2026-05-11
 
 ### Auth (Phase 4.4)
