@@ -123,9 +123,13 @@ SELECT version FROM supabase_migrations.schema_migrations ORDER BY version;
 
 ## Findings
 
-### 1. `updated_at` trigger fires on every save (not just edits) -- mild bug
+### 1. `updated_at` trigger fires on every save (fixed)
 
-**Observed:** Pastes with `read_count = 0` have `updated_at - created_at ≈ 100-200ms`. Pastes with `read_count > 0` have an additional `updated_at - created_at ≈ 500-600ms` per view.
+**Status:** Fixed and applied to production via migration `20260511124104_fix_updated_at_trigger.sql` on 2026-05-11.
+
+**Observed before fix:** Pastes with `read_count = 0` had `updated_at - created_at ≈ 100-200ms`. Pastes with `read_count > 0` had an additional `updated_at - created_at ≈ 500-600ms` per view.
+
+**Verified after fix:** Created a paste, viewed it 3 times. `updated_at` stayed at `12:57:18.042025` while `read_count` went from 0 to 3.
 
 **Root cause:** The trigger `set_updated_at` is scoped to `BEFORE UPDATE OF content, title`. In Postgres, this fires whenever those columns are listed in the SET clause -- *not* only when their values actually change. The `save()` method uses `upsert()` which sends all columns, so the trigger always fires.
 
@@ -134,7 +138,7 @@ SELECT version FROM supabase_migrations.schema_migrations ORDER BY version;
 
 **Impact:** Low. `updated_at` is not used by the application; it's metadata for debugging/audit.
 
-**Fix drafted in `supabase/migrations/20260511124104_fix_updated_at_trigger.sql`** (not yet applied to remote):
+**Fix in `supabase/migrations/20260511124104_fix_updated_at_trigger.sql`** (applied 2026-05-11):
 
 ```sql
 DROP TRIGGER IF EXISTS set_updated_at ON pastes;
@@ -150,9 +154,7 @@ CREATE TRIGGER set_updated_at
   EXECUTE FUNCTION set_updated_at();
 ```
 
-Apply with `supabase db push --linked`.
-
-The `view_paste()` RPC (Phase 4) will avoid the upsert entirely by doing a targeted `UPDATE ... SET read_count = read_count + 1 WHERE id = $1 RETURNING *`. That's the deeper fix but also requires more code changes.
+The `view_paste()` RPC (Phase 4) will avoid the upsert entirely by doing a targeted `UPDATE ... SET read_count = read_count + 1 WHERE id = $1 RETURNING *`. That's the deeper fix but also requires more code changes. The current trigger-level fix is sufficient until then.
 
 ### 2. `getPasteQuery.execute()` concurrency caveat still applies
 
