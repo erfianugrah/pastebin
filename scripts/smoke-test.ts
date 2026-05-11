@@ -487,6 +487,7 @@ async function run(): Promise<void> {
 			visibility: 'public',
 		});
 		assert(searchablePaste.id !== undefined, 'returns id');
+		createdIds.push(searchablePaste.id);
 	});
 
 	await test('GET /api/search finds paste by unique title token', async () => {
@@ -527,6 +528,7 @@ async function run(): Promise<void> {
 			expiresIn: '1h',
 			visibility: 'private',
 		});
+		createdIds.push(privateMatch.id);
 		await new Promise((r) => setTimeout(r, 200));
 		const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(searchToken)}`);
 		const body = (await res.json()) as { pastes: Array<{ id: string }> };
@@ -723,11 +725,25 @@ async function run(): Promise<void> {
 // ---- Run + cleanup + report ----
 
 async function cleanup(): Promise<void> {
+	let failures = 0;
 	for (const id of createdIds) {
-		await dbDeletePasteDirectly(id).catch(() => {});
+		try {
+			await dbDeletePasteDirectly(id);
+		} catch (e) {
+			failures++;
+			console.warn(`  cleanup: paste ${id} failed: ${(e as Error).message}`);
+		}
 	}
 	for (const slug of createdSlugs) {
-		await dbDeleteSlugDirectly(slug).catch(() => {});
+		try {
+			await dbDeleteSlugDirectly(slug);
+		} catch (e) {
+			failures++;
+			console.warn(`  cleanup: slug ${slug} failed: ${(e as Error).message}`);
+		}
+	}
+	if (failures > 0) {
+		console.warn(`  cleanup: ${failures} resource(s) failed to delete`);
 	}
 }
 

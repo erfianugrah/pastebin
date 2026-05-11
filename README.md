@@ -489,11 +489,13 @@ Run `npm run test:realtime` to verify the pipeline end-to-end.
 Pasteriser supports optional Supabase Auth (email + password). When signed in:
 
 - New pastes are linked to the authenticated user via `user_id`.
-- All Supabase Auth calls are proxied through the Worker (`/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/session`). The session is stored in HttpOnly `sb-access-token` + `sb-refresh-token` cookies (Secure, SameSite=Strict). Browser never receives the JWT directly — XSS-safe.
-- Email confirmation uses the Path C server-side pattern: the email link points to `/auth/confirm?token_hash=...&type=...&next=/my` on Pasteriser's domain (not Supabase's). The Worker calls `supabase.auth.verifyOtp({ token_hash, type })`, sets cookies, then 302s into the app. `next` is whitelisted to same-origin paths only.
+- All Supabase Auth calls are proxied through the Worker (`/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/session`, `/api/auth/resend-confirmation`). The session is stored in HttpOnly `sb-access-token` + `sb-refresh-token` cookies (Secure, SameSite=Strict). Browser never receives the JWT directly — XSS-safe.
+- Email confirmation uses the Path C server-side pattern: the email link points to `/auth/confirm?token_hash=...&type=signup&next=/my` on Pasteriser's domain (not Supabase's). The Worker calls `supabase.auth.verifyOtp({ token_hash, type })`, sets cookies, then 302s into the app. `next` is whitelisted to same-origin paths only.
 - The Worker derives `user_id` from the verified JWT (cookie wins over `Authorization: Bearer` header), never from the request body.
 - The `/api/my` Worker endpoint returns the calling user's pastes by filtering with `user_id` on the verified JWT — RLS is doubled up because the Worker uses `service_role`.
 - Authenticated users can delete their own pastes via the same `/pastes/:id/delete` endpoint; the `deleteToken` flow still works for anonymous pastes.
+- Email is delivered via **Resend** (custom SMTP). Auth email rate limit: 30/hour. Sender: `noreply@erfi.io`. All confirmation/recovery/magic-link/invite/email-change templates use hardcoded `type=...` query params (the Supabase `{{ .EmailActionType }}` template variable is not available on most email contexts and would render as empty string, breaking the confirm link).
+- Signup UX: duplicate-email signups return HTTP 409 `email_taken` instead of the misleading "check your email" (Supabase's anti-enumeration response is decoded server-side). Login UX: distinguishes `email_not_confirmed` (HTTP 403, with inline "Resend confirmation" link in the UI) from `invalid_credentials` (HTTP 401).
 
 Anonymous use is unchanged: pastes created without a JWT get `user_id = NULL` and are managed via the `deleteToken` returned at creation.
 
@@ -792,7 +794,7 @@ See [SUPABASE-MIGRATION.md](./SUPABASE-MIGRATION.md) for the in-flight plan. Hig
 - **Phase 4.4d** — Server-side email confirmation (Path C). Worker hosts `/auth/confirm`, calls `verifyOtp({ token_hash, type })`, sets HttpOnly cookies, 302s to `/my`. Site URL + email template patched via Supabase Management API. ✓ Shipped.
 - **Phase 4.4e** — OAuth providers (GitHub first, Google second). Email/password and email-confirm are shipped.
 - **Phase 4.5** — Analytics: `paste_stats()` PL/pgSQL function returning a JSONB summary (by language, by hour, encryption adoption) exposed via `GET /api/stats`. ✓ Shipped.
-- **Phase 4.7** — Anti-abuse and rate-limit hardening. Per-IP signup rate limit at the Worker, honeypot field, anonymous paste size cap (64 KiB), Supabase Auth dashboard rate-limit tightening, custom SMTP via Resend before re-enabling email confirmation at scale. Scoped, not committed.
+- **Phase 4.7** — Anti-abuse and rate-limit hardening. **Custom SMTP via Resend ✓ shipped (3.5.0)** — `smtp.resend.com:465`, sender `noreply@erfi.io`, `rate_limit_email_sent` bumped 2/hr → 30/hr. Remaining items: per-IP signup rate limit at the Worker, honeypot field, anonymous paste size cap (64 KiB).
 - **Phase 5** — Remove `KVPasteRepository`, `DualWriteRepository`, and the Cloudflare KV namespace itself. ✓ Shipped.
 
 Phase 6 (Deno-based Discord bot) was scoped and then dropped — pastebin-bot integration is a UX shortcut that doesn't overcome Discord's hard limits any more cleanly than existing tools (PasteThing, mclo.gs). See git history for the design notes if needed.
@@ -869,7 +871,7 @@ See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration jo
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), `paste_stats()` RPC + complete KV removal (3.3.0), and the BFF auth proxy + server-side email confirmation + `title` NOT-NULL fix + `wrangler tail` test wrapper + `SUPABASE_URL` secret promotion (3.4.0).
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), `paste_stats()` RPC + complete KV removal (3.3.0), BFF auth proxy + server-side email confirmation + `title` NOT-NULL fix + `wrangler tail` test wrapper + `SUPABASE_URL` secret promotion (3.4.0), and the domain switch to `paste.erfi.io` + Resend SMTP + auth UX polish + email-template `type=` hardcoding fix + delete-paste handler POST-body bug fix + test-cleanup leak fixes (3.5.0).
 
 ### Quick verification
 

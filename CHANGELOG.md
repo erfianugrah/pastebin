@@ -2,6 +2,28 @@
 
 ## [3.5.0] - 2026-05-11
 
+### Auth UX polish (post-domain-change session)
+
+- **`handleSignup`** — detect Supabase's anti-enumeration response (success-shaped payload with `user.identities = []` when the email is already registered) and return HTTP 409 `email_taken` instead of the misleading "check your email" path that left users staring at an email that was never sent.
+- **`handleLogin`** — distinguish `email_not_confirmed` (HTTP 403 with actionable message) from `invalid_credentials` (HTTP 401). Supabase only returns `email_not_confirmed` when the password is correct, so anti-enumeration is preserved for wrong-password guesses.
+- **`POST /api/auth/resend-confirmation`** — new endpoint. Calls `supabase.auth.resend({ type: 'signup', email })`. Always returns 200 (Supabase's own rate-limit gates abuse).
+- **`AuthForm.tsx`** — replace dangling "check your email" banner under the empty form with a dedicated success panel ("Check your email at &lt;addr&gt;" + "Didn't get it? Resend" + "Wrong email? Try again" buttons). On login failure with `email_not_confirmed`, render an inline "Resend confirmation email" link.
+- **`MyPastes.tsx`** — kill leaked developer copy ("Listed via the Worker; Supabase access goes through service_role + an explicit `user_id` filter"). Replace with a small "{n} pastes" line + "New paste" CTA in the same row.
+- **`my.astro`** — subtitle "Pastes you create while signed in." under the H1.
+
+### Email template fix (was breaking confirm clicks)
+
+- `mailer_templates_confirmation_content` was using `{{ .EmailActionType }}`, which doesn't exist on the confirmation email context. The variable rendered as empty string → link had `&type=&` → `/auth/confirm` correctly rejected as `invalid_type`. Hardcode `type=signup` (the template is only ever for signup).
+- Apply the same fix preemptively to recovery (`type=recovery`), magic_link (`type=magiclink`), invite (`type=invite`), email_change (`type=email_change`). All four were carrying the same footgun for future flows. Patched via Management API.
+
+### Test-cleanup bug fixes
+
+- **`handleDeletePaste`** had a method-discrimination bug: read JSON body only when `request.method === 'DELETE'`. Router accepts both DELETE and POST on `/pastes/:id/delete`, so POST + JSON body silently fell through to query-param-only auth and always returned 403. `verify-realtime.ts` cleanup uses POST + body and was therefore leaking 2 pastes per run (1 public + 1 private). 47 leaked pastes wiped from production.
+- 2 new unit tests cover both methods reading body identically.
+- `verify-realtime.ts` was sending `{ deleteToken }` instead of `{ token }` in the body — handler reads `body.token`. Fixed + surfaced via `console.warn` instead of silent `.catch(() => {})`.
+- `smoke-test.ts` search tests created 2 pastes per run (a public "searchable" one and a private "secret" one) without `createdIds.push()` — silent leak. Both added to the cleanup list. Same script's `cleanup()` was also silencing all errors; switched to warn-on-failure.
+- Production verification: 1 user paste remains, 0 test artifacts, after running smoke + realtime back-to-back with new cleanup.
+
 ### Domain change: `paste.erfi.dev` → `paste.erfi.io`
 
 - **`wrangler.jsonc`**: routes pattern updated for both top-level and production env. Cloudflare auto-provisioned DNS + SSL via the existing `erfi.io` zone on deploy.
@@ -27,7 +49,9 @@
 
 ### Tests
 
+- 150 unit tests (was 147 — +1 duplicate-email signup, +2 delete-paste method-body coverage).
 - All 4 live suites re-run green against `paste.erfi.io`: smoke 35/35, RLS 13/13, Realtime 13/13 (standalone), race race-free. Playwright 10/10.
+- DB state after full live cycle: 1 paste (the real one), 0 leaked test artifacts, 1 auth user.
 
 ### Breaking changes
 

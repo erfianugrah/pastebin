@@ -119,7 +119,17 @@ export class ApiHandlers {
 			const url = new URL(request.url);
 			ownerToken = url.searchParams.get('token');
 
-			if (!ownerToken && request.method === 'DELETE' && request.headers.get('Content-Type')?.includes('application/json')) {
+			// Accept JSON body on either DELETE or POST. The router exposes
+			// this endpoint via both methods, and clients that send a JSON
+			// body with POST were previously falling through to query-param-
+			// only auth, which always failed with 403. This caused
+			// verify-realtime.ts cleanup to silently leak pastes for every
+			// run.
+			if (
+				!ownerToken &&
+				(request.method === 'DELETE' || request.method === 'POST') &&
+				request.headers.get('Content-Type')?.includes('application/json')
+			) {
 				try {
 					const body = (await request.json()) as { token?: string };
 					ownerToken = body.token || null;

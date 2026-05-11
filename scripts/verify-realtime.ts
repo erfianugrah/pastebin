@@ -92,11 +92,21 @@ async function createPaste(opts: {
 }
 
 async function deletePaste(id: string, token: string): Promise<void> {
-	await fetch(`${API}/pastes/${id}/delete`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ deleteToken: token }),
-	}).catch(() => {});
+	// Handler expects `token` not `deleteToken` (see handlers.ts:125).
+	// Without this match the request returns 403 and the paste leaks —
+	// today's session left 18 rt-* pastes behind because of it.
+	try {
+		const res = await fetch(`${API}/pastes/${id}/delete`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ token }),
+		});
+		if (!res.ok) {
+			console.warn(`  cleanup: delete paste ${id} failed status=${res.status}`);
+		}
+	} catch (e) {
+		console.warn(`  cleanup: delete paste ${id} threw: ${(e as Error).message}`);
+	}
 }
 
 async function subscribeStatus(opts: {

@@ -268,6 +268,51 @@ describe('ApiHandlers', () => {
 
 			expect(res.status).toBe(403);
 		});
+
+		// Regression: handler used to gate JSON-body reads on
+		// `request.method === 'DELETE'`, so POST + body silently fell
+		// through to query-param-only auth and always returned 403.
+		// verify-realtime.ts hit this and leaked rt-* pastes for every
+		// run. Cover both methods.
+		it('reads token from JSON body on POST', async () => {
+			vi.mocked(mockDeleteCommand.execute).mockResolvedValue({
+				success: true,
+				message: 'Paste deleted successfully',
+			});
+
+			const req = new Request('https://example.com/pastes/x/delete', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ token: 'tok-via-post' }),
+			});
+			const res = await handlers.handleDeletePaste(req, 'x');
+
+			expect(res.status).toBe(200);
+			expect(mockDeleteCommand.execute).toHaveBeenCalledWith({
+				id: 'x',
+				ownerToken: 'tok-via-post',
+			});
+		});
+
+		it('reads token from JSON body on DELETE', async () => {
+			vi.mocked(mockDeleteCommand.execute).mockResolvedValue({
+				success: true,
+				message: 'Paste deleted successfully',
+			});
+
+			const req = new Request('https://example.com/pastes/x/delete', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ token: 'tok-via-delete' }),
+			});
+			const res = await handlers.handleDeletePaste(req, 'x');
+
+			expect(res.status).toBe(200);
+			expect(mockDeleteCommand.execute).toHaveBeenCalledWith({
+				id: 'x',
+				ownerToken: 'tok-via-delete',
+			});
+		});
 	});
 
 	describe('handleGetRecentPastes', () => {

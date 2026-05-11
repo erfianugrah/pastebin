@@ -985,19 +985,30 @@ Where `auth-patch.json` sets:
 - `site_url`: `https://paste.erfi.io` (was `http://localhost:3000`)
 - `uri_allow_list`: `https://paste.erfi.io/auth/confirm,https://paste.erfi.io/my,https://paste.erfi.io/`
 - `mailer_templates_confirmation_content`: rewritten to use
-  `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type={{ .EmailActionType }}&next=/my`
+  `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/my`
+
+**Critical gotcha**: the type query param MUST be **hardcoded** —
+`{{ .EmailActionType }}` is NOT a valid template variable on the
+confirmation email context, despite being widely cited (incl. older
+versions of the official docs). When that variable was used, the
+link rendered with `&type=&` (empty value), and `/auth/confirm`
+correctly rejected it with `error=invalid_type`. The same applies
+to every other email template:
+
+- `mailer_templates_confirmation_content` → `type=signup`
+- `mailer_templates_recovery_content` → `type=recovery`
+- `mailer_templates_magic_link_content` → `type=magiclink`
+- `mailer_templates_invite_content` → `type=invite`
+- `mailer_templates_email_change_content` → `type=email_change`
+
+All five templates have been preemptively patched to use hardcoded
+type values via the same Management API call.
 
 The Management API endpoint is `PATCH /v1/projects/{ref}/config/auth`.
 GET the same endpoint to inspect current config. The field names
 are stable across the Supabase Auth (GoTrue) version — `site_url`,
 `uri_allow_list` (comma-separated string, not JSON array),
 `mailer_templates_*_content` (full HTML body).
-
-**Other email templates** (recovery, magic-link, invite,
-email-change) still point to `{{ .ConfirmationURL }}` — the Supabase
-default. They're untouched for now because the recovery/magic-link
-flows aren't enabled in the app yet. When the password-reset page
-ships, repeat the same template-patch pattern.
 
 **End-to-end live verification (run after deploy):**
 
@@ -1026,7 +1037,7 @@ grep -iE "^(http|location:|set-cookie:)" /tmp/confirm.txt
 Decode the JWT and confirm `sub` matches the user, `role=authenticated`,
 `user_metadata.email_verified=true`.
 
-**Unit tests (5 new cases in `authHandlers.test.ts`):**
+**Unit tests (5 cases in `authHandlers.test.ts` for `handleConfirm`):**
 
 - `redirects to /login?error=missing_token when token_hash missing`
 - `redirects to /login?error=invalid_type for unknown type`
@@ -1039,6 +1050,91 @@ Decode the JWT and confirm `sub` matches the user, `role=authenticated`,
 call, same query param shape, same same-origin redirect guard. The
 Workers port is ~30 lines because the BFF cookie helpers are
 already in place.
+
+#### 4.4d-extras: auth UX polish + Resend SMTP + handler bug fixes (3.5.0)
+
+After the initial Path C ship, a real-user signup flow surfaced
+additional issues:
+
+**Duplicate-email signup UX.** Supabase's anti-enumeration default
+returns a *success-shaped* response when the email is already
+registered — same `{ user, session }` shape, but `user.identities`
+is an empty array. The frontend was treating that as
+`needsConfirm: true` → user told to check an email that was never
+sent. Fix: detect the empty-identities case in `handleSignup` and
+return `HTTP 409 { code: "email_taken" }`. Documented trade-off:
+this deliberately leaks "email exists" — we rely on Phase 4.7
+rate limits + future captcha/honeypot for enumeration defense, not
+on response-shape obfuscation.
+
+**Login "wrong password" vs "not confirmed".** `handleLogin` was
+collapsing both into HTTP 401 `invalid_credentials`, leaving users
+who knew their password but hadn't clicked the email dead-ended.
+Supabase's `signInWithPassword` returns `error.code = 'email_not_confirmed'`
+ONLY when the password is correct (wrong-password against an
+unconfirmed user still returns `invalid_credentials`, preserving
+anti-enumeration). Surface that distinction: 403 `email_not_confirmed`
+with a clear actionable message, 401 `invalid_credentials`
+otherwise.
+
+**Resend confirmation endpoint.** New `POST /api/auth/resend-confirmation`
+handler + route. Calls `supabase.auth.resend({ type: 'signup', email })`.
+Always returns 200 (Supabase's own rate limit gates abuse). The
+frontend uses it from two places:
+1. Inline link under the "Please confirm your email" error on /login
+2. "Didn't get it? Resend" button on the signup success panel
+
+**Frontend: signup success state replaces the form entirely.**
+Previously the form stayed visible with a banner underneath ("Check
+your email at X") — confusing dangling state. Now the card replaces
+with a dedicated success panel that has the email address, a Resend
+button, and a "Wrong email? Try again" reset button.
+
+**Frontend: MyPastes leaked internals.** `MyPastes.tsx` had a copy
+saying "Listed via the Worker; Supabase access goes through
+service_role + an explicit `user_id` filter." That string was
+end-user visible. Replaced with a small "{n} pastes" + "New paste"
+CTA.
+
+**Custom SMTP via Resend** (also via Management API PATCH):
+
+```json
+{
+  "smtp_host": "smtp.resend.com",
+  "smtp_port": "465",
+  "smtp_user": "resend",
+  "smtp_pass": "<resend api key>",
+  "smtp_admin_email": "noreply@erfi.io",
+  "smtp_sender_name": "Pasteriser",
+  "smtp_max_frequency": 1,
+  "rate_limit_email_sent": 30
+}
+```
+
+The Resend domain `erfi.io` is verified (region `eu-west-1`).
+`rate_limit_email_sent` bumped 2/hr → 30/hr — the inbuilt 2/hr was
+the bottleneck behind today's "email rate limit exceeded" errors.
+
+**Delete-paste handler method bug.** `handleDeletePaste` had a
+method-discrimination bug: read the JSON body only when
+`request.method === 'DELETE'`. The router (via `app.on(['DELETE',
+'POST'], ...)`) accepts both methods on `/pastes/:id/delete`, so
+POST + JSON body silently fell through to query-param-only auth
+and returned 403 every time. `verify-realtime.ts` cleanup uses
+POST + body and was therefore leaking 2 pastes per run for the
+entire history of the realtime test. 47 leaked pastes wiped from
+production. 2 new regression unit tests guard both methods.
+
+**Cleanup-leak audit:**
+
+- `verify-realtime.ts`: 18 leaks. Sending `{ deleteToken }` not
+  `{ token }` in body (handler reads `body.token`). Also exposed
+  the method-discrimination bug above. Both fixed.
+- `smoke-test.ts`: 22 leaks. Two search-test `createPaste` calls
+  were not pushing to `createdIds`. Fixed.
+- All cleanup paths now `console.warn` on failure rather than
+  silently swallowing with `.catch(() => {})`, so future leaks
+  surface immediately.
 
 #### 4.4e: OAuth providers (planned, not yet started)
 
@@ -1200,7 +1296,7 @@ means.
 | 3 | **Move signup behind the Worker** (`/api/auth/signup`) — browser POSTs to Worker, Worker enforces per-IP rate limit and IP/UA fingerprint heuristics, then calls Supabase Auth admin API with `Sb-Forwarded-For` header so its per-IP limits work correctly. | Defends against upstream Supabase Auth bugs (#2333 not enforcing config, #1236 failed signups counting). Worker rate limit doubles the gate. | 2-3h |
 | 4 | **Honeypot field + timing check** in `AuthForm.tsx` and `PasteForm.tsx`. Invisible CSS-hidden `<input name="bait">` that bots fill; min-time-to-submit ≥ 1s. Reject submissions that fail either check. | Stops basic scripted bots without full browser emulation. Zero UX cost. | 30 min |
 | 5 | **Tighten Supabase Auth rate limits** via Management API. Conservative caps (10 signups/hour/IP, 30 token refreshes/hour/IP). | Belt-and-suspenders even with Auth bugs. | 5 min |
-| 6 | **Custom SMTP via Resend** for password reset / future transactional email — only relevant once email auth is re-enabled or for password-reset on OAuth-linked accounts. | Required eventually; inbuilt 4/hour is unusable. | 30 min + account |
+| 6 | **Custom SMTP via Resend** ✓ DONE (3.5.0). `smtp.resend.com:465`, `noreply@erfi.io`, `rate_limit_email_sent` 2/hr → 30/hr. The inbuilt 2/hr was unusable. | — | — |
 | 7 | **PostgREST-side per-IP rate limit** for browser-direct paths (`/my` reads, Realtime subscribes). `private.rate_limits` table + `before insert/update/delete` triggers per `supabase/guides/api/securing-your-api.md`. | Defense in depth — Worker rate limit doesn't gate direct DB queries. | 1h |
 | 8 | **Per-account daily storage quota** in Postgres — `pastes` insert trigger that sums bytes per `user_id` and rejects if over the daily cap. | Catches the rare case where a single legitimate-looking user fills the DB. | 2h |
 
@@ -1579,7 +1675,7 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Frontend** (Astro/React) | `UserMenu`, `AuthForm`, `MyPastes`, `RecentPastes` (Realtime), `PasteForm` (sends JWT when signed in), `useAuth` hook, supabase client singleton. | Phases 4.3-4.4. |
 | **wrangler.jsonc** | No `vars` block. Both `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are Wrangler secrets; required pair documented in a JSONC comment at the top of the file. | KV bindings + `STORAGE_BACKEND` var removed in Phase 5. `SUPABASE_URL` promoted from var to secret in 3.4.0. |
 | **astro/.env** | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`. | Phases 4.3-4.4. |
-| **Unit tests** | 147 passing. | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm` cases). |
+| **Unit tests** | 150 passing. | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm`) → 150 after 3.5.0 (+1 duplicate-email signup, +2 delete-paste method-body regression). |
 | **Live test scripts** | `test:smoke`, `test:race`, `test:realtime`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. |
 | **Migrations** | 14 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix). |
 
