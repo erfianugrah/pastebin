@@ -28,8 +28,10 @@ Two separate packages with **independent `node_modules`**:
 
 ## Supabase migrations
 
-- All schema in `supabase/migrations/` — 7 files, applied to `dewddkcmwrzbpynylyhg`
-- Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema)
+- All schema in `supabase/migrations/` — 8 files, applied to `dewddkcmwrzbpynylyhg`
+- Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema and Phase 3.5 audit fixes)
+- `set_updated_at` trigger has a `WHEN (OLD.x IS DISTINCT FROM NEW.x)` clause — required because `upsert()` sends all columns and `UPDATE OF col` fires on column presence, not value change
+- `createClient()` always passes `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }` — Supabase-recommended for server-side contexts
 - Never run DDL directly via pgcli — always create a new migration file
 - Verify with `supabase db query --linked "SELECT ..."` or via `pgpasteriser` alias
 

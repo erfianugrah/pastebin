@@ -139,8 +139,10 @@ CREATE TABLE slugs (
     expires_at       TIMESTAMPTZ NOT NULL
 );
 
--- Auto-update updated_at on content/title changes only
--- (read_count increments don't fire this)
+-- Auto-update updated_at on content/title changes only.
+-- WHEN clause added in 20260511124104_fix_updated_at_trigger.sql --
+-- without it, upsert() resending unchanged content/title would still fire
+-- the trigger (UPDATE OF fires on column presence, not value change).
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -152,6 +154,10 @@ $$;
 CREATE TRIGGER set_updated_at
   BEFORE UPDATE OF content, title
   ON pastes FOR EACH ROW
+  WHEN (
+    OLD.content IS DISTINCT FROM NEW.content
+    OR OLD.title IS DISTINCT FROM NEW.title
+  )
   EXECUTE FUNCTION set_updated_at();
 ```
 
@@ -331,7 +337,17 @@ export class SupabasePasteRepository implements PasteRepository {
 		supabaseKey: string, // secret key (sb_secret_...) -- Worker is trusted backend, bypasses RLS
 		private readonly logger: Logger,
 	) {
-		this.client = createClient(supabaseUrl, supabaseKey);
+		// Server-side client: disable session management. Worker uses a secret
+		// key (no JWT refresh needed); persistSession would try to use
+		// localStorage (unavailable in Workers); autoRefreshToken sets a
+		// setTimeout that does nothing useful here.
+		this.client = createClient(supabaseUrl, supabaseKey, {
+			auth: {
+				autoRefreshToken: false,
+				persistSession: false,
+				detectSessionInUrl: false,
+			},
+		});
 	}
 
 	async save(paste: Paste): Promise<void> {
@@ -506,6 +522,55 @@ Phase 2 (dual reads) was skipped. After verifying Phase 1 data was clean:
 3. Remove `PASTES: KVNamespace` from `src/types.ts`
 4. Remove `KVPasteRepository` instantiation from `src/index.ts`
 
+### Phase 3.5: Post-Migration Audit and Fixes ✓ COMPLETE
+
+After Phase 3, ran a verification pass against the live system and Supabase
+docs (`docs.erfi.io`). Two real issues found and fixed:
+
+**1. `set_updated_at` trigger fired on every save**
+
+The trigger was scoped to `BEFORE UPDATE OF content, title`, expecting it
+to skip read-count increments. But `UPDATE OF col` fires whenever those
+columns appear in the SET clause, not when their values change. Since
+`save()` uses `upsert()` (which sends all columns), the trigger fired on
+every read-count increment.
+
+Symptom: `updated_at - created_at` grew ~500ms per read even though
+content/title were unchanged.
+
+Fix (migration `20260511124104_fix_updated_at_trigger.sql`): add a `WHEN`
+clause comparing `OLD.col IS DISTINCT FROM NEW.col`. This is the canonical
+Postgres pattern documented in
+[CREATE TRIGGER](https://www.postgresql.org/docs/current/sql-createtrigger.html).
+
+Verified after deploy: created paste, viewed 3 times. `updated_at` stayed
+at `12:57:18.042025` while `read_count` went 0 → 3.
+
+**2. `createClient` missed server-side auth options**
+
+`SupabasePasteRepository` and `scripts/smoke-test.ts` were calling
+`createClient(url, key)` without the auth options block Supabase
+[recommends](https://supabase.com/docs/guides/functions/unit-test) for
+non-browser contexts. Defaults assume a browser:
+
+- `persistSession: true` tries to read/write `localStorage` (no-op in
+  Workers, warns in Node)
+- `autoRefreshToken: true` schedules a `setTimeout` to refresh the JWT
+  (wasted work for service_role/secret keys, can keep one-shot Node scripts
+  alive after the work is done)
+- `detectSessionInUrl: true` parses OAuth callback params from
+  `window.location` (nonsense outside a browser)
+
+Fix: pass `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }`
+to `createClient` everywhere.
+
+**Verification additions:**
+- `scripts/smoke-test.ts` (10 API + 9 DB/RLS tests) runs against
+  `paste.erfi.dev` and queries Supabase directly. Adds RLS coverage:
+  publishable key cannot SELECT private pastes, CAN SELECT public ones.
+- `TEST-REPORT.md` documents the full audit (test results, schema state,
+  RLS check, pg_cron status, findings).
+
 ### Phase 4: New Features (Week 2+)
 
 Now that you have Postgres, build features KV couldn't support:
@@ -570,7 +635,7 @@ SELECT version, count(*) FROM pastes GROUP BY version;
 | **Frontend** (Astro/React) | No | Frontend never knew about the backend. Zero changes. |
 | **wrangler.jsonc** | Yes | `SUPABASE_URL`, `STORAGE_BACKEND` vars added. `SUPABASE_SECRET_KEY` is a Wrangler secret (not in file). |
 | **Tests** | Yes | 25 new tests: 14 for `SupabasePasteRepository`, 11 for `DualWriteRepository`. |
-| **Migrations** | Yes | 7 migration files in `supabase/migrations/`. |
+| **Migrations** | Yes | 8 migration files in `supabase/migrations/` (7 baseline + `20260511124104_fix_updated_at_trigger.sql`). |
 
 ---
 
