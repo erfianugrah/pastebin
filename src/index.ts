@@ -3,6 +3,9 @@ import { cors } from 'hono/cors';
 import { Env } from './types';
 import { ConfigurationService } from './infrastructure/config/config';
 import { KVPasteRepository } from './infrastructure/storage/kvPasteRepository';
+import { SupabasePasteRepository } from './infrastructure/storage/supabasePasteRepository';
+import { DualWriteRepository } from './infrastructure/storage/dualWriteRepository';
+import { PasteRepository } from './domain/repositories/pasteRepository';
 import { CloudflareUniqueIdService } from './infrastructure/services/cloudflareUniqueIdService';
 import { DefaultExpirationService } from './domain/services/expirationService';
 import { CreatePasteCommand } from './application/commands/createPasteCommand';
@@ -28,6 +31,7 @@ type AppEnv = {
 		requestId: string;
 		logger: Logger;
 		handlers: ApiHandlers;
+		pasteRepository: PasteRepository;
 	};
 };
 
@@ -76,7 +80,19 @@ app.use('*', async (c, next) => {
 		},
 	});
 
-	const pasteRepository = new KVPasteRepository(c.env.PASTES, logger);
+	const kvRepo = new KVPasteRepository(c.env.PASTES, logger);
+
+	let pasteRepository: PasteRepository;
+	const backend = c.env.STORAGE_BACKEND ?? 'kv';
+
+	if (backend === 'supabase') {
+		pasteRepository = new SupabasePasteRepository(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger);
+	} else if (backend === 'dual') {
+		const supabaseRepo = new SupabasePasteRepository(c.env.SUPABASE_URL, c.env.SUPABASE_SECRET_KEY, logger);
+		pasteRepository = new DualWriteRepository(kvRepo, supabaseRepo, logger);
+	} else {
+		pasteRepository = kvRepo;
+	}
 
 	const createPasteCommand = new CreatePasteCommand(
 		pasteRepository,
@@ -91,6 +107,7 @@ app.use('*', async (c, next) => {
 	const apiHandlers = new ApiHandlers(createPasteCommand, deletePasteCommand, getPasteQuery, getRecentPastesQuery, logger, pasteRepository);
 
 	c.set('handlers', apiHandlers);
+	c.set('pasteRepository', pasteRepository);
 
 	await next();
 });
@@ -225,9 +242,8 @@ app.get('/p/:slug', async (c) => {
 	const slug = c.req.param('slug');
 	const logger = c.get('logger');
 
-	// Resolve slug to paste ID
-	const pasteRepository = new KVPasteRepository(c.env.PASTES, logger);
-	const pasteId = await pasteRepository.resolveSlug(slug);
+	// Resolve slug using the same repository instantiated by middleware
+	const pasteId = await c.get('pasteRepository').resolveSlug(slug);
 
 	if (!pasteId) {
 		return c.json({ error: { code: 'not_found', message: 'Paste not found' } }, 404);

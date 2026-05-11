@@ -16,6 +16,10 @@
 		"not_found_handling": "none",
 		"run_worker_first": true,
 	},
+	"vars": {
+		"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co",
+		"STORAGE_BACKEND": "supabase",
+	},
 	"kv_namespaces": [
 		{
 			"binding": "PASTES",
@@ -37,6 +41,10 @@
 	"env": {
 		"production": {
 			"name": "pastebin-prod",
+			"vars": {
+				"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co",
+				"STORAGE_BACKEND": "supabase",
+			},
 			"routes": [
 				{
 					"pattern": "paste.erfi.dev",

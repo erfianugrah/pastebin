@@ -54,7 +54,7 @@ graph TD
     BE --> TS[TypeScript]
     BE --> Zod[Zod]
     BE --> Pino[Pino]
-    BE --> KV[KV Storage]
+    BE --> SB[Supabase Postgres]
     
     FE[Frontend] --> Astro[Astro]
     FE --> React[React]
@@ -68,7 +68,7 @@ graph TD
   - TypeScript: Strongly typed JavaScript
   - Zod: Runtime schema validation
   - Pino: Structured logging
-  - Cloudflare KV: Key-value storage
+  - Supabase Postgres: Primary data store (migrated from Cloudflare KV)
 
 - **Frontend**
   - Astro: Static site generation
@@ -951,17 +951,18 @@ For more detailed security information, configuration guides, and security check
 **Worker Startup Time**: 13 ms
 **Deployment Size**: 555.47 KiB (gzipped: 87.37 KiB)
 
-### Active KV Namespaces
+### Storage Backend
 
-All 5 KV namespaces are configured and operational:
+Migrated from Cloudflare KV to **Supabase Postgres** (Frankfurt, `eu-central-1`) in May 2026.
 
-| Binding | Purpose | Status |
-|---------|---------|--------|
-| PASTES | Main paste storage | ✅ Active |
-| PASTE_LOGS | Application logs | ✅ Active |
-| PASTE_RL | Rate limiting | ✅ Active |
-| ANALYTICS | Analytics data (30-day retention) | ✅ Active |
-| WEBHOOKS | Webhook configurations | ✅ Active |
+| What | Where |
+|------|-------|
+| Paste data | Supabase `pastes` table |
+| Vanity slugs | Supabase `slugs` table |
+| Expiration | pg_cron job every 5 minutes |
+| KV namespace | Retained in bindings for rollback, unused |
+
+See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey.
 
 ## Recent Updates
 

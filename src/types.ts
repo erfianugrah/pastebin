@@ -8,6 +8,11 @@ export interface Env {
 	NODE_ENV?: string;
 	API_URL?: string;
 	API_SECRET?: string;
+
+	// Supabase
+	SUPABASE_URL: string;
+	SUPABASE_SECRET_KEY: string;
+	STORAGE_BACKEND?: 'kv' | 'supabase' | 'dual';
 }
 
 // Custom fetch response extending the Response interface
