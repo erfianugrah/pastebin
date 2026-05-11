@@ -1147,77 +1147,306 @@ recent feed renders the empty state.
 
 ---
 
-## Phase 6: Discord bot integration (idea, not scoped)
+## Phase 6: Discord bot integration
 
-Concept: a Discord bot that wraps Pasteriser, addressing Discord's
-text + image limits:
+**Goal:** wrap Pasteriser as a Discord slash-command bot so users can
+share code that exceeds Discord's text and attachment limits (2000
+chars free / 4000 Nitro, 25 MiB per file).
 
-- **Long messages**: bot intercepts `/paste <code>` or messages above
-  a threshold (Discord limit is 2000 chars for free, 4000 for Nitro;
-  4 MiB for image attachments) and uploads them as Pasteriser pastes,
-  returning a URL.
-- **Server-scoped**: each Discord guild gets a derived `user_id` (or
-  a Supabase Auth identity), so pastes from a guild are visible only
-  to members of that guild. Implementable as a `guild_id` column on
-  pastes + an RLS policy that joins on a `guild_members` table the
-  bot maintains.
-- **Auto-encryption**: bot generates the E2EE key client-side (in the
-  bot's runtime), posts the ciphertext + key fragment, hands the
-  fragment URL back to the channel. Discord users see a normal URL;
-  the key never enters the database.
-- **Self-hosted deployment**: viable on Unraid as a Docker container.
+**Threat model + runtime:** the bot is a privileged client. It calls
+Pasteriser via HTTPS and (optionally) Supabase via service_role.
+From Pasteriser's POV the bot is one trusted backend, no different
+from the Cloudflare Worker — the trust boundary is around the bot
+process. The bot's runtime is *not* a browser; if we say "client-
+side encryption" in this section we mean "bot-side, inside the bot
+process before any network egress."
 
-### Viability of running Deno + Discord.js on Unraid
+### Sub-phases
 
-**Why Deno specifically?** Supabase Edge Functions are Deno-based;
-running the same runtime locally means the bot can share code with
-future Edge Functions (if needed) and uses modern web APIs (fetch,
-Web Crypto) without polyfills. Discord.py / discord.js / Discord
-gateway libraries all work in Deno via `npm:` specifiers.
+Plan is split into three deliverables of increasing scope. Ship 6a
+first to validate deployment, then layer 6b/6c on top.
 
-**Containerisation:** Standard Deno container is `denoland/deno:latest`
-(~50 MiB Alpine image). Pasteriser's bot would be:
+#### 6a: Anonymous-paste pipe (MVP)
 
-```dockerfile
-FROM denoland/deno:alpine-2
-WORKDIR /app
-COPY . .
-RUN deno cache main.ts
-CMD ["deno", "run", "--allow-net", "--allow-env", "main.ts"]
+Simplest viable bot. Forwards Discord input to Pasteriser as
+anonymous public pastes. No encryption, no guild scoping.
+
+**Slash commands:**
+
+| Command | Argument schema | Behavior |
+|---------|----------------|----------|
+| `/paste` | `text:<string>` (Discord arg cap ~6000 chars) | Bot creates an anonymous public paste; replies with the URL |
+| `/paste-long` | (opens a Discord modal with a textarea, 4000 chars/field) | Same as above; modal lets users avoid pasting in chat |
+| `/paste-file` | `file:<attachment>` (Discord file ≤25 MiB) | Bot downloads, reads as UTF-8 (rejects binary), uploads as paste |
+
+All three call the same internal `createPaste(text, language?)` flow.
+
+**State:** none. The bot is stateless except for the Discord gateway
+session. If the Unraid container restarts, no recovery needed.
+
+**Effort:** ~1 day.
+
+**Validates:** the deployment story (Deno + Docker + Unraid +
+Pasteriser API HTTPS calls work as expected).
+
+#### 6b: Per-paste E2EE
+
+Adds an explicit "private" command that encrypts in the bot's
+process before upload. Anyone with the Discord message can decrypt
+because the URL fragment carries the key — the protection is
+*against Pasteriser*, not against other Discord members.
+
+**Slash commands added:**
+
+| Command | Argument schema | Behavior |
+|---------|----------------|----------|
+| `/paste-e2ee` | `text:<string>` (or modal/file variants) | Bot generates a 256-bit AES-GCM key, encrypts content in-process, uploads ciphertext with `isEncrypted=true, version=2`, posts URL with `#key=<base64>` fragment |
+
+**Crypto:**
+- AES-GCM-256 via Deno's `crypto.subtle` (Web Crypto API — same code
+  the Astro frontend uses, can vendor `astro/src/lib/crypto.ts`
+  directly into the bot if convenient)
+- 96-bit random IV per paste, prepended to ciphertext
+- Key encoded with URL-safe base64 in the fragment
+
+**Why "client-side encryption" still applies:** Pasteriser's DB
+sees only ciphertext + IV. The key never touches an HTTP request
+body or query string — only the URL fragment, which browsers do
+not send to servers. Anyone who possesses the URL (i.e., any
+Discord member who can read the channel where the bot posted) can
+decrypt.
+
+**Effort:** ~half a day on top of 6a.
+
+#### 6c: Guild-scoped pastes (the ambitious one)
+
+Per-Discord-server visibility, gated by Postgres RLS. Discord users
+without guild membership cannot view a guild-scoped paste even with
+the URL — Pasteriser API returns 404, browser can't decrypt
+nothing.
+
+**Schema additions (new migration):**
+
+```sql
+ALTER TABLE public.pastes
+  ADD COLUMN guild_id text;  -- nullable; Discord snowflake string
+
+CREATE INDEX idx_pastes_guild_id
+  ON public.pastes (guild_id)
+  WHERE guild_id IS NOT NULL;
+
+-- Bot-maintained guild membership table.
+CREATE TABLE private.guild_members (
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  guild_id text NOT NULL,
+  joined_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, guild_id)
+);
+
+CREATE INDEX idx_guild_members_user_id
+  ON private.guild_members (user_id);
+
+-- SECURITY DEFINER lookup so RLS policy doesn't need a JOIN.
+-- Performance-sensitive: this runs per row in the RLS check.
+CREATE OR REPLACE FUNCTION public.is_in_guild(guild text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM private.guild_members
+    WHERE user_id = (SELECT auth.uid())
+      AND guild_id = guild
+  );
+$$;
+
+-- Extend the authenticated SELECT policy.
+DROP POLICY IF EXISTS "authenticated can view own pastes" ON public.pastes;
+CREATE POLICY "authenticated can view own or guild pastes"
+  ON public.pastes
+  FOR SELECT
+  TO authenticated
+  USING (
+    (SELECT auth.uid()) = user_id
+    OR (guild_id IS NOT NULL AND public.is_in_guild(guild_id))
+  );
 ```
 
-Unraid template wires up:
-- `DISCORD_TOKEN` (Wrangler-style secret)
-- `PASTERISER_API_URL` (paste.erfi.dev)
-- `SUPABASE_URL` + `SUPABASE_PUBLISHABLE_KEY` (for direct DB reads
-  in the bot, if needed)
-- Persistent volume for SQLite if the bot tracks its own state
-  (guild → user_id mapping, etc.)
+The `is_in_guild` SECURITY DEFINER function is the Supabase-
+recommended way to avoid an RLS-level JOIN that defeats indexes
+(see `supabase/guides/database/postgres/row-level-security.md`
+"Minimize joins" section: 99.78% improvement in the benchmark).
 
-**Resource footprint:** Deno + Discord gateway is small —
-~80-150 MiB RAM in steady state for a single bot connection.
+**Discord ↔ Supabase user mapping:**
+- For each Discord user who interacts with the bot, the bot creates
+  a Supabase Auth user via `auth.admin.createUser({ email:
+  '<discord-id>@bot.pasteriser.invalid', user_metadata: {
+  discord_id, discord_username } })`. Email domain is sentinel —
+  these users never sign in via password.
+- Bot stores the resulting `auth.users.id` in its SQLite alongside
+  the Discord user id.
+- On Discord guild-member events (join/leave), bot upserts /
+  deletes from `private.guild_members`.
 
-**Networking:** Bot is a Discord WebSocket client, no inbound ports
-required. Pasteriser API calls go out via HTTPS. No reverse-proxy
-config needed.
+**Slash commands:**
 
-**Trade-offs:**
+| Command | Behavior |
+|---------|----------|
+| `/paste-guild` | Like `/paste-e2ee` but sets `guild_id` to the current guild and uses a deterministic per-guild key derived from a master in the bot's SQLite. Members of the guild can decrypt; non-members get 404 from Pasteriser. |
+| `/recent` | Lists 10 most recent guild-scoped pastes for the current guild. Calls Pasteriser as the bot's service-role user. |
+| `/burn` | `id:<paste-id>` — delete a paste the user created. Verified via the per-user JWT. |
 
-| Aspect | Verdict |
-|--------|---------|
-| Latency | Low — Unraid → Discord WS is fast; bot → Pasteriser is the same CF edge as anyone else |
-| Reliability | Acceptable for prep/dev. Discord rate-limits and the bot's uptime depend on Unraid's reliability; for "real" deployment migrate to Fly.io or a Workers cron+queue model. |
-| Auth model | Bot acts as a service account. For server-scoped RLS, add a `guild_id` column + policies. Alternative: bot creates one Supabase Auth user per Discord user via the admin API, and impersonates them with their JWT. |
-| Cost | $0 — Unraid is already running. Discord bot tier is free. |
-| Maintenance | Auto-rebuild on push via Watchtower or a CI hook (existing Composer setup handles this). |
+**Effort:** ~2 days (migration + bot crypto + member-sync + slash
+commands + tests).
 
-**MVP scope:** read-only command, `/paste <url>` and `/paste-long
-<text>`. No server-scoped encryption initially; just upload as
-anonymous Pasteriser pastes. Phase 2 of the bot work: add per-guild
-encryption + RLS scoping.
+### Implementation details
 
-This phase is **not committed** to the migration plan — captured here
-so the design notes don't get lost.
+#### Discord rate limits to design around
+
+- Global per bot: 50 requests/sec
+- Per channel: ~5 messages/sec
+- Slash command registration: limited and slow — register once at
+  deploy, not per-event
+- `IDENTIFY` (gateway login): 1 per 5s, 1000 per day per bot token
+- **Message Content intent is privileged** — only needed if the bot
+  reads message body. For slash-command-only bots: not required.
+  Pasteriser's bot stays slash-only so we don't hit the 100-guild
+  verification gate.
+
+#### Encryption key management options (for guild-scoped phase)
+
+| Option | Trade-off |
+|--------|-----------|
+| Per-paste random key in URL fragment | Anyone with URL decrypts. Discord audit logs reveal URLs. Simplest. (This is 6b.) |
+| Per-guild deterministic key in bot SQLite | All current guild members can decrypt with just the URL. Bot host has master access. RLS gates the *listing*; URL leakage still works. (This is 6c default.) |
+| Hybrid: per-paste random key wrapped by guild master | Cleanest defense — Pasteriser sees only ciphertext + wrapped key. But wrapping key has to live somewhere; if in DB, bot's service-role can read it, defeating the point. Real benefit only if a separate key management service is added. Out of scope. |
+
+6c default is the per-guild deterministic key. Document the trade-
+off in the bot's README.
+
+#### Bot's persistent state
+
+`/data/state.sqlite` mounted from Unraid. Schema:
+
+```sql
+CREATE TABLE discord_users (
+  discord_id  text PRIMARY KEY,
+  supabase_id uuid NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE guild_keys (         -- only 6c
+  guild_id text PRIMARY KEY,
+  key_b64  text NOT NULL,         -- 256-bit AES key, base64
+  created_at timestamptz NOT NULL DEFAULT current_timestamp
+);
+
+CREATE TABLE audit_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts          timestamptz NOT NULL DEFAULT current_timestamp,
+  discord_id  text,
+  guild_id    text,
+  command     text,
+  paste_id    text,
+  bytes       integer
+);
+```
+
+Audit log helps with Discord ToS data-retention requests
+(`/forget` command future work).
+
+#### Container
+
+```dockerfile
+FROM denoland/deno:alpine
+WORKDIR /app
+COPY deno.json deno.lock src ./
+RUN deno cache --reload src/main.ts
+USER deno
+CMD ["deno", "run", "--allow-net", "--allow-env", "--allow-read=/data", "--allow-write=/data", "src/main.ts"]
+```
+
+Notes vs the previous draft:
+- `denoland/deno:alpine` (no fictitious `-2` suffix)
+- Explicit `--allow-read/--allow-write` scoped to `/data` (SQLite),
+  not full filesystem
+- `USER deno` (non-root in the published image)
+
+#### Unraid template env
+
+- `DISCORD_TOKEN` (secret)
+- `DISCORD_APP_ID` (public; used for slash command registration)
+- `DISCORD_PUBLIC_KEY` (public; for interaction signature verification
+  if HTTPS interactions are used instead of gateway — not the MVP path)
+- `PASTERISER_API_URL` (default: `https://paste.erfi.dev`)
+- `SUPABASE_URL` (only needed in 6c)
+- `SUPABASE_SECRET_KEY` (only needed in 6c, secret)
+- `BOT_DATA_DIR` (default `/data`)
+
+#### Operational concerns
+
+- **Resource footprint**: Deno + a single Discord gateway connection
+  uses ~80-150 MiB RAM in steady state.
+- **Networking**: outbound WSS to Discord, outbound HTTPS to
+  Pasteriser, outbound HTTPS to Supabase (for 6c). No inbound.
+- **Recovery**: container restart resumes gateway via Discord's
+  resume protocol (built into the library); slash command state
+  is in Discord's servers, no bot-side persistence needed for
+  in-flight interactions.
+- **Sharding**: not relevant until the bot is in many guilds.
+  Discord recommends sharding at 1000+ guilds; for a personal bot
+  this is years away.
+- **Discord ToS**: bots must honor user data deletion within a
+  reasonable window. Pasteriser already has `expires_at`. Add a
+  `/forget` slash command that:
+  - Deletes all `private.guild_members` rows for the calling user
+  - Deletes their Supabase Auth user
+  - Anonymizes the audit log (replace `discord_id` with `null`)
+- **Logging**: bot logs to stdout (Docker captures). Audit log
+  in SQLite keeps a 90-day rolling window via a daily prune
+  (handled by a cron task inside the bot).
+
+#### Things explicitly NOT in scope
+
+- Sharding for high-guild deployment
+- HTTPS interactions endpoint (gateway-based is simpler for a self-
+  hosted bot)
+- Message Content intent (slash-only avoids the privileged-intent
+  paperwork)
+- Edge Functions colocation (this is a Deno container, not a
+  Supabase Edge Function — they share runtime but different
+  deployment target)
+
+### Repository layout
+
+The bot lives in `bot/` under the Pasteriser repo. Same git history,
+different deployment target. Top-level layout after Phase 6a:
+
+```
+pastebin/
+├── src/             # Worker (existing)
+├── astro/           # Frontend (existing)
+├── supabase/        # Migrations (existing)
+├── scripts/         # Live verification scripts (existing)
+└── bot/             # Discord bot (new in 6a)
+    ├── Dockerfile
+    ├── deno.json
+    ├── deno.lock
+    ├── README.md
+    └── src/
+        ├── main.ts
+        ├── commands/
+        │   ├── paste.ts
+        │   ├── paste-file.ts
+        │   └── paste-long.ts
+        ├── api.ts        # Pasteriser HTTP client
+        └── env.ts
+```
+
+Future split into a sibling repo (`pasteriser-bot/`) is fine but
+keeping it together until the bot is non-trivial reduces friction.
 
 ---
 

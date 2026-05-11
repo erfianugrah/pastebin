@@ -799,7 +799,7 @@ See [SUPABASE-MIGRATION.md](./SUPABASE-MIGRATION.md) for the in-flight plan. Hig
 - **Phase 4.5** — Analytics: `paste_stats()` PL/pgSQL function returning a JSONB summary (by language, by hour, encryption adoption) exposed via `GET /api/stats`. ✓ Shipped.
 - **Phase 4.7** — Rate-limit hardening at the Supabase layer (Auth signup throttling, paste size caps for anon, Cloudflare Turnstile CAPTCHA, custom SMTP). Worker has in-memory per-IP throttling already; gaps are on the browser-direct paths (Auth, Realtime, RLS-gated reads).
 - **Phase 5** — Remove `KVPasteRepository`, `DualWriteRepository`, and the Cloudflare KV namespace itself. ✓ Shipped.
-- **Phase 6 (idea, not scoped)** — Deno-based Discord bot on Unraid that wraps Pasteriser to bypass Discord's 2000/4000-char message limits and 4 MiB image limits. Server-scoped pastes via `guild_id` + RLS join policies. Bot-side E2EE.
+- **Phase 6** — Deno-based Discord bot on Unraid that wraps Pasteriser to bypass Discord's 2000/4000-char message limits and 25 MiB attachment limits. Three sub-phases scoped in detail in `SUPABASE-MIGRATION.md`: **6a** anonymous-paste pipe (MVP, ~1 day), **6b** per-paste E2EE (+half day), **6c** guild-scoped pastes via `pastes.guild_id` + `private.guild_members` + RLS via SECURITY DEFINER `is_in_guild()` function (+2 days). Bot lives in `bot/` directory.
 
 Lower-priority ideas: GitHub Gist import/export, VS Code extension, optional paste collections.
 
