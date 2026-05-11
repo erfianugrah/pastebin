@@ -445,14 +445,38 @@ export class SupabasePasteRepository implements PasteRepository {
 - Add `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STORAGE_BACKEND` to the `Env` interface in `types.ts`
 - Note: use the new `sb_secret_...` key format (Dashboard → Integrations → Data API → Settings → API Keys)
 
-### Phase 1: Dual-Write (Day 2-3)
+### Phase 1: Dual-Write ✓ COMPLETE
 
-- Create `SupabasePasteRepository` implementing `PasteRepository`
-- Create a `DualWriteRepository` wrapper that writes to both KV and Supabase, reads from KV
-- Feature-flag via env var: `STORAGE_BACKEND: 'kv' | 'supabase' | 'dual'`
-- Update `index.ts` to instantiate the correct repository based on the flag
-- Deploy with `STORAGE_BACKEND=dual` -- new pastes go to both, reads still from KV
-- Verify data is landing in Supabase correctly via the dashboard
+**Files created:**
+- `src/infrastructure/storage/supabasePasteRepository.ts` -- implements all 6 `PasteRepository` methods
+- `src/infrastructure/storage/dualWriteRepository.ts` -- shadow-write wrapper
+- `src/tests/infrastructure/storage/supabasePasteRepository.test.ts` -- 14 tests
+- `src/tests/infrastructure/storage/dualWriteRepository.test.ts` -- 11 tests
+
+**Files modified:**
+- `src/types.ts` -- added `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `STORAGE_BACKEND` to `Env`
+- `src/index.ts` -- feature-flag logic, `pasteRepository` in Hono context
+- `wrangler.jsonc` -- `SUPABASE_URL` and `STORAGE_BACKEND=dual` in vars
+
+**Key implementation decisions:**
+- `upsert` not `insert` -- `save()` is called for both creates and read-count increments
+- PGRST116 error code handled silently as not-found (no log noise)
+- `{ count: 'exact' }` on delete to return accurate `boolean`
+- `expires_at` filter on `findRecentPublic` and `resolveSlug` -- pg_cron cleanup has up to 5-min lag
+- Secondary failures in `DualWriteRepository` are logged but never thrown
+- `pasteRepository` added to Hono context so slug handler uses the correct backend
+
+**To deploy Phase 1:**
+```bash
+# Deploy with dual-write active
+wrangler deploy --env production
+```
+
+**To verify data landing in Supabase:**
+```sql
+-- Run in pgpasteriser after creating a paste on paste.erfi.dev
+SELECT id, title, visibility, created_at FROM pastes ORDER BY created_at DESC LIMIT 5;
+```
 
 ### Phase 2: Read from Supabase (Day 4-5)
 
