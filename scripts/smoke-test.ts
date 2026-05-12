@@ -720,6 +720,290 @@ async function run(): Promise<void> {
 			}
 		}
 	}
+
+	// ---- 13. Auth flows: signup edge cases, confirm, recovery, magic-link, OAuth ----
+	// Every test in this block creates its own auth user via admin API (bypasses
+	// email rate limit) and deletes it after. No leftover users.
+	if (HAS_DB_ACCESS) {
+		// Helper: create a (confirmed-or-not) test user via admin API.
+		async function makeUser(opts: { email: string; password?: string; emailConfirmed: boolean }): Promise<string> {
+			const { data, error } = await sb!.auth.admin.createUser({
+				email: opts.email,
+				password: opts.password ?? 'test-password-12345',
+				email_confirm: opts.emailConfirmed,
+			});
+			if (error || !data.user) throw new Error(`admin.createUser failed: ${error?.message}`);
+			return data.user.id;
+		}
+
+		// Helper: generate a hashed_token for a given action type via admin API.
+		async function generateLink(type: 'signup' | 'recovery' | 'magiclink', email: string): Promise<string> {
+			const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/generate_link`, {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+					apikey: SUPABASE_SECRET_KEY,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ type, email }),
+			});
+			const body = (await res.json()) as { hashed_token?: string; message?: string };
+			if (!body.hashed_token) {
+				throw new Error(`generate_link failed: ${body.message ?? JSON.stringify(body)}`);
+			}
+			return body.hashed_token;
+		}
+
+		// ---- Signup edge cases ----
+		await test('POST /api/auth/signup returns 409 email_taken for duplicate email', async () => {
+			// Existing user MUST be confirmed for Supabase's anti-enumeration
+			// (empty identities array) response to trigger. If unconfirmed,
+			// Supabase re-sends the confirmation email and returns a normal
+			// success response, which `handleSignup` would interpret as
+			// `needsConfirm: true` (200).
+			const dupEmail = `dup-${Date.now()}@pastebin.test`;
+			const id = await makeUser({ email: dupEmail, emailConfirmed: true });
+			try {
+				const res = await fetch(`${API_URL}/api/auth/signup`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email: dupEmail, password: 'test-password-12345' }),
+				});
+				assertEqual(res.status, 409, 'status 409 email_taken');
+				const body = (await res.json()) as { error: { code: string } };
+				assertEqual(body.error.code, 'email_taken', 'error.code');
+			} finally {
+				await sb!.auth.admin.deleteUser(id).catch(() => {});
+			}
+		});
+
+		// ---- Confirm flow ----
+		await test('GET /auth/confirm with missing token_hash → 302 to /login?error=missing_token', async () => {
+			const res = await fetch(`${API_URL}/auth/confirm`, { redirect: 'manual' });
+			assertEqual(res.status, 302, 'status');
+			const loc = res.headers.get('Location') ?? '';
+			assert(loc.includes('/login?error=missing_token'), `location should redirect to /login?error=missing_token, got: ${loc}`);
+		});
+
+		await test('GET /auth/confirm with invalid type → 302 to /login?error=invalid_type', async () => {
+			const res = await fetch(`${API_URL}/auth/confirm?token_hash=x&type=evil`, { redirect: 'manual' });
+			assertEqual(res.status, 302, 'status');
+			const loc = res.headers.get('Location') ?? '';
+			assert(loc.includes('/login?error=invalid_type'), `location should be /login?error=invalid_type, got: ${loc}`);
+		});
+
+		await test('GET /auth/confirm with valid signup hashed_token → 302 to next + sets cookies', async () => {
+			const email = `confirm-${Date.now()}@pastebin.test`;
+			const id = await makeUser({ email, emailConfirmed: false });
+			try {
+				const tokenHash = await generateLink('signup', email);
+				const res = await fetch(
+					`${API_URL}/auth/confirm?token_hash=${tokenHash}&type=signup&next=/my`,
+					{ redirect: 'manual' },
+				);
+				assertEqual(res.status, 302, 'status');
+				const loc = res.headers.get('Location') ?? '';
+				assertEqual(loc, `${API_URL}/my`, 'redirect target');
+				const setCookies = res.headers.getSetCookie?.() ?? [];
+				assert(setCookies.some((c) => c.startsWith('sb-access-token=')), 'sb-access-token set');
+				assert(setCookies.some((c) => c.startsWith('sb-refresh-token=')), 'sb-refresh-token set');
+			} finally {
+				await sb!.auth.admin.deleteUser(id).catch(() => {});
+			}
+		});
+
+		// ---- Login: email_not_confirmed distinguished from invalid_credentials ----
+		await test('POST /api/auth/login with correct password but unconfirmed email → 403', async () => {
+			const email = `unconfirmed-${Date.now()}@pastebin.test`;
+			const password = 'test-password-12345';
+			const id = await makeUser({ email, password, emailConfirmed: false });
+			try {
+				const res = await fetch(`${API_URL}/api/auth/login`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email, password }),
+				});
+				assertEqual(res.status, 403, 'status 403 email_not_confirmed');
+				const body = (await res.json()) as { error: { code: string } };
+				assertEqual(body.error.code, 'email_not_confirmed', 'error.code');
+			} finally {
+				await sb!.auth.admin.deleteUser(id).catch(() => {});
+			}
+		});
+
+		// ---- Resend confirmation ----
+		await test('POST /api/auth/resend-confirmation returns 200', async () => {
+			const email = `resend-${Date.now()}@pastebin.test`;
+			const id = await makeUser({ email, emailConfirmed: false });
+			try {
+				const res = await fetch(`${API_URL}/api/auth/resend-confirmation`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email }),
+				});
+				assertEqual(res.status, 200, 'status');
+				const body = (await res.json()) as { ok: boolean };
+				assertEqual(body.ok, true, 'ok');
+			} finally {
+				await sb!.auth.admin.deleteUser(id).catch(() => {});
+			}
+		});
+
+		await test('POST /api/auth/resend-confirmation with missing email → 400', async () => {
+			const res = await fetch(`${API_URL}/api/auth/resend-confirmation`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({}),
+			});
+			assertEqual(res.status, 400, 'status');
+		});
+
+		// ---- Recovery (forgot + update password) ----
+		await test('POST /api/auth/forgot-password returns 200 (anti-enumeration)', async () => {
+			const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ email: `nonexistent-${Date.now()}@pastebin.test` }),
+			});
+			assertEqual(res.status, 200, 'status');
+		});
+
+		await test('Recovery flow: token → cookies → update password → login with new pw works', async () => {
+			const email = `recovery-${Date.now()}@pastebin.test`;
+			const oldPw = 'old-password-12345';
+			const newPw = 'new-password-67890';
+			const id = await makeUser({ email, password: oldPw, emailConfirmed: true });
+			try {
+				// 1. Generate recovery token
+				const tokenHash = await generateLink('recovery', email);
+
+				// 2. Click recovery link (single GET, no follow). Cookies in Set-Cookie.
+				const confirmRes = await fetch(
+					`${API_URL}/auth/confirm?token_hash=${tokenHash}&type=recovery&next=/auth/reset-password`,
+					{ redirect: 'manual' },
+				);
+				assertEqual(confirmRes.status, 302, 'confirm status');
+				const setCookies = confirmRes.headers.getSetCookie?.() ?? [];
+				const access = setCookies.find((c) => c.startsWith('sb-access-token='));
+				const refresh = setCookies.find((c) => c.startsWith('sb-refresh-token='));
+				assert(!!access && !!refresh, 'cookies set after recovery');
+
+				// 3. POST /api/auth/update-password with the cookies
+				const cookieJar = `${access!.split(';')[0]}; ${refresh!.split(';')[0]}`;
+				const updateRes = await fetch(`${API_URL}/api/auth/update-password`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', Cookie: cookieJar },
+					body: JSON.stringify({ password: newPw }),
+				});
+				assertEqual(updateRes.status, 200, 'update-password status');
+
+				// 4. Login with new password succeeds
+				const loginRes = await fetch(`${API_URL}/api/auth/login`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email, password: newPw }),
+				});
+				assertEqual(loginRes.status, 200, 'login with new password');
+
+				// 5. Login with OLD password fails
+				const oldLoginRes = await fetch(`${API_URL}/api/auth/login`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email, password: oldPw }),
+				});
+				assertEqual(oldLoginRes.status, 401, 'old password rejected');
+			} finally {
+				await sb!.auth.admin.deleteUser(id).catch(() => {});
+			}
+		});
+
+		await test('POST /api/auth/update-password without session → 401', async () => {
+			const res = await fetch(`${API_URL}/api/auth/update-password`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ password: 'new-password-12345' }),
+			});
+			assertEqual(res.status, 401, 'status');
+		});
+
+		// ---- Magic-link ----
+		await test('POST /api/auth/magic-link returns 200', async () => {
+			const email = `magic-${Date.now()}@pastebin.test`;
+			const id = await makeUser({ email, emailConfirmed: true });
+			try {
+				const res = await fetch(`${API_URL}/api/auth/magic-link`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email }),
+				});
+				assertEqual(res.status, 200, 'status');
+			} finally {
+				await sb!.auth.admin.deleteUser(id).catch(() => {});
+			}
+		});
+
+		await test('Magic-link confirm: token → cookies → /my', async () => {
+			const email = `magic2-${Date.now()}@pastebin.test`;
+			const id = await makeUser({ email, emailConfirmed: true });
+			try {
+				const tokenHash = await generateLink('magiclink', email);
+				const res = await fetch(
+					`${API_URL}/auth/confirm?token_hash=${tokenHash}&type=magiclink&next=/my`,
+					{ redirect: 'manual' },
+				);
+				assertEqual(res.status, 302, 'status');
+				const loc = res.headers.get('Location') ?? '';
+				assertEqual(loc, `${API_URL}/my`, 'redirect target');
+				const setCookies = res.headers.getSetCookie?.() ?? [];
+				assert(setCookies.some((c) => c.startsWith('sb-access-token=')), 'cookies set');
+			} finally {
+				await sb!.auth.admin.deleteUser(id).catch(() => {});
+			}
+		});
+
+		// ---- OAuth start ----
+		await test('GET /api/auth/oauth/github → 302 to Supabase + PKCE cookie', async () => {
+			const res = await fetch(`${API_URL}/api/auth/oauth/github`, { redirect: 'manual' });
+			assertEqual(res.status, 302, 'status');
+			const loc = res.headers.get('Location') ?? '';
+			assert(
+				loc.includes('supabase.co/auth/v1/authorize') && loc.includes('provider=github'),
+				`redirects to Supabase /authorize, got: ${loc.slice(0, 120)}`,
+			);
+			const setCookies = res.headers.getSetCookie?.() ?? [];
+			const pkce = setCookies.find((c) => c.startsWith('sb-pkce-verifier='));
+			assert(!!pkce, 'PKCE verifier cookie set');
+			assert(pkce!.includes('HttpOnly'), 'PKCE cookie is HttpOnly');
+			assert(pkce!.includes('SameSite=Lax'), 'PKCE cookie SameSite=Lax');
+		});
+
+		await test('GET /api/auth/oauth/unknown → 400', async () => {
+			const res = await fetch(`${API_URL}/api/auth/oauth/myspace`);
+			assertEqual(res.status, 400, 'status');
+		});
+
+		// ---- OAuth callback edge cases ----
+		await test('GET /auth/callback without code → 302 to /login?error=missing_code', async () => {
+			const res = await fetch(`${API_URL}/auth/callback`, { redirect: 'manual' });
+			assertEqual(res.status, 302, 'status');
+			const loc = res.headers.get('Location') ?? '';
+			assert(loc.includes('/login?error=missing_code'), `location should be /login?error=missing_code, got: ${loc}`);
+		});
+
+		await test('GET /auth/callback with code but no PKCE verifier → 302 to /login?error=missing_verifier', async () => {
+			const res = await fetch(`${API_URL}/auth/callback?code=abc`, { redirect: 'manual' });
+			assertEqual(res.status, 302, 'status');
+			const loc = res.headers.get('Location') ?? '';
+			assert(loc.includes('/login?error=missing_verifier'), `location should be /login?error=missing_verifier, got: ${loc}`);
+		});
+
+		await test('GET /auth/callback with ?error=access_denied → 302 to /login?error=access_denied', async () => {
+			const res = await fetch(`${API_URL}/auth/callback?error=access_denied`, { redirect: 'manual' });
+			assertEqual(res.status, 302, 'status');
+			const loc = res.headers.get('Location') ?? '';
+			assert(loc.includes('/login?error=access_denied'), `location should be /login?error=access_denied, got: ${loc}`);
+		});
+	}
 }
 
 // ---- Run + cleanup + report ----
