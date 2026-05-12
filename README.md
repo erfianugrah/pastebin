@@ -880,6 +880,8 @@ Migrated from Cloudflare KV to **Supabase Postgres** in May 2026. KV was removed
 
 See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey: Phase 0-3 (KV→Supabase cutover), 3.5 (audit fixes), 4.1-4.5 (feature work), 5 (KV removal).
 
+For day-to-day operations (when to use the Dashboard vs CLI vs Management API, how to apply migrations, how to change auth config via `supabase config push`, how to debug a stuck auth flow), see [`SUPABASE-GUIDES.md`](./SUPABASE-GUIDES.md).
+
 ## Changelog
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), `paste_stats()` RPC + complete KV removal (3.3.0), BFF auth proxy + server-side email confirmation + `title` NOT-NULL fix + `wrangler tail` test wrapper + `SUPABASE_URL` secret promotion (3.4.0), domain switch to `paste.erfi.io` + Resend SMTP + auth UX polish + email-template `type=` hardcoding fix + delete-paste handler POST-body bug fix + test-cleanup leak fixes (3.5.0), and password recovery + magic-link + GitHub OAuth + automatic identity-linking + `supabase config push` IaC migration (3.6.0).

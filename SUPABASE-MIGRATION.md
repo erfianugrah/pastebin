@@ -1675,27 +1675,56 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Frontend** (Astro/React) | `UserMenu`, `AuthForm`, `MyPastes`, `RecentPastes` (Realtime), `PasteForm` (sends JWT when signed in), `useAuth` hook, supabase client singleton. | Phases 4.3-4.4. |
 | **wrangler.jsonc** | No `vars` block. Both `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are Wrangler secrets; required pair documented in a JSONC comment at the top of the file. | KV bindings + `STORAGE_BACKEND` var removed in Phase 5. `SUPABASE_URL` promoted from var to secret in 3.4.0. |
 | **astro/.env** | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`. | Phases 4.3-4.4. |
-| **Unit tests** | 150 passing. | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm`) → 150 after 3.5.0 (+1 duplicate-email signup, +2 delete-paste method-body regression). |
-| **Live test scripts** | `test:smoke`, `test:race`, `test:realtime`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. |
+| **Unit tests** | 172 passing (+ 22 Astro). | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm`) → 150 after 3.5.0 (+1 duplicate-email, +2 delete-paste regression) → 172 after 3.6.0 (+22 across recovery, magic-link, OAuth handlers). |
+| **Live test scripts** | `test:smoke` (52 cases now), `test:race`, `test:realtime`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. Smoke +17 auth cases in 3.6.0. |
 | **Migrations** | 14 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix). |
+| **Config IaC** | `supabase/config.toml` + `supabase/templates/*.html`. Push via `supabase config push`. Secrets via `env(VAR)` from `.env`. | New in 3.6.0. Reading live state still needs the Management API (no `config pull`). |
 
 ---
 
 ## Supabase Features Exercised
 
-| Feature            | How it's used                                         | Status |
-| ------------------ | ----------------------------------------------------- | ------ |
-| **Postgres**       | Paste storage, FTS via tsvector + GIN, aggregations, PL/pgSQL functions with row locks | ✓ Phases 0-4 |
-| **RLS**            | Anon: public pastes / non-expired slugs. Authenticated: 5 own-row policies (SELECT public, SELECT/INSERT/UPDATE/DELETE own). Realtime: scoped to `recent:public` topic | ✓ Phases 0, 4.4a |
-| **Auth (email+pw)** | Signup, login, session refresh, `auth.users(id)` FK from `pastes.user_id`. `/login`, `/signup`, `/my` pages with React islands. | ✓ Phase 4.4 |
-| **Auth (OAuth)**   | GitHub provider — pattern documented (acme-corp reference), not yet implemented | ⏳ 4.4d |
-| **Realtime**       | Live recent paste feed. `AFTER INSERT` trigger calls `realtime.send()` to private channel `recent:public`. RLS on `realtime.messages` enforces topic scoping. | ✓ Phase 4.3 |
-| **pg_cron**        | Expired paste cleanup every 5min, expired slug cleanup daily at 03:00 | ✓ Phase 0 |
-| **pg_proc / PL/pgSQL** | `view_paste()` RPC with `SELECT ... FOR UPDATE` for atomic burn-after-reading. `broadcast_public_paste_insert()` trigger function. Both `SECURITY DEFINER` + `SET search_path = ''`. | ✓ Phases 4.1, 4.3 |
-| **Storage**        | Not needed (paste content in Postgres `text` column; 25 MiB limit acceptable) | N/A |
-| **Edge Functions** | Not needed (Cloudflare Worker is the compute layer) | N/A |
-| **supabase-js**    | From a Cloudflare Worker (`service_role`) and from the browser (`anon` + user JWT). Two-client testing pattern matches official docs. | ✓ Phases 1-4 |
-| **Aggregations**   | `paste_stats()` SQL function with `jsonb_build_object` returning total/language/hour/encryption/generatedAt. Exposed via `GET /api/stats`. | ✓ Phase 4.5 |
+### Used
+
+| Feature | How it's used | Phase |
+|---|---|---|
+| **Postgres** | Paste storage, FTS, aggregations, PL/pgSQL functions, row locks, jsonb | 0-4 |
+| **RLS** | 1 anon policy + 5 authenticated policies on `pastes`; 1 anon on `slugs`; 2 on `realtime.messages` | 0, 4.4a |
+| **Auth: email + password** | Signup, login, session refresh, server-side email confirmation (Path C) | 4.4, 4.4d |
+| **Auth: password recovery** | `resetPasswordForEmail` → `/auth/confirm?type=recovery&next=/auth/reset-password` → `updateUser({password})` | 4.4e (3.6.0) |
+| **Auth: magic link** | `signInWithOtp({ shouldCreateUser: false })` — re-entry path; not new signups | 4.4e (3.6.0) |
+| **Auth: OAuth (GitHub)** | Manual PKCE in Worker via capture-storage; supabase-js `signInWithOAuth` + `exchangeCodeForSession` server-side | 4.4e (3.6.0) |
+| **Identity linking** | Default GoTrue auto-linking on verified-email match — same `user_id`, two rows in `auth.identities` (`provider=email` + `provider=github`). `security_manual_linking_enabled` left off. | 4.4e (3.6.0) |
+| **Custom SMTP** | Resend (`smtp.resend.com:465`, sender `noreply@erfi.io`, `rate_limit_email_sent` 30/hr) | 3.5.0 |
+| **Custom email templates** | 5 templates (confirmation/recovery/magic_link/invite/email_change) — hardcoded `type=` per template; 2 notification templates (linked/unlinked) | 3.4.0 + 3.6.0 |
+| **Realtime** | `AFTER INSERT` trigger → `realtime.send()` → private channel `recent:public`; RLS on `realtime.messages` scopes subscribers | 4.3 |
+| **pg_cron** | `cleanup-expired-pastes` every 5min, `cleanup-expired-slugs` daily 03:00 | 0 |
+| **PL/pgSQL functions** | `view_paste()` (FOR UPDATE row lock for burn-after-reading), `broadcast_public_paste_insert()` (trigger fn), `paste_stats()` (jsonb aggregation). All `SECURITY DEFINER` + `SET search_path = ''` | 4.1, 4.3, 4.5 |
+| **Aggregations** | `paste_stats()` SQL function returning jsonb `{totalPublic, byLanguage, byHour, encryption, generatedAt}`. Edge-cached + SWR via Worker. | 4.5 |
+| **supabase-js** | Server-side from Worker (`service_role`); via custom storage adapter for PKCE; never browser-direct (BFF). | 1-4 |
+| **Supabase Management API** | All auth config patches: `site_url`, `uri_allow_list`, SMTP, OAuth providers, rate limits, email templates. Direct DB queries via `/v1/projects/{ref}/database/query`. | 4.4d onward |
+| **Supabase CLI** | `supabase db push --linked` (apply migrations); `supabase config push --yes` (apply config.toml); `supabase init` (scaffold) | 0+; IaC since 3.6.0 |
+| **Custom Domain** | `paste.erfi.io` via Cloudflare custom_domain binding — different scope to Supabase Custom Domains (paid; we don't use that one) | 3.5.0 |
+
+### Considered but not used (with reason)
+
+| Feature | Why not |
+|---|---|
+| **Storage** | Paste content fits in Postgres `text` column (25 MiB acceptable per row). No binary blobs. |
+| **Edge Functions** | Cloudflare Worker is the compute layer. Adding a Supabase Edge Function would mean two compute environments to deploy. |
+| **Anonymous sign-ins** | App design treats anonymous use as session-less + delete-token-gated, not as throwaway auth.users rows. `external_anonymous_users_enabled = false`. |
+| **MFA (TOTP/WebAuthn/phone)** | Single-user prep project. No multi-factor surface yet. Config has it disabled. |
+| **Manual identity linking (`linkIdentity()`)** | Auto-linking on verified-email match covers Pasteriser's case (same email across email/password + GitHub). Manual flow is for cross-email merging, which isn't a user journey here. `security_manual_linking_enabled = false`. |
+| **pg_graphql** | Worker speaks REST/RPC to supabase-js. No GraphQL clients to feed. |
+| **pgvector** | No semantic search workload. FTS via tsvector + GIN is enough for "find a paste by title/language." |
+| **pg_net** | Webhook fan-out isn't part of the design. The Realtime broadcast trigger is the live-update mechanism. |
+| **Foreign Data Wrappers** | No external data sources to stitch in. |
+| **Vault (encrypted secrets)** | Secrets live in Wrangler (for Worker), `.env` (for scripts/CLI), and Supabase's own secret fields (SMTP password). Vault would add a layer without a clear win. |
+| **Auth Hooks (`before_user_created`, `custom_access_token`)** | Default JWT claims are sufficient. No custom signup gating beyond Worker rate limits (Phase 4.7 TBD). |
+| **Database Webhooks** | Realtime broadcast trigger covers the "react to row changes" need. Webhooks would be useful if we needed delivery to external HTTP endpoints, which we don't. |
+| **Supabase Custom Domains** (paid feature, vs. our Cloudflare custom domain) | $10/mo addon to mask `<ref>.supabase.co` in OAuth redirect URIs. Skipped for prep. Documented honestly in `~/supabase/postgres-learnings.md` — see "Vanity OAuth URLs". |
+| **SAML / SSO** | Single-user. No enterprise IdP integration. |
+| **Web3 / Solana sign-in** | Not in scope. |
 
 ---
 
