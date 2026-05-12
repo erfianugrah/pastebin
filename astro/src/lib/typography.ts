@@ -1,39 +1,48 @@
 // ─── Shared Typography Constants ─────────────────────────────────────
 // Single source of truth for recurring text patterns.
-// Import as `T` and compose with `cn()` for contextual overrides.
+//
+// Each value is a CSS class name defined in `astro/src/styles/globals.css`
+// under the "Semantic typography helpers (.t-*)" section. Components still
+// import this as `T` and compose with `cn()` for contextual overrides — but
+// the actual rules live in CSS, so HTML artefacts outside the React tree
+// (preview cards in ui-overhaul/, the design-system kit, etc.) can apply
+// the same class names without Tailwind.
+//
+// Visual semantics are preserved 1:1 with the previous Tailwind-utility
+// values; only the implementation moved into CSS.
 
 export const T = {
 	// ── Page-level ────────────────────────────────────────────────────
-	pageTitle: 'text-2xl font-bold tracking-tight',
-	pageSubtitle: 'text-sm text-muted-foreground',
+	pageTitle: 't-page-title',
+	pageSubtitle: 't-page-subtitle',
 
 	// ── Cards ─────────────────────────────────────────────────────────
-	cardTitle: 'text-2xl font-semibold leading-none tracking-tight',
-	cardDescription: 'text-sm text-muted-foreground',
+	cardTitle: 't-card-title',
+	cardDescription: 't-card-description',
 
 	// ── Form ──────────────────────────────────────────────────────────
-	formLabel: 'text-sm font-medium mb-1 block',
-	formError: 'text-destructive text-sm mt-1',
-	formHelp: 'text-xs text-muted-foreground mt-1',
+	formLabel: 't-form-label',
+	formError: 't-form-error',
+	formHelp: 't-form-help',
 
 	// ── Paste metadata ───────────────────────────────────────────────
-	metaRow: 'flex flex-wrap items-center gap-2 text-sm text-muted-foreground',
-	pasteTitle: 'text-xl font-bold',
+	metaRow: 't-meta-row',
+	pasteTitle: 't-paste-title',
 
 	// ── Section headings ─────────────────────────────────────────────
-	sectionTitle: 'text-lg font-semibold',
-	sectionSubtitle: 'text-sm text-muted-foreground',
+	sectionTitle: 't-section-title',
+	sectionSubtitle: 't-section-subtitle',
 
 	// ── Notices ───────────────────────────────────────────────────────
-	noticeInfo: 'text-sm text-info',
-	noticeWarning: 'text-sm text-warning',
-	noticeSuccess: 'text-sm text-success',
+	noticeInfo: 't-notice-info',
+	noticeWarning: 't-notice-warning',
+	noticeSuccess: 't-notice-success',
 
 	// ── Muted helpers ─────────────────────────────────────────────────
-	muted: 'text-xs text-muted-foreground',
-	mutedSm: 'text-sm text-muted-foreground',
+	muted: 't-muted',
+	mutedSm: 't-muted-sm',
 
 	// ── Centered empty / status screens ──────────────────────────────
-	emptyTitle: 'text-lg font-semibold mb-1',
-	emptyDescription: 'text-sm text-muted-foreground mb-6 max-w-sm',
+	emptyTitle: 't-empty-title',
+	emptyDescription: 't-empty-description',
 } as const;

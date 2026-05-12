@@ -178,3 +178,7 @@ playwright-report/
 
 *prism-components*
 .astro/
+
+# Claude Design reference material — design-system extraction + Iosevka
+# font dump (1.1 GB). Not part of the production artefact; consult locally.
+ui-overhaul/

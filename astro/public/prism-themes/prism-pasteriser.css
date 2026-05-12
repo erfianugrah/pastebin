@@ -1,0 +1,183 @@
+/* ─────────────────────────────────────────────────────────────────────
+   prism-pasteriser.css
+   A Prism.js theme keyed to the Pasteriser design tokens.
+   Follows light/dark with the rest of the system via .dark on <html>.
+   Owns: token colors. Does not own: tokenization (Prism), grammars.
+   ───────────────────────────────────────────────────────────────────── */
+
+/* Code blocks + inline code -------------------------------------------- */
+code[class*="language-"],
+pre[class*="language-"] {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  direction: ltr;
+  text-align: left;
+  white-space: pre;
+  word-spacing: normal;
+  word-break: normal;
+  word-wrap: normal;
+  tab-size: 2;
+  hyphens: none;
+  color: var(--foreground);
+  background: transparent;
+}
+
+pre[class*="language-"] {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  overflow: auto;
+  background: color-mix(in srgb, var(--muted) 30%, var(--card));
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+}
+
+:not(pre) > code[class*="language-"] {
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+  color: var(--foreground);
+  white-space: normal;
+}
+
+/* Selection */
+pre[class*="language-"] ::selection,
+pre[class*="language-"]::selection,
+code[class*="language-"] ::selection,
+code[class*="language-"]::selection {
+  background: color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+/* ── Light token palette ──────────────────────────────────────────── */
+/* Roles, not flat colors. Hue families:
+   - comment / doc     → muted-foreground
+   - keyword / op      → magenta-ish, mapped to --destructive's hue band
+   - string / regex    → success green
+   - number / boolean  → info blue
+   - function / class  → indigo (the brand gradient origin)
+   - tag / attr-name   → primary blue
+   - builtin / type    → success-dark
+   - punctuation       → muted foreground
+   - inserted / deleted → success / destructive bg tints
+*/
+.token.comment,
+.token.prolog,
+.token.cdata,
+.token.doctype {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.token.punctuation { color: color-mix(in srgb, var(--foreground) 55%, transparent); }
+
+.token.namespace { opacity: 0.7; }
+
+.token.property,
+.token.tag,
+.token.constant,
+.token.symbol,
+.token.deleted { color: hsl(217 80% 42%); }
+
+.token.boolean,
+.token.number { color: hsl(217 85% 36%); font-variant-numeric: tabular-nums; }
+
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted { color: hsl(142 70% 28%); }
+
+.token.operator,
+.token.entity,
+.token.url,
+.language-css .token.string,
+.style .token.string,
+.token.variable { color: hsl(20 80% 38%); }
+
+.token.atrule,
+.token.attr-value,
+.token.function,
+.token.class-name { color: hsl(255 55% 45%); }
+
+.token.keyword { color: hsl(335 78% 38%); font-weight: 500; }
+
+.token.regex,
+.token.important { color: hsl(38 85% 38%); }
+
+.token.important,
+.token.bold { font-weight: 600; }
+.token.italic { font-style: italic; }
+.token.entity { cursor: help; }
+
+/* Diff hints */
+.token.inserted { background: color-mix(in srgb, var(--success) 12%, transparent); }
+.token.deleted  { background: color-mix(in srgb, var(--destructive) 12%, transparent); }
+
+/* ── Dark token palette ───────────────────────────────────────────── */
+.dark code[class*="language-"],
+.dark pre[class*="language-"] { color: var(--foreground); }
+
+.dark .token.comment,
+.dark .token.prolog,
+.dark .token.cdata,
+.dark .token.doctype { color: hsl(220 10% 55%); }
+
+.dark .token.punctuation { color: hsl(215 15% 70%); }
+
+.dark .token.property,
+.dark .token.tag,
+.dark .token.constant,
+.dark .token.symbol,
+.dark .token.deleted { color: hsl(217 91% 70%); }
+
+.dark .token.boolean,
+.dark .token.number { color: hsl(217 90% 75%); }
+
+.dark .token.selector,
+.dark .token.attr-name,
+.dark .token.string,
+.dark .token.char,
+.dark .token.builtin,
+.dark .token.inserted { color: hsl(142 70% 65%); }
+
+.dark .token.operator,
+.dark .token.entity,
+.dark .token.url,
+.dark .language-css .token.string,
+.dark .style .token.string,
+.dark .token.variable { color: hsl(30 90% 70%); }
+
+.dark .token.atrule,
+.dark .token.attr-value,
+.dark .token.function,
+.dark .token.class-name { color: hsl(255 80% 78%); }
+
+.dark .token.keyword { color: hsl(330 80% 75%); }
+
+.dark .token.regex,
+.dark .token.important { color: hsl(38 90% 70%); }
+
+/* Line numbers (Prism's line-numbers plugin) ---------------------------- */
+pre[class*="language-"].line-numbers { padding-left: 3.5rem; position: relative; counter-reset: linenumber; }
+pre[class*="language-"].line-numbers > code { position: relative; white-space: inherit; }
+.line-numbers-rows {
+  position: absolute;
+  pointer-events: none;
+  top: 1rem; left: 0;
+  width: 2.75rem;
+  letter-spacing: -1px;
+  border-right: 1px solid var(--border);
+  user-select: none;
+  font-size: var(--fs-sm);
+  color: color-mix(in srgb, var(--foreground) 35%, transparent);
+}
+.line-numbers-rows > span { display: block; counter-increment: linenumber; }
+.line-numbers-rows > span::before { content: counter(linenumber); display: block; padding-right: 0.75rem; text-align: right; }
+
+/* Line highlight (Prism's line-highlight plugin) ----------------------- */
+.line-highlight {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  border-left: 2px solid var(--primary);
+  margin-top: 0;
+}

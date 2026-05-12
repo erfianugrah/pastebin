@@ -10,6 +10,7 @@ import { ErrorDisplay } from './ui/error-display';
 import { ErrorCategory } from '../lib/errorTypes';
 import { cn } from '../lib/utils';
 import { T } from '../lib/typography';
+import { renderMarkdown } from '../lib/markdown';
 
 // Import Prism core (autoloader configured lazily to avoid SSG crash)
 import Prism from 'prismjs';
@@ -71,35 +72,9 @@ function Badge({ className, children }: { className?: string; children: React.Re
 
 type FileEntry = { name: string; content: string; language?: string };
 
-/** Minimal markdown to HTML renderer (no dependencies). */
-function renderMarkdown(md: string): string {
-	let html = md
-		.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-		// headings
-		.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>')
-		.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>')
-		.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>')
-		.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
-		.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>')
-		.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>')
-		// bold, italic, code
-		.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-		.replace(/\*(.+?)\*/g, '<em>$1</em>')
-		.replace(/`([^`]+)`/g, '<code>$1</code>')
-		// links
-		.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-		// horizontal rule
-		.replace(/^---$/gm, '<hr />')
-		// unordered lists
-		.replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>')
-		// paragraphs (double newline)
-		.replace(/\n\n/g, '</p><p>')
-		// single newlines
-		.replace(/\n/g, '<br />');
-	// Wrap list items
-	html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, '<ul>$1</ul>');
-	return `<p>${html}</p>`;
-}
+// renderMarkdown lives in ../lib/markdown.ts — marked v18 + DOMPurify v3 with
+// custom renderers (Prism-compatible fenced blocks, heading slugs, task lists,
+// external-link rel/target, table wrapper, [[kbd]] extension).
 
 // ── Component ────────────────────────────────────────────────────────
 
@@ -113,6 +88,7 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 	const [showRendered, setShowRendered] = useState(false);
 	const [activeFileIdx, setActiveFileIdx] = useState(0);
 	const codeRef = useRef<HTMLElement>(null);
+	const proseRef = useRef<HTMLDivElement>(null);
 
 	const isMarkdown = paste.language === 'markdown';
 
@@ -149,6 +125,14 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 			Prism.highlightElement(codeRef.current);
 		}
 	}, [content, decrypted, paste.language, paste.isEncrypted]);
+
+	// Re-highlight fenced code blocks inside rendered markdown after each render.
+	useEffect(() => {
+		if (!showRendered || !proseRef.current) return;
+		proseRef.current.querySelectorAll<HTMLElement>('pre > code[class*="language-"]').forEach((el) => {
+			Prism.highlightElement(el);
+		});
+	}, [showRendered, content, activeFileIdx, decrypted]);
 
 	// ── Auto-decryption on mount ─────────────────────────────────────
 	useEffect(() => {
@@ -461,7 +445,8 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 					{/* Rendered markdown */}
 					{showRendered && (isMarkdown || activeFile?.language === 'markdown') ? (
 						<div
-							className="prose prose-sm dark:prose-invert max-w-none p-4 rounded-lg border border-border bg-card overflow-auto max-h-[600px]"
+							ref={proseRef}
+							className="prose max-w-none p-4 rounded-lg border border-border bg-card overflow-auto max-h-[600px]"
 							dangerouslySetInnerHTML={{ __html: renderMarkdown(isMultiFile ? (activeFile?.content || '') : content) }}
 						/>
 					) : (

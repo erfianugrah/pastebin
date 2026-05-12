@@ -29,8 +29,13 @@ export default function Header() {
 			}`}
 		>
 			<div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
-				<a href="/" className="text-lg font-semibold tracking-tight hover:text-primary transition-colors">
-					Pasteriser
+				<a
+					href="/"
+					className="inline-flex items-center gap-2 text-lg font-semibold tracking-tight hover:text-primary transition-colors"
+					aria-label="Pasteriser — home"
+				>
+					<img src="/favicon.svg" alt="" aria-hidden="true" width="20" height="20" className="rounded-[5px]" />
+					<span>Pasteriser</span>
 				</a>
 
 				<div className="flex items-center gap-4">

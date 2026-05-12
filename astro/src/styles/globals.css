@@ -39,12 +39,37 @@
   --radius-lg: 0.5rem;
   --radius-md: calc(0.5rem - 2px);
   --radius-sm: calc(0.5rem - 4px);
+  --radius-full: 9999px;
 
   /* Font — monospace everywhere */
   --font-sans: "Iosevka", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, monospace;
   --font-mono: "Iosevka", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, monospace;
+
+  /* Type scale (relative to 0.9375rem body) — used by prism-pasteriser.css,
+     prose.css, and the .t-* semantic typography helpers below. */
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.875rem;
+  --fs-base: 0.9375rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: 1.875rem;
+  --fs-3xl: 2.25rem;
+
+  --lh-tight: 1.1;
+  --lh-snug: 1.25;
+  --lh-normal: 1.6;
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
 
   /* Entry animation */
   --animate-fade-in-up: fade-in-up 0.4s ease-out forwards;
@@ -314,6 +339,107 @@
   font-size: 0.75rem;
   font-weight: 500;
   line-height: 1.25rem;
+}
+
+/* ── Semantic typography helpers (.t-*) ────────────────────────────
+   Single source of truth for recurring text patterns. `lib/typography.ts`
+   `T.*` constants point at these class names. Authored in plain CSS so
+   they're portable to any `.html` artefact that imports globals.css
+   without Tailwind.
+
+   Font-size / line-height pairings match Tailwind v4's text-* defaults
+   1:1 (the previous T.* implementation used those utilities). Don't
+   change a single value without confirming the visual diff is intended. */
+.t-page-title {
+  font-size: 1.5rem; /* text-2xl */
+  line-height: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+.t-page-subtitle {
+  font-size: 0.875rem; /* text-sm */
+  line-height: 1.25rem;
+  color: var(--muted-foreground);
+}
+.t-card-title {
+  font-size: 1.5rem; /* text-2xl */
+  line-height: 1;    /* leading-none */
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.t-card-description {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--muted-foreground);
+}
+.t-form-label {
+  display: block;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+.t-form-error {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--destructive);
+  margin-top: 0.25rem;
+}
+.t-form-help {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--muted-foreground);
+  margin-top: 0.25rem;
+}
+.t-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--muted-foreground);
+}
+.t-paste-title {
+  font-size: 1.25rem; /* text-xl */
+  line-height: 1.75rem;
+  font-weight: 700;
+}
+.t-section-title {
+  font-size: 1.125rem; /* text-lg */
+  line-height: 1.75rem;
+  font-weight: 600;
+}
+.t-section-subtitle {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--muted-foreground);
+}
+.t-notice-info { font-size: 0.875rem; line-height: 1.25rem; color: var(--info); }
+.t-notice-warning { font-size: 0.875rem; line-height: 1.25rem; color: var(--warning); }
+.t-notice-success { font-size: 0.875rem; line-height: 1.25rem; color: var(--success); }
+.t-muted {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--muted-foreground);
+}
+.t-muted-sm {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--muted-foreground);
+}
+.t-empty-title {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.t-empty-description {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--muted-foreground);
+  margin-bottom: 1.5rem;
+  max-width: 24rem;
 }
 
 /* ── Utility: state transition ───────────────────────────────────── */

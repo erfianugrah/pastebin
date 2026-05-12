@@ -1,0 +1,225 @@
+/* ─────────────────────────────────────────────────────────────────────
+   prose.css
+   Markdown-rendered prose styles for Pasteriser.
+   Apply with class="prose" on a containing element (e.g. <article>).
+   Owns: prose typography. Does not own: markdown→html (use marked/md-it).
+   Mirrors the design system's .t-* helpers and CSS vars.
+   ───────────────────────────────────────────────────────────────────── */
+
+.prose {
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-normal);
+  max-width: 65ch;
+  text-wrap: pretty;
+}
+
+/* Block flow rhythm */
+.prose > * + * { margin-top: 1rem; }
+.prose > * + h1,
+.prose > * + h2,
+.prose > * + h3 { margin-top: 2rem; }
+
+/* Headings — use the design-system semantic helpers as a base */
+.prose h1 {
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-snug);
+  margin: 0 0 0.75rem;
+}
+.prose h2 {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-snug);
+  margin: 1.75rem 0 0.5rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--border);
+}
+.prose h3 {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  margin: 1.5rem 0 0.5rem;
+}
+.prose h4 {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  margin: 1.25rem 0 0.375rem;
+}
+.prose h5,
+.prose h6 {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--muted-foreground);
+  margin: 1rem 0 0.25rem;
+}
+
+/* Paragraph + small text */
+.prose p { margin: 0; }
+.prose small { font-size: var(--fs-xs); color: var(--muted-foreground); }
+
+/* Inline */
+.prose strong { font-weight: var(--fw-semibold); color: var(--foreground); }
+.prose em { font-style: italic; }
+.prose del { color: var(--muted-foreground); }
+.prose mark {
+  background: color-mix(in srgb, var(--warning) 22%, transparent);
+  color: inherit;
+  padding: 0 0.125rem;
+  border-radius: var(--radius-sm);
+}
+
+/* Links — match the underline-offset pattern used elsewhere */
+.prose a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
+}
+.prose a:hover { text-decoration-thickness: 2px; }
+
+/* Lists */
+.prose ul,
+.prose ol { margin: 0; padding-left: 1.5rem; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose li { margin-top: 0.25rem; }
+.prose li > ul,
+.prose li > ol { margin-top: 0.25rem; }
+.prose li::marker { color: var(--muted-foreground); }
+
+/* Task lists (GFM) */
+.prose li.task-list-item {
+  list-style: none;
+  margin-left: -1.25rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.prose li.task-list-item input[type="checkbox"] {
+  margin-top: 0.3rem;
+  accent-color: var(--primary);
+}
+
+/* Blockquote */
+.prose blockquote {
+  margin: 0;
+  padding: 0.25rem 1rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.prose blockquote > * + * { margin-top: 0.5rem; }
+
+/* Code — inline + block */
+.prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}
+.prose pre {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  background: color-mix(in srgb, var(--muted) 30%, var(--card));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+.prose pre code { background: transparent; border: 0; padding: 0; font-size: inherit; }
+
+/* Tables */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.prose thead {
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.prose th {
+  font-weight: var(--fw-semibold);
+  padding: 0.5rem 0.75rem;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  font-size: var(--fs-xs);
+}
+.prose td {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+.prose tbody tr:hover { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+/* Horizontal rule */
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+
+/* Images / media — keep responsive, give a soft frame */
+.prose img,
+.prose video {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+}
+
+/* Keyboard / abbr / kbd */
+.prose kbd {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 0.0625rem 0.375rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+}
+.prose abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+/* Footnotes (GFM) */
+.prose sup a {
+  font-size: 0.75em;
+  padding: 0 0.25em;
+}
+.prose .footnotes {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+}
+.prose .footnotes ol { padding-left: 1.25rem; }
+.prose .footnotes p { display: inline; }
+
+/* First/last child margin reset — helps when .prose lives inside a card */
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+
+/* Table horizontal-scroll wrapper emitted by lib/markdown.ts */
+.prose .prose-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.prose .prose-table-scroll > table { margin: 0; }
