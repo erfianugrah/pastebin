@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Logger } from '../../infrastructure/logging/logger';
 import { applyClearCookies, applySessionCookies, getCookie, ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from './cookies';
+import { getServiceRoleClient } from '../../infrastructure/supabase/getSupabaseClient';
 
 function json(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -47,13 +48,7 @@ export class AuthHandlers {
 	) {
 		this.url = supabaseUrl;
 		this.secretKey = secretKey;
-		this.client = createClient(supabaseUrl, secretKey, {
-			auth: {
-				autoRefreshToken: false,
-				persistSession: false,
-				detectSessionInUrl: false,
-			},
-		});
+		this.client = getServiceRoleClient(supabaseUrl, secretKey);
 	}
 
 	async handleSignup(request: Request): Promise<Response> {
@@ -323,16 +318,13 @@ export class AuthHandlers {
 	async handleLogout(request: Request): Promise<Response> {
 		const accessToken = getCookie(request, ACCESS_TOKEN_COOKIE);
 		if (accessToken) {
-			// Best-effort: tell Supabase to revoke this session. If it fails
-			// the cookie is still cleared and the user is signed out locally.
-			try {
-				// admin.signOut requires the user JWT to identify the session
-				await (this.client.auth as unknown as { admin: { signOut: (jwt: string) => Promise<unknown> } })
-					.admin.signOut(accessToken)
-					.catch(() => undefined);
-			} catch {
-				/* ignore */
-			}
+			// admin.signOut(jwt, scope) takes a JWT (used as bearer on POST
+			// /logout). scope='global' revokes EVERY refresh token for the
+			// user — without it, only the current session would be revoked
+			// and a copy of the refresh-token cookie elsewhere would survive.
+			await this.client.auth.admin
+				.signOut(accessToken, 'global')
+				.catch(() => undefined);
 		}
 		const res = json({ ok: true });
 		return applyClearCookies(res);
@@ -377,6 +369,23 @@ export class AuthHandlers {
 	/**
 	 * GET /api/my — return the calling user's pastes via service_role
 	 * + explicit user_id filter. Browser never queries the DB directly.
+	 *
+	 * Keyset-paginated. Caller supplies `?cursor=<iso>&limit=<n>`. The
+	 * response includes a `nextCursor` (the created_at of the last returned
+	 * row) which the client passes to the next call. Cursor is ISO 8601
+	 * timestamp — same shape as `created_at` itself. When `nextCursor` is
+	 * null the caller has reached the end of the user's pastes.
+	 *
+	 * Why keyset over offset: with offset pagination a slow user navigating
+	 * deeper pages re-scans all earlier rows for each page; with keyset the
+	 * planner uses the `(user_id, created_at)` index range directly. Also
+	 * resilient to inserts between fetches — offset would skip rows.
+	 *
+	 * Edge case: two rows with the exact same `created_at` (microsecond
+	 * precision; collision within a single user is extremely rare) could be
+	 * skipped if the cursor lands between them. We accept this; the
+	 * alternative is composite (created_at, id) cursors which complicate
+	 * encoding for negligible benefit.
 	 */
 	async handleMyPastes(request: Request): Promise<Response> {
 		const userId = await this.getUserIdFromCookie(request);
@@ -387,21 +396,44 @@ export class AuthHandlers {
 		const url = new URL(request.url);
 		const rawLimit = parseInt(url.searchParams.get('limit') || '50', 10);
 		const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 50 : rawLimit, 100));
+		const cursor = url.searchParams.get('cursor');
 
-		const { data, error } = await this.client
+		// Validate cursor BEFORE hitting the DB. Bad cursor → 400 rather than
+		// silently returning the first page (which would loop the client).
+		let cursorIso: string | null = null;
+		if (cursor) {
+			const parsed = new Date(cursor);
+			if (isNaN(parsed.getTime())) {
+				return json({ error: { code: 'bad_cursor', message: 'cursor must be a valid ISO timestamp' } }, 400);
+			}
+			cursorIso = parsed.toISOString();
+		}
+
+		let query = this.client
 			.from('pastes')
 			.select('id, title, language, visibility, read_count, created_at, expires_at')
 			.eq('user_id', userId)
 			.gt('expires_at', new Date().toISOString())
 			.order('created_at', { ascending: false })
-			.limit(limit);
+			.limit(limit + 1); // +1 to know if there's another page without a second roundtrip
+
+		if (cursorIso) {
+			query = query.lt('created_at', cursorIso);
+		}
+
+		const { data, error } = await query;
 
 		if (error) {
 			this.logger.error('Auth: my-pastes query failed', { userId, error });
 			return json({ error: { code: 'internal', message: 'Failed to load pastes' } }, 500);
 		}
 
-		return json({ pastes: data ?? [] });
+		const rows = data ?? [];
+		const hasMore = rows.length > limit;
+		const pastes = hasMore ? rows.slice(0, limit) : rows;
+		const nextCursor = hasMore && pastes.length > 0 ? pastes[pastes.length - 1].created_at : null;
+
+		return json({ pastes, nextCursor });
 	}
 
 	/**
@@ -596,8 +628,22 @@ export class AuthHandlers {
 		const type = url.searchParams.get('type');
 		const next = url.searchParams.get('next') || '/';
 
-		// Whitelist `next` to same-origin paths only to avoid open-redirect.
-		const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '/';
+		// Open-redirect defence: construct the candidate URL with the request
+		// origin as base, then verify the resolved origin matches. A naïve
+		// startsWith('/') check is insufficient because the WHATWG URL parser
+		// maps backslash to forward slash for special schemes, so
+		//   new URL('/\\evil.com', 'https://paste.erfi.io')
+		// resolves to 'https://evil.com/' — bypassing a `!startsWith('//')`
+		// guard. Origin equality post-parse closes that.
+		let safeNext = '/';
+		try {
+			const candidate = new URL(next, request.url);
+			if (candidate.origin === url.origin) {
+				safeNext = candidate.pathname + candidate.search + candidate.hash;
+			}
+		} catch {
+			/* fall through with safeNext = '/' */
+		}
 
 		if (!tokenHash || !type) {
 			return Response.redirect(new URL('/login?error=missing_token', request.url).toString(), 302);

@@ -163,8 +163,12 @@ interface DeleteResponse {
 }
 
 async function deletePaste(id: string, token: string): Promise<{ status: number; body: DeleteResponse }> {
-	const res = await fetch(`${API_URL}/pastes/${id}/delete?token=${encodeURIComponent(token)}`, {
+	// Token in JSON body — `?token=` is rejected with 400 (would otherwise
+	// land in Cloudflare logpush via the request-logger).
+	const res = await fetch(`${API_URL}/pastes/${id}/delete`, {
 		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ token }),
 	});
 	const body = (await res.json()) as DeleteResponse;
 	return { status: res.status, body };

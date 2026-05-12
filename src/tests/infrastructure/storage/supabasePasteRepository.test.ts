@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { __resetSupabaseClientCache } from '../../../infrastructure/supabase/getSupabaseClient';
 import { SupabasePasteRepository } from '../../../infrastructure/storage/supabasePasteRepository';
 import { Paste, PasteId, ExpirationPolicy } from '../../../domain/models/paste';
 import { Logger } from '../../../infrastructure/logging/logger';
@@ -126,8 +127,10 @@ describe('SupabasePasteRepository', () => {
 
 	beforeEach(() => {
 		vi.resetAllMocks();
+		__resetSupabaseClientCache();
 		mockClient = makeSupabaseMock();
-		vi.mocked(createClient).mockReturnValue(mockClient as any);
+		__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
 		repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 	});
 
@@ -169,6 +172,7 @@ describe('SupabasePasteRepository', () => {
 
 		it('throws if Supabase returns an error', async () => {
 			mockClient = makeSupabaseMock({ upsertResult: { error: { message: 'DB error' } } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -219,6 +223,7 @@ describe('SupabasePasteRepository', () => {
 	describe('findById', () => {
 		it('returns a Paste when found', async () => {
 			mockClient = makeSupabaseMock({ selectResult: { data: makeDbRow(), error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -236,6 +241,7 @@ describe('SupabasePasteRepository', () => {
 			mockClient = makeSupabaseMock({
 				selectResult: { data: null, error: { message: 'no rows', code: 'PGRST116' } },
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -248,6 +254,7 @@ describe('SupabasePasteRepository', () => {
 			mockClient = makeSupabaseMock({
 				selectResult: { data: null, error: { message: 'connection error', code: '500' } },
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -266,6 +273,7 @@ describe('SupabasePasteRepository', () => {
 				visibility: 'private',
 			});
 			mockClient = makeSupabaseMock({ selectResult: { data: row, error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -281,6 +289,7 @@ describe('SupabasePasteRepository', () => {
 		it('maps user_id from snake_case to Paste.userId', async () => {
 			const row = makeDbRow({ user_id: 'auth-user-xyz' });
 			mockClient = makeSupabaseMock({ selectResult: { data: row, error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -291,6 +300,7 @@ describe('SupabasePasteRepository', () => {
 		it('maps null user_id to undefined (anonymous paste)', async () => {
 			const row = makeDbRow({ user_id: null });
 			mockClient = makeSupabaseMock({ selectResult: { data: row, error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -302,6 +312,7 @@ describe('SupabasePasteRepository', () => {
 	describe('delete', () => {
 		it('returns true when a row is deleted', async () => {
 			mockClient = makeSupabaseMock({ deleteResult: { error: null, count: 1 } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -311,6 +322,7 @@ describe('SupabasePasteRepository', () => {
 
 		it('returns false when no row was deleted (paste not found)', async () => {
 			mockClient = makeSupabaseMock({ deleteResult: { error: null, count: 0 } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -320,6 +332,7 @@ describe('SupabasePasteRepository', () => {
 
 		it('returns false and logs on error', async () => {
 			mockClient = makeSupabaseMock({ deleteResult: { error: { message: 'DB error' }, count: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -337,6 +350,7 @@ describe('SupabasePasteRepository', () => {
 					error: null,
 				},
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -358,6 +372,7 @@ describe('SupabasePasteRepository', () => {
 					error: null,
 				},
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -382,6 +397,7 @@ describe('SupabasePasteRepository', () => {
 					error: null,
 				},
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -404,6 +420,7 @@ describe('SupabasePasteRepository', () => {
 					error: null,
 				},
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -415,6 +432,7 @@ describe('SupabasePasteRepository', () => {
 
 		it('returns null paste when RPC returns 0 rows (not found / expired / cleaned)', async () => {
 			mockClient = makeSupabaseMock({ rpcResult: { data: [], error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -427,6 +445,7 @@ describe('SupabasePasteRepository', () => {
 			mockClient = makeSupabaseMock({
 				rpcResult: { data: null, error: { message: 'function not found' } },
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -446,6 +465,7 @@ describe('SupabasePasteRepository', () => {
 
 		it('builds a textSearch query with websearch type and english config', async () => {
 			mockClient = makeSupabaseMock({ searchResult: { data: [makeDbRow()], error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -466,6 +486,7 @@ describe('SupabasePasteRepository', () => {
 					error: null,
 				},
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -480,6 +501,7 @@ describe('SupabasePasteRepository', () => {
 			mockClient = makeSupabaseMock({
 				searchResult: { data: null, error: { message: 'syntax error' } },
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -491,6 +513,7 @@ describe('SupabasePasteRepository', () => {
 
 		it('trims whitespace before searching', async () => {
 			mockClient = makeSupabaseMock({ searchResult: { data: [], error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -514,6 +537,7 @@ describe('SupabasePasteRepository', () => {
 				generatedAt: '2026-05-11T15:30:00.000Z',
 			};
 			mockClient = makeSupabaseMock({ rpcResult: { data: fakeStats, error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -527,6 +551,7 @@ describe('SupabasePasteRepository', () => {
 			mockClient = makeSupabaseMock({
 				rpcResult: { data: null, error: { message: 'function not found' } },
 			});
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 
@@ -538,6 +563,7 @@ describe('SupabasePasteRepository', () => {
 
 		it('returns null when RPC returns a non-object', async () => {
 			mockClient = makeSupabaseMock({ rpcResult: { data: null, error: null } });
+			__resetSupabaseClientCache();
 			vi.mocked(createClient).mockReturnValue(mockClient as any);
 			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
 

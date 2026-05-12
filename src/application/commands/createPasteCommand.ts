@@ -3,6 +3,8 @@ import { Paste, VisibilityEnum } from '../../domain/models/paste';
 import { PasteRepository } from '../../domain/repositories/pasteRepository';
 import { ExpirationService } from '../../domain/services/expirationService';
 import { UniqueIdService } from '../../domain/services/uniqueIdService';
+import { AppError } from '../../infrastructure/errors/AppError';
+import { SlugTakenError } from '../../infrastructure/storage/supabasePasteRepository';
 
 // Using Zod 4 schema definition
 /** Vanity slug: 3-64 chars, lowercase alphanumeric + hyphens, no leading/trailing hyphens */
@@ -14,10 +16,15 @@ export const CreatePasteSchema = z.object({
 		.min(1)
 		.max(25 * 1024 * 1024), // Max 25MiB (Cloudflare KV value limit)
 	title: z.string().max(100).optional(),
-	language: z.string().optional(),
+	// Concatenated into the `search_vector` generated tsvector + GIN-indexed.
+	// Cap to avoid index bloat from arbitrary user input.
+	language: z.string().max(50).optional(),
 	expiration: z.number().positive().default(86400), // Default 1 day
 	visibility: VisibilityEnum.default('public'),
-	password: z.string().max(100).optional(), // Presence triggers client-side encryption
+	// `password` is intentionally NOT accepted here. Client-side encryption
+	// uses the password only in the browser to derive a key; the server
+	// never needs it. Clients signal "this content is encrypted" via
+	// `isEncrypted: true` below.
 	burnAfterReading: z.boolean().default(false),
 	isEncrypted: z.boolean().default(false), // Whether the content is already encrypted client-side
 	viewLimit: z.number().int().min(1).max(100).optional(), // Optional view limit
@@ -53,12 +60,6 @@ export class CreatePasteCommand {
 		// Create expiration policy
 		const expirationPolicy = this.expirationService.createFromSeconds(validParams.expiration);
 
-		// Ensure isEncrypted is set correctly
-		if (validParams.password) {
-			// If a password is provided, content must be encrypted
-			validParams.isEncrypted = true;
-		}
-
 		// Only use version 2+ for actual encrypted content
 		if (validParams.isEncrypted) {
 			// For encrypted content, use at least version 2 (client-side encryption)
@@ -89,13 +90,24 @@ export class CreatePasteCommand {
 		// Save to repository
 		await this.repository.save(paste);
 
-		// Register vanity slug if provided
+		// Register vanity slug if provided. Two concurrent creates with the
+		// same slug can both pass the resolveSlug precheck — saveSlug catches
+		// the 23505 unique-violation race-loser case and throws SlugTakenError,
+		// which we translate to AppError(409, 'slug_taken') here so the API
+		// boundary gets a structured error instead of a raw 500.
 		if (validParams.slug) {
 			const slugTaken = await this.repository.resolveSlug(validParams.slug);
 			if (slugTaken) {
-				throw new Error('This custom URL is already taken');
+				throw new AppError('slug_taken', 'This custom URL is already taken', 409);
 			}
-			await this.repository.saveSlug(validParams.slug, id.toString(), paste.getExpiresAt());
+			try {
+				await this.repository.saveSlug(validParams.slug, id.toString(), paste.getExpiresAt());
+			} catch (err) {
+				if (err instanceof SlugTakenError) {
+					throw new AppError('slug_taken', 'This custom URL is already taken', 409);
+				}
+				throw err;
+			}
 		}
 
 		const slug = validParams.slug;

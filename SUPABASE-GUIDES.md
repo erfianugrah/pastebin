@@ -338,7 +338,8 @@ than writing a SQL query. Just don't do writes there.
 | Email template | Same as above — `git revert` the template file, `config push`. |
 | Wrangler deploy | `npx wrangler rollback --env production <version-id>` (version IDs in `wrangler deployments list`). |
 | Locked-out auth user | Admin API: `auth.admin.deleteUser(id)` then have them re-signup. Or `updateUser({ password })` if they just forgot password and recovery isn't working. |
-| Broken Realtime subscription | Restart Worker (deploy) or wait — the channel auto-reconnects. |
+| Rate-limit binding outage | Middleware fails open (logs `warn`, passes the request). No action needed — fallback is by design. |
+| Misconfigured `[[ratelimits]]` namespace_id collision | Cloudflare rejects the deploy. Edit `wrangler.jsonc` to unique IDs (1001-1004 dev, 2001-2004 prod) and `npm run deploy:prod` again. |
 
 ---
 

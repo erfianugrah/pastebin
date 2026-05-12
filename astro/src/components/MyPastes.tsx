@@ -22,10 +22,14 @@ function formatDate(date: Date): string {
 
 const FETCH_OPTS: RequestInit = { credentials: 'same-origin' };
 
+const PAGE_SIZE = 50;
+
 export default function MyPastes() {
 	const { user, loading: authLoading } = useAuth();
 	const [pastes, setPastes] = useState<MyPaste[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [loadingMore, setLoadingMore] = useState(false);
+	const [nextCursor, setNextCursor] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -38,7 +42,7 @@ export default function MyPastes() {
 		let cancelled = false;
 		(async () => {
 			try {
-				const res = await fetch('/api/my?limit=100', FETCH_OPTS);
+				const res = await fetch(`/api/my?limit=${PAGE_SIZE}`, FETCH_OPTS);
 				if (cancelled) return;
 				if (!res.ok) {
 					const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
@@ -46,8 +50,9 @@ export default function MyPastes() {
 					setLoading(false);
 					return;
 				}
-				const data = (await res.json()) as { pastes: MyPaste[] };
+				const data = (await res.json()) as { pastes: MyPaste[]; nextCursor: string | null };
 				setPastes(data.pastes ?? []);
+				setNextCursor(data.nextCursor ?? null);
 				setLoading(false);
 			} catch (err) {
 				if (cancelled) return;
@@ -60,6 +65,26 @@ export default function MyPastes() {
 			cancelled = true;
 		};
 	}, [user, authLoading]);
+
+	async function loadMore() {
+		if (!nextCursor || loadingMore) return;
+		setLoadingMore(true);
+		try {
+			const res = await fetch(`/api/my?limit=${PAGE_SIZE}&cursor=${encodeURIComponent(nextCursor)}`, FETCH_OPTS);
+			if (!res.ok) {
+				const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+				setError(body.error?.message ?? `HTTP ${res.status}`);
+				return;
+			}
+			const data = (await res.json()) as { pastes: MyPaste[]; nextCursor: string | null };
+			setPastes((prev) => [...prev, ...(data.pastes ?? [])]);
+			setNextCursor(data.nextCursor ?? null);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to load');
+		} finally {
+			setLoadingMore(false);
+		}
+	}
 
 	async function handleDelete(id: string) {
 		if (!confirm('Delete this paste? This cannot be undone.')) return;
@@ -185,6 +210,13 @@ export default function MyPastes() {
 					</CardContent>
 				</Card>
 			))}
+			{nextCursor && (
+				<div className="pt-2 flex justify-center">
+					<Button size="sm" variant="outline" onClick={loadMore} disabled={loadingMore}>
+						{loadingMore ? 'Loading…' : 'Load more'}
+					</Button>
+				</div>
+			)}
 		</div>
 	);
 }

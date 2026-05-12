@@ -25,7 +25,6 @@ interface Suite {
 }
 
 const suites: Suite[] = [
-	{ name: 'realtime', script: 'scripts/verify-realtime.ts', cooldownAfterSec: 5 },
 	{ name: 'smoke', script: 'scripts/smoke-test.ts', cooldownAfterSec: 5 },
 	{ name: 'rls', script: 'scripts/verify-rls.ts', cooldownAfterSec: 5 },
 	{ name: 'race', script: 'scripts/concurrent-burn-test.ts', cooldownAfterSec: 0 },

@@ -115,18 +115,27 @@ export class ApiHandlers {
 		try {
 			this.logger.debug('Handling delete paste request', { pasteId });
 
-			let ownerToken: string | null = null;
+			// The token MUST arrive in the JSON request body. We previously
+			// also accepted it as `?token=<uuid>` — that surfaced the token
+			// in browser history, Referer headers, and Cloudflare logpush
+			// (request logger emits `Object.fromEntries(url.searchParams)`).
+			// Any present `?token=` query param is now rejected with 400 so
+			// the failure mode is loud rather than a silent log leak.
 			const url = new URL(request.url);
-			ownerToken = url.searchParams.get('token');
+			if (url.searchParams.has('token')) {
+				return json(
+					{
+						error: {
+							code: 'token_in_query',
+							message: 'Send the delete token in the JSON request body, not as a query parameter.',
+						},
+					},
+					400,
+				);
+			}
 
-			// Accept JSON body on either DELETE or POST. The router exposes
-			// this endpoint via both methods, and clients that send a JSON
-			// body with POST were previously falling through to query-param-
-			// only auth, which always failed with 403. This caused
-			// verify-realtime.ts cleanup to silently leak pastes for every
-			// run.
+			let ownerToken: string | null = null;
 			if (
-				!ownerToken &&
 				(request.method === 'DELETE' || request.method === 'POST') &&
 				request.headers.get('Content-Type')?.includes('application/json')
 			) {

@@ -1,8 +1,9 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { Paste, PasteData, PasteId } from '../../domain/models/paste';
 import { PasteRepository, PasteStats, ViewResult } from '../../domain/repositories/pasteRepository';
 import { PasteFactory } from '../../application/factories/pasteFactory';
 import { Logger } from '../logging/logger';
+import { getServiceRoleClient } from '../supabase/getSupabaseClient';
 
 // Shape of the view_paste() RPC response. Postgres returns 0 or 1 row.
 interface ViewPasteRow {
@@ -19,18 +20,11 @@ export class SupabasePasteRepository implements PasteRepository {
 		key: string, // sb_secret_... key -- bypasses RLS
 		private readonly logger: Logger,
 	) {
-		// Server-side client — disable session management (Supabase recommended
-		// pattern for non-browser contexts). The Worker uses a secret key which
-		// doesn't need refresh; persistSession would try to use localStorage
-		// (unavailable in Workers) and autoRefreshToken would set a setTimeout
-		// that does nothing useful.
-		this.client = createClient(url, key, {
-			auth: {
-				autoRefreshToken: false,
-				persistSession: false,
-				detectSessionInUrl: false,
-			},
-		});
+		// Shared service-role client (cached by (url, key) in
+		// getSupabaseClient.ts). `persistSession: false` + `autoRefreshToken:
+		// false` means the client carries no per-request state, so caching
+		// across the V8 isolate is safe.
+		this.client = getServiceRoleClient(url, key);
 	}
 
 	async save(paste: Paste): Promise<void> {
@@ -224,6 +218,13 @@ export class SupabasePasteRepository implements PasteRepository {
 		});
 
 		if (error) {
+			// Postgres unique_violation when another request inserted the same
+			// slug between our resolveSlug() check and this insert (TOCTOU).
+			// Surface as a typed conflict so the API layer can return 409
+			// without leaking the raw Postgres error message.
+			if (error.code === '23505') {
+				throw new SlugTakenError(slug);
+			}
 			this.logger.error('Supabase: saveSlug failed', { slug, pasteId, error });
 			throw new Error(`Failed to save slug: ${error.message}`);
 		}
@@ -247,5 +248,20 @@ export class SupabasePasteRepository implements PasteRepository {
 			deleteToken: row.delete_token as string | undefined,
 			userId: (row.user_id as string | null | undefined) ?? undefined,
 		};
+	}
+}
+
+/**
+ * Thrown by saveSlug() when the unique constraint on `slugs.slug` is hit —
+ * either because two concurrent createPaste requests passed the resolveSlug
+ * precheck (TOCTOU) or because resolveSlug missed for any reason. Translated
+ * to HTTP 409 at the API boundary.
+ */
+export class SlugTakenError extends Error {
+	readonly code = 'slug_taken';
+	constructor(public readonly slug: string) {
+		super(`Slug '${slug}' is already taken`);
+		this.name = 'SlugTakenError';
+		Object.setPrototypeOf(this, SlugTakenError.prototype);
 	}
 }

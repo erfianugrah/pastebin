@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { __resetSupabaseClientCache } from '../../../infrastructure/supabase/getSupabaseClient';
 import { AuthService } from '../../../infrastructure/auth/authService';
 import { Logger } from '../../../infrastructure/logging/logger';
 
@@ -36,6 +37,7 @@ describe('AuthService', () => {
 
 	beforeEach(() => {
 		vi.resetAllMocks();
+		__resetSupabaseClientCache();
 	});
 
 	it('returns null when no Authorization header is present', async () => {

@@ -224,28 +224,46 @@ CREATE POLICY "creator can delete own pastes"
   USING (user_id = (select auth.uid()));
 ```
 
-### Expiration Cleanup (migrations: `enable_pg_cron.sql`, `schedule_cleanup_jobs.sql`)
+### Expiration Cleanup (migrations: `enable_pg_cron.sql`, `schedule_cleanup_jobs.sql`, `batch_expiry_cleanup.sql`)
+
+Phase 0 scheduled two unbounded `DELETE` jobs. A spike of 1-hour pastes expiring in one window (e.g. 50k rows) would hold row locks across the entire matching set; concurrent `view_paste(uuid)` calls on overlapping rows stalled behind the lock.
+
+Migration `20260512102704_batch_expiry_cleanup.sql` (May 2026) replaces both jobs with bounded `LIMIT 1000` batches. Each invocation deletes at most 1000 rows; pg_cron fires the job again on the next cycle until the backlog clears. Rows past `expires_at` are not user-visible (every read path filters `expires_at > now()`) so spreading cleanup across multiple cycles is invisible to users.
 
 ```sql
 -- Enable pg_cron
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 
--- Delete expired pastes every 5 minutes
+-- Current schedule (post 20260512102704_batch_expiry_cleanup.sql):
+
 SELECT cron.schedule(
   'cleanup-expired-pastes',
   '*/5 * * * *',
-  $$ DELETE FROM pastes WHERE expires_at < now() $$
+  $$
+    DELETE FROM public.pastes
+    WHERE id IN (
+      SELECT id FROM public.pastes
+      WHERE expires_at < now()
+      LIMIT 1000
+    )
+  $$
 );
 
--- Delete expired slugs daily at 3am
 SELECT cron.schedule(
   'cleanup-expired-slugs',
-  '0 3 * * *',
-  $$ DELETE FROM slugs WHERE expires_at < now() $$
+  '*/15 * * * *',  -- was daily 03:00 pre-batch; bumped to every 15min to amortise
+  $$
+    DELETE FROM public.slugs
+    WHERE slug IN (
+      SELECT slug FROM public.slugs
+      WHERE expires_at < now()
+      LIMIT 1000
+    )
+  $$
 );
 ```
 
-Verified live: `SELECT jobname, schedule FROM cron.job;` returns both jobs.
+Verified live (post-migration): `SELECT jobname, schedule FROM cron.job;` returns both jobs with the new schedules. Lock-hold time is now bounded by `LIMIT 1000` rather than the size of the expired set.
 
 ### Postgres Functions (for atomic operations)
 
@@ -696,77 +714,55 @@ side needs the same stemmer to align.
 - "My Pastes" page using RLS (user only sees their own)
 - Authenticated users don't need `deleteToken` -- RLS handles it
 
-#### 4.3: Live recent feed via Realtime broadcast ✓ COMPLETE
+#### 4.3: Live recent feed via Realtime broadcast ✓ SHIPPED 3.1.0 ✗ REVERTED 3.7.0
 
-Migration `20260511132703_realtime_public_paste_feed.sql` adds a
-trigger that broadcasts public paste inserts to a private Realtime
-channel. The frontend `/recent` page subscribes and prepends new
-pastes to the list without polling.
+Migration `20260511132703_realtime_public_paste_feed.sql` installed an
+`AFTER INSERT` trigger on `public.pastes` that called `realtime.send(...)`
+on every public-paste insert. The intent was a push live-feed on `/recent`.
 
-**Why broadcast and not Postgres Changes:**
+**Why this was reverted** (migration `20260512102410_drop_realtime_broadcast.sql`):
 
-Supabase docs explicitly recommend Broadcast over Postgres Changes for
-production — Postgres Changes streams the entire publication to every
-subscriber and runs RLS per-row per-subscriber, which doesn't scale.
-Broadcast lets the trigger build a curated payload (no sensitive
-fields) and emit it once per public insert.
+Verification in May 2026 found the pipeline was firing into the void:
 
-**Defense in depth: three independent layers protect against private-paste leaks:**
+1. **No subscribers.** `astro/src/` contains zero `supabase-js` client
+   instances, zero `.channel(...)` calls, zero `.subscribe(...)` calls.
+   The push-feed UI was never wired.
+2. **CSP blocks any future subscriber.** `src/interfaces/api/middleware.ts`
+   sets `connect-src 'self'`. WebSocket to `wss://<ref>.supabase.co` is
+   physically blocked by the browser regardless of any code change.
+3. **Quota burn.** Every public-paste insert enqueued a Realtime message
+   with no consumer. Free plan caps Realtime at 2M messages/month; paid
+   plans bill peak concurrent connections.
 
-1. **Trigger filter (`visibility = 'public'`)** — private pastes never
-   reach `realtime.send()`. Earliest possible filter.
-2. **Curated payload** — only `id`, `title`, `language`, `createdAt`,
-   `expiresAt`, `readCount`, `isEncrypted`, `version` are broadcast.
-   Never `content`, `delete_token`, or `user_id`. Even if the schema
-   grows new fields, they don't accidentally leak.
-3. **Private channel + RLS** — `is_private = true` requires
-   subscribers to satisfy a SELECT policy on `realtime.messages`.
-   The policy only allows `anon` and `authenticated` to receive from
-   the exact topic `recent:public`. Any other topic from a buggy
-   trigger would be filtered server-side.
+The new migration drops:
 
-**Encryption / visibility dimension matrix:**
+- `public.broadcast_public_paste_insert_trigger` (trigger on `pastes`)
+- `public.broadcast_public_paste_insert()` (PL/pgSQL trigger function)
+- `anon can receive recent:public broadcasts` (RLS on `realtime.messages`)
+- `authenticated can receive recent:public broadcasts` (RLS on `realtime.messages`)
 
-Pastes have two orthogonal dimensions: visibility (public | private)
-and encryption (plaintext | client-side E2EE). All four combinations
-handled:
+`scripts/verify-realtime.ts` was deleted alongside the migration since it
+exercised the pipeline that no longer exists. `package.json` lost
+`test:realtime` and `test:realtime:tail`; `scripts/run-all-live-tests.ts`
+no longer includes the realtime suite. The remaining live suites are
+smoke, race, rls.
 
-| Visibility | Encryption | Broadcast? | Notes |
-|------------|-----------|------------|-------|
-| public | plaintext | yes (metadata only) | mirrors `/api/recent` |
-| public | E2EE | yes (metadata only) | title may itself be ciphertext; client renders accordingly |
-| private | plaintext | **no** | trigger filter blocks |
-| private | E2EE | **no** | trigger filter blocks |
+**Recent-paste UX** is now polling-only. The Astro `RecentPastes`
+component fetches `GET /api/recent` once on mount with no setInterval
+(no client-side polling either, despite the research claim — see PLAN
+verification §M4). If a push feed is wanted in the future, both
+prerequisites need to be met first:
 
-E2EE encryption keys live only in the URL fragment (`#hash`), never
-in the DB, so they cannot reach Realtime under any path. Passwords
-were removed entirely in the earlier Phase 4 cleanup.
+1. Add `wss://<ref>.supabase.co` to the CSP `connect-src` directive.
+2. Add a supabase-js client to the frontend with the publishable
+   (anon) key, then `client.channel('recent:public').on('broadcast', …)`.
 
-**Trigger semantics for upsert:**
-
-`save()` upserts the row on every read-count increment. `AFTER INSERT
-OR UPDATE` would fire on every read. `AFTER INSERT` only fires on
-*actual* INSERT, not on `INSERT ... ON CONFLICT DO UPDATE` that
-resolved to UPDATE. Verified empirically (see `npm run test:realtime`).
-
-**Verification (`npm run test:realtime`):**
-
-13 checks across 3 groups:
-
-1. End-to-end pipeline:
-   - Subscribe as anon to `recent:public` (private channel)
-   - Create public paste → broadcast received
-   - Create private paste → no broadcast (trigger filter)
-   - Payload contains only the 8 safe fields
-   - Read-count upsert (UPDATE) does NOT fire the INSERT trigger
-2. Compatibility matrix (key types × channel types × setAuth) — all
-   key formats work with private channels.
-3. Negative tests — subscribing to a disallowed topic returns
-   `Unauthorized: You do not have permission to receive messages from
-   this topic`.
-
-See `postgres-learnings.md` "Supabase Realtime" section for the full
-limitations matrix.
+**Defense-in-depth context for the original design** (kept here as
+historical reference): the three-layer model — trigger filter,
+curated payload, RLS on `realtime.messages` — was correctly applied.
+The pipeline failed not from a security regression but from being
+unreachable. If we ever re-enable, those three layers remain the
+right design.
 
 #### 4.4a: RLS for authenticated users ✓ COMPLETE
 
@@ -1257,18 +1253,22 @@ pattern against Supabase projects. Citations:
   Explicitly recommend Cloudflare Turnstile or hCaptcha on every
   anonymous flow.
 
-**Pasteriser's current exposure:**
+**Pasteriser's current exposure (post 3.7.0):**
 
 | Surface | What's there now | Gap |
 |---------|------------------|-----|
 | RLS on `pastes`/`slugs` | 6 policies, verified by `test:rls` | ✓ Honeypot study would find nothing |
 | `anon` role permissions | `SELECT` only on public pastes/slugs | ✓ Minimal |
-| Worker `POST /pastes` rate limit | 10/min per IP in-memory | ⚠ Per-isolate, no cross-colo coordination |
-| `/auth/v1/signup` (browser → Supabase direct) | Supabase default | ✗ No CAPTCHA, no Worker gating |
-| `/auth/v1/token` refresh | Supabase per-IP token bucket | ⚠ Buggy per #2333 |
-| Email confirmation | Project default (likely on) | ✗ Inbuilt SMTP ~4/hour cap |
-| Realtime subscriptions | None | ⚠ Free tier 200 concurrent connections |
-| Paste size | 25 MiB max for all roles | ✗ Multi-IP attacker fills 500 MB DB in 20 requests |
+| Worker `POST /pastes` rate limit | `RL_PASTE_CREATE` 30/60s via CF binding | ✓ Edge-propagated counter, cross-colo via CF infra |
+| Worker auth endpoints | `RL_AUTH_WRITE` 10/60s on signup/login/recovery/magic-link/resend/update-password | ✓ Per IP+endpoint scope; closes upstream Supabase rate-limiter bugs by gating first |
+| Worker `GET /api/auth/session` | `RL_SESSION_READ` 60/60s | ✓ Stolen-JWT validity oracle no longer unbounded |
+| Worker `GET /api/search` | `RL_SEARCH` 30/60s | ✓ Bounded GIN-index probing |
+| `/auth/v1/signup` (browser → Supabase direct) | N/A | ✓ Browser never speaks to Supabase since BFF; all auth flows through Worker |
+| `/auth/v1/token` refresh | N/A | ✓ Worker BFF — refresh happens in Worker code, not browser |
+| Email confirmation | Custom SMTP via Resend, 30/hr | ✓ Inbuilt 2/hr bottleneck removed in 3.5.0 |
+| Realtime subscriptions | None — pipeline dropped 3.7.0 | ✓ No exposure |
+| Paste size | 25 MiB max for all roles | ✗ Multi-IP attacker fills 500 MB DB in 20 requests — anonymous-cap still on Phase 4.7 todo |
+| CAPTCHA / Turnstile | None | ⚠ Signup floor still depends on rate-limit + email-rate; CAPTCHA would harden further |
 
 **Mitigation order (tightest ROI first):**
 
@@ -1293,11 +1293,11 @@ means.
 |----------|--------|-----------|--------|
 | 1 | **OAuth-only signup** — disable email/password signup, force GitHub (primary) + optionally Google. Pattern from `acme-corp/src/app/login/page.tsx`. Disable email confirmation in Supabase Dashboard. | 95% of bot signup traffic disappears — bots can't easily mass-create GitHub accounts. Sidesteps every email-rate-limit bug. This is Phase 4.4d folded into 4.7. | 1-2h |
 | 2 | **Cap anonymous paste size to 64 KiB** in the Zod schema. 1 MiB for authenticated users. 25 MiB never. | Storage flooding is the cheapest attack and most expensive to recover from. | 10 min |
-| 3 | **Move signup behind the Worker** (`/api/auth/signup`) — browser POSTs to Worker, Worker enforces per-IP rate limit and IP/UA fingerprint heuristics, then calls Supabase Auth admin API with `Sb-Forwarded-For` header so its per-IP limits work correctly. | Defends against upstream Supabase Auth bugs (#2333 not enforcing config, #1236 failed signups counting). Worker rate limit doubles the gate. | 2-3h |
+| 3 | ✓ **DONE (3.7.0).** Move signup behind the Worker, gate it with `RL_AUTH_WRITE` 10/60s per IP. Worker validates JWT + sets HttpOnly cookies. Same gate applies to login, recovery, magic-link, resend, update-password. | Closed via the BFF refactor + CF Rate Limiting binding. | — |
 | 4 | **Honeypot field + timing check** in `AuthForm.tsx` and `PasteForm.tsx`. Invisible CSS-hidden `<input name="bait">` that bots fill; min-time-to-submit ≥ 1s. Reject submissions that fail either check. | Stops basic scripted bots without full browser emulation. Zero UX cost. | 30 min |
 | 5 | **Tighten Supabase Auth rate limits** via Management API. Conservative caps (10 signups/hour/IP, 30 token refreshes/hour/IP). | Belt-and-suspenders even with Auth bugs. | 5 min |
-| 6 | **Custom SMTP via Resend** ✓ DONE (3.5.0). `smtp.resend.com:465`, `noreply@erfi.io`, `rate_limit_email_sent` 2/hr → 30/hr. The inbuilt 2/hr was unusable. | — | — |
-| 7 | **PostgREST-side per-IP rate limit** for browser-direct paths (`/my` reads, Realtime subscribes). `private.rate_limits` table + `before insert/update/delete` triggers per `supabase/guides/api/securing-your-api.md`. | Defense in depth — Worker rate limit doesn't gate direct DB queries. | 1h |
+| 6 | ✓ **DONE (3.5.0).** Custom SMTP via Resend. `smtp.resend.com:465`, `noreply@erfi.io`, `rate_limit_email_sent` 2/hr → 30/hr. | — | — |
+| 7 | ✓ **N/A in current architecture.** PostgREST-side per-IP rate limit was on the todo for browser-direct paths. With the BFF model the browser never talks to PostgREST directly — everything goes through the Worker which now has CF Rate Limiting bindings. | If the BFF model ever changes (browser-direct DB), revisit. | — |
 | 8 | **Per-account daily storage quota** in Postgres — `pastes` insert trigger that sums bytes per `user_id` and rejects if over the daily cap. | Catches the rare case where a single legitimate-looking user fills the DB. | 2h |
 
 **Quick wins to ship today (~3h for #1, #2, #5):** removes the
@@ -1672,12 +1672,12 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Infrastructure/auth** | `AuthService.getUserIdFromRequest()` validates JWTs via `supabase.auth.getUser()`. | Phase 4.4b. |
 | **Entry point** (`index.ts`) | DI of all services in Hono context. Routes for paste CRUD, `/api/recent`, `/api/search`, `/api/stats`, `/login`, `/signup`, `/my`. | `STORAGE_BACKEND` branching removed in Phase 5. |
 | **Types** (`types.ts`) | `Env`: `ASSETS`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`. | `PASTES`/`STORAGE_BACKEND` removed in Phase 5. |
-| **Frontend** (Astro/React) | `UserMenu`, `AuthForm`, `MyPastes`, `RecentPastes` (Realtime), `PasteForm` (sends JWT when signed in), `useAuth` hook, supabase client singleton. | Phases 4.3-4.4. |
+| **Frontend** (Astro/React) | `UserMenu`, `AuthForm`, `MyPastes` (cursor-paginated since 3.7.0), `RecentPastes` (polling-based; Realtime push reverted in 3.7.0), `PasteForm` (sends JWT when signed in), `useAuth` hook. No browser-side supabase-js client. | Phases 4.3-4.4. |
 | **wrangler.jsonc** | No `vars` block. Both `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are Wrangler secrets; required pair documented in a JSONC comment at the top of the file. | KV bindings + `STORAGE_BACKEND` var removed in Phase 5. `SUPABASE_URL` promoted from var to secret in 3.4.0. |
 | **astro/.env** | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`. | Phases 4.3-4.4. |
 | **Unit tests** | 172 passing (+ 22 Astro). | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm`) → 150 after 3.5.0 (+1 duplicate-email, +2 delete-paste regression) → 172 after 3.6.0 (+22 across recovery, magic-link, OAuth handlers). |
-| **Live test scripts** | `test:smoke` (52 cases now), `test:race`, `test:realtime`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. Smoke +17 auth cases in 3.6.0. |
-| **Migrations** | 14 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix). |
+| **Live test scripts** | `test:smoke` (52 cases now), `test:race`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. Smoke +17 auth cases in 3.6.0. `test:realtime` removed in 3.7.0 alongside the Realtime trigger. |
+| **Migrations** | 16 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3, dropped in 3.7.0) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix) + drop-realtime (3.7.0) + batch-cron (3.7.0). |
 | **Config IaC** | `supabase/config.toml` + `supabase/templates/*.html`. Push via `supabase config push`. Secrets via `env(VAR)` from `.env`. | New in 3.6.0. Reading live state still needs the Management API (no `config pull`). |
 
 ---
@@ -1689,7 +1689,7 @@ This table tracks cumulative impact across all phases (0 through 5):
 | Feature | How it's used | Phase |
 |---|---|---|
 | **Postgres** | Paste storage, FTS, aggregations, PL/pgSQL functions, row locks, jsonb | 0-4 |
-| **RLS** | 1 anon policy + 5 authenticated policies on `pastes`; 1 anon on `slugs`; 2 on `realtime.messages` | 0, 4.4a |
+| **RLS** | 1 anon policy + 5 authenticated policies on `pastes`; 1 anon on `slugs`. Realtime RLS policies on `realtime.messages` were added in 4.3 and dropped in 3.7.0 alongside the trigger. | 0, 4.4a |
 | **Auth: email + password** | Signup, login, session refresh, server-side email confirmation (Path C) | 4.4, 4.4d |
 | **Auth: password recovery** | `resetPasswordForEmail` → `/auth/confirm?type=recovery&next=/auth/reset-password` → `updateUser({password})` | 4.4e (3.6.0) |
 | **Auth: magic link** | `signInWithOtp({ shouldCreateUser: false })` — re-entry path; not new signups | 4.4e (3.6.0) |
@@ -1697,9 +1697,11 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Identity linking** | Default GoTrue auto-linking on verified-email match — same `user_id`, two rows in `auth.identities` (`provider=email` + `provider=github`). `security_manual_linking_enabled` left off. | 4.4e (3.6.0) |
 | **Custom SMTP** | Resend (`smtp.resend.com:465`, sender `noreply@erfi.io`, `rate_limit_email_sent` 30/hr) | 3.5.0 |
 | **Custom email templates** | 5 templates (confirmation/recovery/magic_link/invite/email_change) — hardcoded `type=` per template; 2 notification templates (linked/unlinked) | 3.4.0 + 3.6.0 |
-| **Realtime** | `AFTER INSERT` trigger → `realtime.send()` → private channel `recent:public`; RLS on `realtime.messages` scopes subscribers | 4.3 |
-| **pg_cron** | `cleanup-expired-pastes` every 5min, `cleanup-expired-slugs` daily 03:00 | 0 |
-| **PL/pgSQL functions** | `view_paste()` (FOR UPDATE row lock for burn-after-reading), `broadcast_public_paste_insert()` (trigger fn), `paste_stats()` (jsonb aggregation). All `SECURITY DEFINER` + `SET search_path = ''` | 4.1, 4.3, 4.5 |
+| **Realtime** | Trigger + RLS shipped in 4.3, **reverted in 3.7.0** (migration `20260512102410_drop_realtime_broadcast.sql`). Frontend never subscribed; CSP blocked WebSocket. Quota burn for zero consumers. | 4.3 → reverted 3.7.0 |
+| **pg_cron** | Both jobs batched at `LIMIT 1000` (3.7.0). `cleanup-expired-pastes` every 5min, `cleanup-expired-slugs` every 15min (was daily 03:00 pre-batch). | 0; rewritten in 3.7.0 |
+| **PL/pgSQL functions** | `view_paste()` (FOR UPDATE row lock for burn-after-reading), `paste_stats()` (jsonb aggregation). All `SECURITY DEFINER` + `SET search_path = ''`. `broadcast_public_paste_insert()` was here in 4.3, dropped in 3.7.0. | 4.1, 4.5 |
+| **Workers Rate Limiting binding** | `RL_AUTH_WRITE` 10/60s, `RL_SESSION_READ` 60/60s, `RL_PASTE_CREATE` 30/60s, `RL_SEARCH` 30/60s. Counters propagate across the edge; middleware fails open on binding error. | 3.7.0 |
+| **Supabase client caching** | Three `createClient(...)` call sites consolidated through `getServiceRoleClient(url, key)` memoiser. The cached client is stateless given `persistSession: false` + `autoRefreshToken: false`. PKCE-flow clients in `handleOAuthStart`/`handleOAuthCallback` still allocate per-request (custom storage shim). | 3.7.0 |
 | **Aggregations** | `paste_stats()` SQL function returning jsonb `{totalPublic, byLanguage, byHour, encryption, generatedAt}`. Edge-cached + SWR via Worker. | 4.5 |
 | **supabase-js** | Server-side from Worker (`service_role`); via custom storage adapter for PKCE; never browser-direct (BFF). | 1-4 |
 | **Supabase Management API** | All auth config patches: `site_url`, `uri_allow_list`, SMTP, OAuth providers, rate limits, email templates. Direct DB queries via `/v1/projects/{ref}/database/query`. | 4.4d onward |

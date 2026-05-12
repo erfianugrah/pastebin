@@ -1,6 +1,7 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { Logger } from '../logging/logger';
 import { ACCESS_TOKEN_COOKIE, getCookie } from '../../interfaces/api/cookies';
+import { getServiceRoleClient } from '../supabase/getSupabaseClient';
 
 /**
  * Worker-side Supabase Auth verification.
@@ -24,13 +25,7 @@ export class AuthService {
 	private readonly client: SupabaseClient;
 
 	constructor(url: string, secretKey: string, private readonly logger: Logger) {
-		this.client = createClient(url, secretKey, {
-			auth: {
-				autoRefreshToken: false,
-				persistSession: false,
-				detectSessionInUrl: false,
-			},
-		});
+		this.client = getServiceRoleClient(url, secretKey);
 	}
 
 	/**

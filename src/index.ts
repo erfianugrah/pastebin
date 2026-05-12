@@ -16,6 +16,7 @@ import { GetPasteStatsQuery } from './application/queries/getPasteStatsQuery';
 import { ApiHandlers } from './interfaces/api/handlers';
 import { AuthHandlers } from './interfaces/api/authHandlers';
 import { securityHeaders } from './interfaces/api/middleware';
+import { rateLimit } from './interfaces/api/rateLimit';
 import { AppError } from './infrastructure/errors/AppError';
 import { Logger } from './infrastructure/logging/logger';
 import { addCacheHeaders, cacheStaticAsset, cachePasteView, preventCaching } from './infrastructure/caching/cacheControl';
@@ -38,6 +39,26 @@ type AppEnv = {
 		authService: AuthService;
 	};
 };
+
+// Keys that may carry secrets in URL query strings. We log query params for
+// debuggability but redact these because Cloudflare logpush captures every
+// log line, and once a token lands in logpush it lives there for the
+// retention window. Add to this list, never remove.
+const SENSITIVE_QUERY_KEYS = new Set([
+	'token', // delete token
+	'token_hash', // auth confirm token hash
+	'code', // OAuth code
+	'access_token',
+	'refresh_token',
+]);
+
+function redactSensitiveQueryParams(params: URLSearchParams): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [key, value] of params) {
+		out[key] = SENSITIVE_QUERY_KEYS.has(key) ? '[redacted]' : value;
+	}
+	return out;
+}
 
 const app = new Hono<AppEnv>();
 
@@ -64,7 +85,7 @@ app.use('*', async (c, next) => {
 	});
 
 	logger.info(`${c.req.method} ${url.pathname}`, {
-		queryParams: Object.fromEntries(url.searchParams),
+		queryParams: redactSensitiveQueryParams(url.searchParams),
 		headers: {
 			'user-agent': c.req.header('user-agent'),
 			'content-type': c.req.header('content-type'),
@@ -169,7 +190,7 @@ app.onError((err, c) => {
 // ---- API routes ----
 
 // POST /pastes — create paste
-app.post('/pastes', async (c) => {
+app.post('/pastes', rateLimit('RL_PASTE_CREATE', 'paste-create'), async (c) => {
 	return preventCaching(await c.get('handlers').handleCreatePaste(c.req.raw));
 });
 
@@ -182,7 +203,7 @@ app.get('/api/recent', async (c) => {
 });
 
 // GET /api/search — full-text search across public pastes
-app.get('/api/search', async (c) => {
+app.get('/api/search', rateLimit('RL_SEARCH', 'search'), async (c) => {
 	return addCacheHeaders(await c.get('handlers').handleSearchPastes(c.req.raw), {
 		maxAge: 30,
 		staleWhileRevalidate: 120,
@@ -201,20 +222,28 @@ app.get('/api/stats', async (c) => {
 // All Supabase Auth calls are proxied through the Worker so the browser
 // never speaks to Supabase directly. Session is stored in HttpOnly cookies.
 
-app.post('/api/auth/signup', async (c) => preventCaching(await c.get('authHandlers').handleSignup(c.req.raw)));
-app.post('/api/auth/login', async (c) => preventCaching(await c.get('authHandlers').handleLogin(c.req.raw)));
+app.post('/api/auth/signup', rateLimit('RL_AUTH_WRITE', 'signup'), async (c) =>
+	preventCaching(await c.get('authHandlers').handleSignup(c.req.raw)),
+);
+app.post('/api/auth/login', rateLimit('RL_AUTH_WRITE', 'login'), async (c) =>
+	preventCaching(await c.get('authHandlers').handleLogin(c.req.raw)),
+);
+// Logout: no rate limit. Allowing high-frequency logout (e.g., user clearing
+// many tabs) shouldn't be punished; revoking sessions is desirable.
 app.post('/api/auth/logout', async (c) => preventCaching(await c.get('authHandlers').handleLogout(c.req.raw)));
-app.get('/api/auth/session', async (c) => preventCaching(await c.get('authHandlers').handleSession(c.req.raw)));
-app.post('/api/auth/resend-confirmation', async (c) =>
+app.get('/api/auth/session', rateLimit('RL_SESSION_READ', 'session'), async (c) =>
+	preventCaching(await c.get('authHandlers').handleSession(c.req.raw)),
+);
+app.post('/api/auth/resend-confirmation', rateLimit('RL_AUTH_WRITE', 'resend-confirmation'), async (c) =>
 	preventCaching(await c.get('authHandlers').handleResendConfirmation(c.req.raw)),
 );
-app.post('/api/auth/forgot-password', async (c) =>
+app.post('/api/auth/forgot-password', rateLimit('RL_AUTH_WRITE', 'forgot-password'), async (c) =>
 	preventCaching(await c.get('authHandlers').handleForgotPassword(c.req.raw)),
 );
-app.post('/api/auth/update-password', async (c) =>
+app.post('/api/auth/update-password', rateLimit('RL_AUTH_WRITE', 'update-password'), async (c) =>
 	preventCaching(await c.get('authHandlers').handleUpdatePassword(c.req.raw)),
 );
-app.post('/api/auth/magic-link', async (c) =>
+app.post('/api/auth/magic-link', rateLimit('RL_AUTH_WRITE', 'magic-link'), async (c) =>
 	preventCaching(await c.get('authHandlers').handleMagicLink(c.req.raw)),
 );
 

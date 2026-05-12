@@ -43,9 +43,14 @@ export class DeletePasteCommand {
 			};
 		}
 
-		// Verify the delete token matches (required for authorization)
+		// Verify the delete token matches (required for authorization).
+		// Defence in depth: also reject when the stored token is missing —
+		// the DB has `delete_token uuid NOT NULL DEFAULT gen_random_uuid()`
+		// and Paste.create() auto-generates a token, so this branch shouldn't
+		// fire in practice, but the previous `if (storedToken && …)` would
+		// have fallen through to delete on a falsy storedToken.
 		const storedToken = paste.getDeleteToken();
-		if (storedToken && storedToken !== validParams.ownerToken) {
+		if (!storedToken || storedToken !== validParams.ownerToken) {
 			return {
 				success: false,
 				errorCode: DeleteErrorCode.UNAUTHORIZED,

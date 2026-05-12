@@ -8,6 +8,14 @@
  *
  * Keeping the URL as a secret too means the Supabase project ref isn't
  * discoverable from the source tree. Worker code reads both from `c.env`.
+ *
+ * Rate-limit bindings — Cloudflare Workers Rate Limiting API. Counters are
+ * propagated across the edge (best-effort, not strict). Period must be 10
+ * or 60. `key` passed to `.limit({ key })` is hashed inside the binding.
+ *   - RL_AUTH_WRITE   write-side auth flows  (signup, login, etc.)
+ *   - RL_SESSION_READ GET /api/auth/session  (stolen-JWT oracle protection)
+ *   - RL_PASTE_CREATE POST /pastes
+ *   - RL_SEARCH       GET  /api/search
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -28,6 +36,12 @@
 			"invocation_logs": true,
 		},
 	},
+	"ratelimits": [
+		{ "name": "RL_AUTH_WRITE",   "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+		{ "name": "RL_SESSION_READ", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+		{ "name": "RL_PASTE_CREATE", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } },
+		{ "name": "RL_SEARCH",       "namespace_id": "1004", "simple": { "limit": 30, "period": 60 } },
+	],
 	"routes": [
 		{
 			"pattern": "paste.erfi.io",
@@ -42,6 +56,12 @@
 					"pattern": "paste.erfi.io",
 					"custom_domain": true,
 				},
+			],
+			"ratelimits": [
+				{ "name": "RL_AUTH_WRITE",   "namespace_id": "2001", "simple": { "limit": 10, "period": 60 } },
+				{ "name": "RL_SESSION_READ", "namespace_id": "2002", "simple": { "limit": 60, "period": 60 } },
+				{ "name": "RL_PASTE_CREATE", "namespace_id": "2003", "simple": { "limit": 30, "period": 60 } },
+				{ "name": "RL_SEARCH",       "namespace_id": "2004", "simple": { "limit": 30, "period": 60 } },
 			],
 		},
 	},

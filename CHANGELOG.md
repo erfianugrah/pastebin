@@ -1,5 +1,84 @@
 # Changelog
 
+## [3.7.0] - 2026-05-12
+
+Security + scalability hardening pass driven by the
+`/home/erfi/supabase/supabase-gripes-research.md` audit. Twelve
+confirmed issues fixed across critical / high / medium severity;
+two refuted on verification (research was wrong). See
+`PLAN-supabase.md` for the per-issue verification log.
+
+### Critical / High — security
+
+- **Rate limiting** [C3]. Implemented via **Cloudflare Workers Rate Limiting bindings** (`[[ratelimits]]` in `wrangler.jsonc`). Four buckets:
+  - `RL_AUTH_WRITE` — 10/60s — `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}`
+  - `RL_SESSION_READ` — 60/60s — `GET /api/auth/session` (closes the stolen-JWT validity oracle)
+  - `RL_PASTE_CREATE` — 30/60s — `POST /pastes`
+  - `RL_SEARCH` — 30/60s — `GET /api/search`
+
+  Per-IP keying via `CF-Connecting-IP` → `X-Forwarded-For[0]` → `'unknown'`. Per-endpoint scope so each endpoint has its own bucket. Over-limit returns 429 + `Retry-After: 60` + structured `{ "error": { "code": "rate_limited", "message": "..." } }`. Middleware fails open on binding error and no-ops with a debug log when the binding is undefined (vitest, local Astro dev). Implementation: `src/interfaces/api/rateLimit.ts` (7 unit tests). `SECURITY.md` rewrite removes the false claim of a per-IP in-memory cache that never existed.
+
+- **Open redirect on `/auth/confirm?next=…`** [H1]. The previous check `next.startsWith('/') && !next.startsWith('//')` blocked `//evil.com/` but missed the WHATWG-backslash bypass: `new URL('/\\evil.com', 'https://paste.erfi.io')` resolves to `'https://evil.com/'` (the URL parser maps `\` to `/` for special schemes). Replaced with origin-equality post-parse: construct the candidate URL with the request as base, assert `candidate.origin === request.origin`, fall back to `/` otherwise. 5 new tests covering backslash, protocol-relative, fully-qualified URL, `javascript:`, and `data:` schemes.
+
+- **Delete-token leakage via query string + request logger** [H2/M1]. `?token=…` was previously accepted on `DELETE /pastes/:id/delete`. The global request logger emits `Object.fromEntries(url.searchParams)` so the token landed in Cloudflare logpush, browser history, and `Referer` headers. Fix: handler now rejects any `?token=` with HTTP 400 `token_in_query`; token must arrive in the JSON request body. Logger redacts five sensitive query keys: `token`, `token_hash`, `code`, `access_token`, `refresh_token` (allowlist-style — add never remove). `scripts/smoke-test.ts` updated to use body-only deletion.
+
+- **`delete_token` null-guard inverted** [C4]. `if (storedToken && storedToken !== ownerToken)` short-circuited on a falsy stored token, falling through to delete. Inverted to `if (!storedToken || storedToken !== ownerToken)`. The DB schema already enforces `delete_token uuid NOT NULL DEFAULT gen_random_uuid()` so real-world exploitability was ~zero, but the handler is now defense-in-depth correct. 2 new regression tests (undefined token, empty string).
+
+- **`language` field unbounded → GIN-index bloat** [H4]. `language: z.string().optional()` accepted arbitrary-length strings that fed into the `search_vector` generated tsvector + GIN index. Capped at 50 chars. 1 new test.
+
+- **`password` field on the server-side Zod schema** [M5]. The `password` field was accepted at `POST /pastes` and used purely as a "this is encrypted" signal (`if (validParams.password) validParams.isEncrypted = true`). It crossed the Worker in plaintext for no real purpose. Removed from the schema; clients now signal encryption explicitly via `isEncrypted: true`. The frontend was already sending `isEncrypted` correctly. 1 new test.
+
+- **Slug TOCTOU → 500 with raw Postgres error** [M6]. Two concurrent creates with the same custom slug both passed the `resolveSlug` precheck; the race loser hit the unique constraint on `slugs.slug` and threw `Failed to save slug: duplicate key value violates unique constraint…` which propagated as 500. Now `saveSlug` catches Postgres error code `23505` and throws a typed `SlugTakenError`; `CreatePasteCommand` translates that into `AppError('slug_taken', '...', 409)`. 2 new tests (precheck hit, race loser).
+
+- **`secureStorage` master key co-located with ciphertext** [H5]. Per-paste decryption keys (cached for returning users) are encrypted under a master key. The master key was in the same `localStorage` it "protected" — XSS or disk-scrape recovered key + values simultaneously. Moved the master key to `sessionStorage` (tab-scoped, cleared on close). Persistence window shortened from "forever" to "until tab close". Legacy localStorage-resident keys are migrated to sessionStorage on first access. **This does NOT defend against XSS** — `SECURITY.md` updated with the honest threat model.
+
+- **pg-cron expiry DELETEs unbatched** [H6]. Both cron jobs ran `DELETE FROM … WHERE expires_at < now()` with no `LIMIT`. A spike of 1-hour pastes expiring in one window (50k+ rows) held row locks across the entire matching set; concurrent `view_paste(uuid)` calls stalled. Migration `20260512102704_batch_expiry_cleanup.sql` reschedules both with `DELETE … WHERE id IN (SELECT id FROM … LIMIT 1000)`. Lock-hold time bounded by 1000 rows; backlog spreads across cycles. Slug cleanup bumped from daily 03:00 to every 15min to amortise. Applied to remote.
+
+### Medium
+
+- **`/api/my` keyset pagination** [M2]. Previously hard-capped at 100 results with no cursor. Now accepts `?cursor=<iso-timestamp>&limit=<n>` (max 100). Asks Supabase for `limit + 1` to detect "more available" without a second roundtrip. Response includes `nextCursor: string | null`. Bad cursor returns HTTP 400 `bad_cursor`. Frontend `MyPastes.tsx` adds a "Load more" button when `nextCursor` is non-null. 5 new tests cover happy path, cursor filter, malformed cursor, and the `limit+1` probe.
+
+### Architecture — performance
+
+- **Supabase client caching** [A1]. Three call sites in the Worker (`SupabasePasteRepository`, `AuthService`, `AuthHandlers`) used to invoke `createClient(...)` on every request. Each call sets up a fetch wrapper, parses URLs, allocates headers, instantiates a GoTrueClient. Now all three go through `getServiceRoleClient(url, key)` which memoises by `(url, key)` in a module-level Map. The cached client is stateless given `persistSession: false` + `autoRefreshToken: false`. PKCE-flow clients in `handleOAuthStart`/`handleOAuthCallback` still allocate per-request because they inject a custom storage shim that's not safe to share. `__resetSupabaseClientCache()` is exposed for tests.
+
+### Dead-code removal
+
+- **Realtime broadcast pipeline dropped** [H3]. Migration `20260512102410_drop_realtime_broadcast.sql` removes the `broadcast_public_paste_insert` trigger, the `broadcast_public_paste_insert()` PL/pgSQL function, and the two RLS policies on `realtime.messages`. Verification: `astro/src/` had zero `supabase-js` clients, zero `.channel(...)` calls, zero `.subscribe(...)` calls. The CSP `connect-src 'self'` directive physically blocked WebSocket to `*.supabase.co`. Every public-paste insert was enqueuing a Realtime message with no consumer, burning free-tier quota (2M messages/month). Recent-paste UX is polling-only via `GET /api/recent`.
+- **`scripts/verify-realtime.ts` deleted** alongside the trigger. `npm run test:realtime` + `test:realtime:tail` scripts removed from `package.json`. `scripts/run-all-live-tests.ts` no longer includes the realtime suite. AGENTS.md + SUPABASE-MIGRATION.md + README.md updated accordingly.
+
+### Incidental improvement
+
+- **`auth.admin.signOut(jwt, 'global')`** in `handleLogout` — replaced the type-cast hack with the real typed call and added explicit `'global'` scope so the refresh token is revoked across all devices, not just the current session. The research claim that the original call was passing the wrong parameter type was incorrect — `admin.signOut(jwt, scope)` correctly accepts a JWT (used as bearer on POST `/logout`).
+
+### Refuted by verification (research §15 was wrong)
+
+- **[C1]** `handleUpdatePassword` shared-client race. `AuthHandlers` is constructed per-request inside the `*` middleware (`src/index.ts:106`). `this.client` is unique per request. Each `createClient()` returns a fresh GoTrueClient. No cross-request mutation possible.
+- **[C2]** `admin.signOut(jwt)` is a bug. Verified in `node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js` — the signature is `signOut(jwt, scope)` and the implementation posts `/logout` with the JWT as bearer. The non-admin `_signOut` internally calls `admin.signOut(accessToken, scope)`. JWT IS the correct parameter.
+
+### Tests
+
+- **224 unit tests** (was 213): +7 rateLimit middleware, +5 createPasteCommand (H4/M5/M6 ×2), +2 deletePasteCommand (C4 ×2), +5 my-pastes cursor pagination, +5 confirm open-redirect (parametrised), +1 delete handler (H2).
+- **25 component tests** unchanged (Astro/jsdom).
+- **5 local Playwright tests** unchanged (`e2e/local/*.spec.ts`).
+- All migrations applied to the linked Supabase project (`dewddkcmwrzbpynylyhg`). Verified post-apply via `cron.job` and `pg_trigger` queries.
+
+### Migrations
+
+- `20260512102410_drop_realtime_broadcast.sql` — drops trigger + function + 2 RLS policies on `realtime.messages`. Applied.
+- `20260512102704_batch_expiry_cleanup.sql` — re-schedules both pg-cron jobs with `LIMIT 1000` batched deletes. Applied.
+
+Total migration count: **16**.
+
+### Breaking changes
+
+- `DELETE /pastes/:id/delete?token=…` now returns HTTP 400. Send token in JSON body instead. The API documentation, `scripts/smoke-test.ts`, and `e2e/paste-lifecycle.spec.ts` are already body-only.
+- `password` field at `POST /pastes` is silently dropped by Zod (was: used as encryption flag). Clients must send `isEncrypted: true` explicitly. The frontend already does this.
+- `language` at `POST /pastes` capped at 50 chars; longer strings → 400.
+- `npm run test:realtime` and `npm run test:realtime:tail` removed. Update CI configs.
+
+---
+
 ## [3.6.0] - 2026-05-12
 
 ### Auth — recovery + magic-link + GitHub OAuth

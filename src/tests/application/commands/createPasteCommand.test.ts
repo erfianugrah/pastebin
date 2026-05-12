@@ -4,6 +4,8 @@ import { PasteRepository } from '../../../domain/repositories/pasteRepository';
 import { UniqueIdService } from '../../../domain/services/uniqueIdService';
 import { ExpirationService } from '../../../domain/services/expirationService';
 import { Paste, PasteId, ExpirationPolicy } from '../../../domain/models/paste';
+import { AppError } from '../../../infrastructure/errors/AppError';
+import { SlugTakenError } from '../../../infrastructure/storage/supabasePasteRepository';
 
 // Mock dependencies
 const mockRepository: PasteRepository = {
@@ -179,5 +181,72 @@ describe('CreatePasteCommand', () => {
 
     const savedPaste = vi.mocked(mockRepository.save).mock.calls[0][0];
     expect(savedPaste.getUserId()).toBeUndefined();
+  });
+
+  it('rejects a language field longer than 50 chars [H4]', async () => {
+    const params: any = {
+      content: 'x',
+      language: 'a'.repeat(51),
+    };
+    await expect(command.execute(params)).rejects.toThrow();
+  });
+
+  it('rejects `password` field server-side (client never sends it post-fix) [M5]', async () => {
+    // The Zod schema no longer accepts `password`. With Zod's default
+    // strip-unknown behaviour, the field is silently dropped — but it must
+    // never reach the encryption flag path.
+    vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('m5'));
+    vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(86400));
+
+    const params: any = {
+      content: 'plain text',
+      password: 'should-be-ignored',
+      isEncrypted: false,
+    };
+    await command.execute(params);
+    const savedPaste = vi.mocked(mockRepository.save).mock.calls[0][0];
+    expect(savedPaste.getIsEncrypted()).toBe(false);
+    expect(savedPaste.getVersion()).toBe(0);
+  });
+
+  it('translates SlugTakenError from saveSlug into AppError(409) [M6]', async () => {
+    vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('m6'));
+    vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(86400));
+    vi.mocked(mockRepository.resolveSlug).mockResolvedValue(null); // precheck passes
+    vi.mocked(mockRepository.saveSlug).mockRejectedValue(new SlugTakenError('race-loser'));
+
+    const params: CreatePasteParams = {
+      content: 'racing content',
+      expiration: 86400,
+      visibility: 'public',
+      burnAfterReading: false,
+      isEncrypted: false,
+      version: 0,
+      slug: 'race-loser',
+    };
+
+    await expect(command.execute(params)).rejects.toMatchObject({
+      code: 'slug_taken',
+      statusCode: 409,
+    });
+  });
+
+  it('translates resolveSlug precheck hit into AppError(409) [M6]', async () => {
+    vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('m6b'));
+    vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(86400));
+    vi.mocked(mockRepository.resolveSlug).mockResolvedValue('existing-paste-id');
+
+    const params: CreatePasteParams = {
+      content: 'content',
+      expiration: 86400,
+      visibility: 'public',
+      burnAfterReading: false,
+      isEncrypted: false,
+      version: 0,
+      slug: 'taken',
+    };
+
+    await expect(command.execute(params)).rejects.toBeInstanceOf(AppError);
+    expect(mockRepository.saveSlug).not.toHaveBeenCalled();
   });
 });

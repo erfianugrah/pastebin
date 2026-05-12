@@ -6,15 +6,18 @@ Threat model, deployment configuration, and operational guidance for Pasteriser.
 
 | Asset | Defended against | Defense |
 |-------|------------------|---------|
-| Plaintext paste content | Server compromise, log exposure | Optional client-side E2EE (AES-GCM, key in URL fragment) |
+| Plaintext paste content | Server compromise, log exposure | Optional client-side E2EE (XSalsa20-Poly1305 via NaCl `secretbox`, PBKDF2 600k iter for password mode, key in URL fragment for key mode) |
 | Encryption keys / passwords | Server-side leakage | Never sent to server — key in URL fragment, password used client-side for PBKDF2 only |
 | Paste authorship | Unauthorized creation as another user | JWT validated by Worker; `user_id` set from verified token, never from request body |
 | Owned-paste access | Cross-user reads / writes / deletes | 5 RLS policies on `public.pastes` for `authenticated` role: SELECT public, SELECT/INSERT/UPDATE/DELETE own |
 | Anonymous paste deletion | Anyone-knows-the-id deletion | `deleteToken` (UUID) issued at creation; required for `DELETE /pastes/:id/delete` |
 | Burn-after-reading content | Race-condition double-serve | Postgres `view_paste()` RPC with `SELECT ... FOR UPDATE` row lock |
-| Realtime broadcasts | Private-paste metadata leakage | 3-layer defense: trigger filters `visibility = 'public'`, payload curates to safe fields, RLS on `realtime.messages` scopes to the `recent:public` topic |
+| Delete-token leakage | Token captured by request log / Referer | Rejected in query string (HTTP 400 `token_in_query`); accepted in JSON body only. Logger redacts `token`, `token_hash`, `code`, `access_token`, `refresh_token` query keys |
 | Cross-site exploits | XSS via paste content | `textContent` only for user data; no `innerHTML`; programmatic DOM creation; strict CSP without `unsafe-eval` |
+| Open redirect | `next` param escaping the origin | `/auth/confirm` resolves `next` via `new URL(next, request.url)` and asserts `candidate.origin === request.origin`. Closes the WHATWG-backslash bypass (`/\evil.com` would otherwise become `https://evil.com/`) |
 | Cross-origin abuse | CORS-credentials with `*` origin | Explicit allowlist in production |
+| Abuse / DoS via auth flood | Unbounded signup, login, email-sending | Cloudflare Workers Rate Limiting bindings on auth-write (10/min), session-read (60/min), paste-create (30/min), search (30/min) per IP |
+| Slug squatting via TOCTOU race | Concurrent creates with same vanity slug | Postgres unique constraint on `slugs.slug`; race-loser surfaced as HTTP 409 `slug_taken` via `SlugTakenError` typed-error translation |
 
 ## Configuration
 
@@ -63,8 +66,8 @@ The publishable key is safe to ship — it maps to the `anon` Postgres role and 
   - `anon`: SELECT where `visibility = 'public'`
   - `authenticated`: SELECT public (mirrors anon), SELECT own (`auth.uid() = user_id`), INSERT with `WITH CHECK auth.uid() = user_id`, UPDATE with USING + WITH CHECK both pinned, DELETE own
   - All use `(SELECT auth.uid())` not `auth.uid()` for initPlan caching (per Supabase RLS-Performance benchmarks: 94-99% improvement at scale)
-- **Realtime channel authorization** (`realtime.messages`) — two SELECT policies restrict `anon`/`authenticated` to the exact topic `recent:public`. A malicious broadcast to any other topic could not reach those roles.
-- **Paste deletion** — anonymous pastes require the `deleteToken` (UUID returned at creation). Authenticated users can also delete via direct DB (RLS-gated by `auth.uid() = user_id`).
+- **Realtime channel authorization** — not applicable. The Realtime broadcast trigger + RLS policies on `realtime.messages` were dropped in `20260512102410_drop_realtime_broadcast.sql` because the frontend never subscribed and the CSP `connect-src 'self'` directive physically blocked WebSocket to `*.supabase.co`. Recent-paste UX uses polling against `/api/recent` instead.
+- **Paste deletion** — anonymous pastes require the `deleteToken` (UUID returned at creation), accepted in the JSON request body only. The query-string form (`?token=…`) is rejected with HTTP 400 `token_in_query` to keep the secret out of logpush, browser history, and `Referer` headers. The handler also validates `!storedToken || storedToken !== ownerToken` (inverted from the previous `storedToken &&` form so a row with a falsy stored token can't be world-deleted as defense-in-depth — the DB constraint `delete_token NOT NULL DEFAULT gen_random_uuid()` already prevents this in practice). Authenticated users can also delete via direct DB (RLS-gated by `auth.uid() = user_id`).
 
 ### Content security
 
@@ -96,10 +99,28 @@ The publishable key is safe to ship — it maps to the `anon` Postgres role and 
 
 **Worker-level (current):**
 
-- Per-IP cache, bounded at 1000 entries with auto-eviction of expired entries (prevents unbounded growth).
-- Stricter limits for write paths (10/min for `POST /pastes`) than reads (60/min general).
-- Path-based bypass-prevention — static assets exempt by extension allowlist, not by URL prefix that user content could spoof.
-- **Limitation:** in-memory cache is per Cloudflare isolate. Across many CF colos a determined attacker can sustain higher RPS than the per-IP limit suggests. Worker rate limiting is best-effort, not a hard cap.
+Implemented via **Cloudflare Workers Rate Limiting bindings** (`[[ratelimits]]` in `wrangler.jsonc`). Four bindings, all keyed on the client IP (`CF-Connecting-IP`, falling back to first `X-Forwarded-For` token, then `'unknown'`) plus a per-endpoint scope so each endpoint has its own bucket per IP:
+
+| Binding | Scope | Limit | Endpoints |
+|---|---|---|---|
+| `RL_AUTH_WRITE` | per IP+endpoint | 10 / 60s | `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}` |
+| `RL_SESSION_READ` | per IP | 60 / 60s | `GET /api/auth/session` |
+| `RL_PASTE_CREATE` | per IP | 30 / 60s | `POST /pastes` |
+| `RL_SEARCH` | per IP | 30 / 60s | `GET /api/search` |
+
+Blocks return `429 Too Many Requests` with `Retry-After: 60` and a structured `{ error: { code: "rate_limited", message: "..." } }` body. Implementation: `src/interfaces/api/rateLimit.ts`. Middleware fails open (passes the request) if the binding throws — never blocks real traffic on infrastructure issues.
+
+**Properties of the CF Rate Limiting binding:**
+
+- Counters are propagated across the Cloudflare edge — not strict (eventually consistent across PoPs) but materially better than a per-isolate in-memory map.
+- Period must be 10 or 60 seconds (Cloudflare-enforced).
+- Binding is absent in local dev / vitest / Playwright-against-`astro dev`; middleware no-ops gracefully (logs a `debug` line so the no-op is observable).
+
+**Not yet implemented:**
+
+- IP-based geo or ASN heuristics on top of per-endpoint buckets.
+- Per-user buckets (signed-in users currently share the IP-keyed bucket with anonymous traffic from the same IP).
+- WAF custom rules — would add zone-level protection beneath the Worker.
 
 **Supabase-level (default):**
 
@@ -141,10 +162,11 @@ Before deploying:
 - [ ] `astro/.env` populated with `PUBLIC_SUPABASE_URL` + `PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - [ ] `astro/.env` gitignored
 - [ ] CSP headers loaded by every response (verify in browser DevTools → Network → Response Headers)
-- [ ] Paste deletion requires `deleteToken` (test with and without token via `npm run test:smoke`)
+- [ ] Paste deletion requires `deleteToken` in JSON body (test with and without token via `npm run test:smoke`)
 - [ ] RLS policies live and enforced (verify via `npm run test:rls`)
-- [ ] Realtime broadcasts curated correctly (verify via `npm run test:realtime`)
 - [ ] Burn-after-reading is race-free (verify via `npm run test:race`)
+- [ ] Rate-limit bindings declared in `wrangler.jsonc` `[[ratelimits]]`; over-limit requests return 429 with `Retry-After: 60` (verify via repeated POSTs against `/api/auth/login` in staging)
+- [ ] `wrangler dev` warns on missing rate-limit bindings; the middleware fails open (pass-through) but logs a debug line — confirm prod deploy includes the bindings
 
 ## Monitoring
 
@@ -181,7 +203,8 @@ If you discover a security vulnerability:
 ### Key management
 
 - Encryption keys are derived from URLs or passwords. URL-based keys are exposed to anyone with the link; password-based keys are only as strong as the password.
-- Keys saved to localStorage are encrypted with a per-session master key, but a local attacker with disk access can still recover them.
+- The cached-key store (`astro/src/lib/secureStorage.ts`) keeps per-paste decryption keys in localStorage encrypted under a master key. **The master key lives in `sessionStorage`** (cleared on tab close) — earlier versions stored it in the same `localStorage` it "protected", which co-located key and ciphertext and provided no defense beyond casual DOM inspection. Moving the master key to sessionStorage shortens the persistence window but does not protect against XSS or browser-extension reads. Use the key cache for UX (don't re-prompt the same user), not as a security boundary.
+- An attacker with disk access to the browser profile can still recover localStorage ciphertext; without the (volatile) sessionStorage master key they cannot decrypt it. After the tab closes the cached items become permanently unrecoverable, by design.
 - No key-rotation flow is implemented; encrypted pastes are immutable.
 
 ### Browser requirements

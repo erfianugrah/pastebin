@@ -29,15 +29,16 @@ Live at [paste.erfi.io](https://paste.erfi.io).
   - Anonymous use unchanged — `user_id = NULL`, `deleteToken` flow
 
 - **Discovery**
-  - Recent public pastes feed
-  - Live Realtime broadcast on new public pastes (no polling)
+  - Recent public pastes feed (polling-based; the Realtime broadcast pipeline was dropped — see `SUPABASE-MIGRATION.md`)
   - Full-text search (Postgres tsvector + GIN, websearch syntax)
-  
+
 - **Hardening**
-  - Rate limiting (per-IP, in-memory + KV-backed)
+  - Per-IP rate limiting via Cloudflare Workers Rate Limiting bindings on auth, paste-create, session, and search endpoints
   - CSP, X-Frame-Options, HSTS, X-Content-Type-Options
   - CORS allowlist
   - XSS prevention (no `innerHTML` on user data, programmatic DOM creation)
+  - Open-redirect defence on `/auth/confirm?next=…` via origin-equality post-URL-parse
+  - Delete-token rejected in query string (body-only) to prevent leakage via logpush
   
 - **Enhanced User Experience**
   - Modern UI with dark mode support
@@ -453,7 +454,7 @@ Returns the most recently created public, non-expired pastes. Limit clamped to `
 }
 ```
 
-For a real-time live feed, subscribe to the `recent:public` Realtime broadcast channel (see *Realtime live feed* below).
+For polling, re-fetch this endpoint on a schedule (default UI behaviour). The Realtime broadcast pipeline that previously powered a push feed was dropped in `20260512102410_drop_realtime_broadcast.sql` — the frontend never subscribed and the CSP `connect-src 'self'` directive blocked WebSocket to `*.supabase.co` anyway.
 
 #### Full-Text Search
 
@@ -473,14 +474,6 @@ Empty/whitespace `q` returns `{ "pastes": [], "query": "" }` without hitting the
 ```
 
 Supports `websearch_to_tsquery` syntax: `"phrase quoting"`, boolean `OR`, `-excluded`.
-
-#### Realtime Live Feed
-
-The Astro `/recent` page subscribes to Supabase Realtime topic `recent:public` (private channel, RLS-gated) and prepends newly created public pastes without polling.
-
-The trigger payload contains only safe metadata: `id`, `title`, `language`, `createdAt`, `expiresAt`, `readCount`, `isEncrypted`, `version`. Private pastes never enter the broadcast pipeline (filtered at the trigger).
-
-Run `npm run test:realtime` to verify the pipeline end-to-end.
 
 #### Authentication & My Pastes
 
@@ -503,7 +496,7 @@ When signed in:
 - All Supabase Auth calls are proxied through the Worker (`/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/session`, `/api/auth/resend-confirmation`, `/api/auth/forgot-password`, `/api/auth/update-password`, `/api/auth/magic-link`, `/api/auth/oauth/:provider`). The session is stored in HttpOnly `sb-access-token` + `sb-refresh-token` cookies (Secure, SameSite=Strict). Browser never receives the JWT directly — XSS-safe.
 - Email confirmation uses the Path C server-side pattern: the email link points to `/auth/confirm?token_hash=...&type=signup&next=/my` on Pasteriser's domain (not Supabase's). The Worker calls `supabase.auth.verifyOtp({ token_hash, type })`, sets cookies, then 302s into the app. `next` is whitelisted to same-origin paths only.
 - The Worker derives `user_id` from the verified JWT (cookie wins over `Authorization: Bearer` header), never from the request body.
-- The `/api/my` Worker endpoint returns the calling user's pastes by filtering with `user_id` on the verified JWT — RLS is doubled up because the Worker uses `service_role`.
+- The `/api/my` Worker endpoint returns the calling user's pastes by filtering with `user_id` on the verified JWT — RLS is doubled up because the Worker uses `service_role`. Keyset-paginated via `?cursor=<iso-timestamp>&limit=<n>` (default 50, max 100). The response includes `nextCursor` (the `created_at` of the last returned row, or `null` when no more pages). The UI's `MyPastes` component renders a "Load more" button when `nextCursor` is non-null.
 - Authenticated users can delete their own pastes via the same `/pastes/:id/delete` endpoint; the `deleteToken` flow still works for anonymous pastes.
 - Email is delivered via **Resend** (custom SMTP). Auth email rate limit: 30/hour. Sender: `noreply@erfi.io`. All confirmation/recovery/magic-link/invite/email-change templates use hardcoded `type=...` query params (the Supabase `{{ .EmailActionType }}` template variable is not available on most email contexts and would render as empty string, breaking the confirm link).
 - Signup UX: duplicate-email signups return HTTP 409 `email_taken` instead of the misleading "check your email" (Supabase's anti-enumeration response is decoded server-side). Login UX: distinguishes `email_not_confirmed` (HTTP 403, with inline "Resend confirmation" link in the UI) from `invalid_credentials` (HTTP 401).
@@ -516,20 +509,23 @@ Run `npm run test:rls` for end-to-end verification (creates 2 real test users, r
 
 #### Delete a Paste
 
-**Endpoint:** `DELETE /pastes/:id/delete`
+**Endpoint:** `DELETE /pastes/:id/delete` (also accepts `POST` for clients that can't send `DELETE` bodies)
 
 Deletion requires the `deleteToken` that was returned when the paste was created.
 
-**Via query parameter:**
-```bash
-curl -X DELETE "https://paste.erfi.io/pastes/PASTE_ID/delete?token=DELETE_TOKEN"
-```
+The token MUST arrive in the JSON request body. The query-string form (`?token=…`) is rejected with HTTP 400 `token_in_query` — the global request logger captures `Object.fromEntries(url.searchParams)` and a token in the URL would land in Cloudflare logpush, browser history, and `Referer` headers.
 
 **Via JSON body:**
 ```bash
 curl -X DELETE "https://paste.erfi.io/pastes/PASTE_ID/delete" \
   -H "Content-Type: application/json" \
   -d '{"token": "DELETE_TOKEN"}'
+```
+
+**Rejected: token in query string**
+```bash
+curl -X DELETE "https://paste.erfi.io/pastes/PASTE_ID/delete?token=DELETE_TOKEN"
+# HTTP 400 — { "error": { "code": "token_in_query", "message": "Send the delete token in the JSON request body, not as a query parameter." } }
 ```
 
 **Response (success):**
@@ -552,11 +548,20 @@ curl -X DELETE "https://paste.erfi.io/pastes/PASTE_ID/delete" \
 
 ### Rate Limiting
 
-Rate limiting is applied to protect the service:
+Implemented via **Cloudflare Workers Rate Limiting bindings** (`[[ratelimits]]` in `wrangler.jsonc`). Counters propagate across the Cloudflare edge — eventually consistent, not strict — and survive Worker isolate recycles. Keyed on `CF-Connecting-IP` (falling back to first `X-Forwarded-For` token, then `'unknown'`) plus a per-endpoint scope so each endpoint has its own bucket per IP.
 
-- General rate limit: 60 requests per minute
-- Paste creation: 10 pastes per minute
-- Rate limit data cached in-memory with bounded eviction (max 1000 entries) and persisted to KV
+| Binding | Limit | Endpoints |
+|---|---|---|
+| `RL_AUTH_WRITE` | 10 / 60s | `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}` |
+| `RL_SESSION_READ` | 60 / 60s | `GET /api/auth/session` |
+| `RL_PASTE_CREATE` | 30 / 60s | `POST /pastes` |
+| `RL_SEARCH` | 30 / 60s | `GET /api/search` |
+
+Over-limit requests return `HTTP 429` with `Retry-After: 60` and a structured body: `{ "error": { "code": "rate_limited", "message": "Too many requests. Try again in a minute." } }`.
+
+Implementation lives at `src/interfaces/api/rateLimit.ts`. Middleware fails open (passes the request) on binding errors — never blocks real traffic on infrastructure issues. When the binding is undefined (vitest, local Astro dev without `wrangler dev`) the middleware no-ops with a debug log so the absence is observable.
+
+See `SECURITY.md → Rate limiting` for the full threat-model commentary including known gaps and the upstream Supabase Auth rate-limiter bugs.
 
 ## Getting Started
 
@@ -647,14 +652,16 @@ npm run deploy
 - `npm run deploy` - Deploy to Cloudflare Workers
 
 ### Testing & Quality Assurance
-- `npm run test` - Run unit tests (vitest)
+- `npm run test` - Run unit tests (vitest) — Worker + Astro lib tests, 224 cases
+- `npm run test:ui` - Run Astro component tests (jsdom) — 25 cases
+- `npm run test:e2e` - Run Playwright e2e against **production** (`paste.erfi.io`)
+- `npm run test:e2e:local` - Run Playwright e2e against a locally-spawned Astro dev server (`http://127.0.0.1:4321`)
 - `npm run test:watch` - Run unit tests in watch mode
 - `npm run test:smoke` - Live API + Supabase e2e tests against production
 - `npm run test:race` - Concurrent burn-after-reading race-free verification
-- `npm run test:realtime` - Realtime broadcast pipeline + RLS compatibility matrix
 - `npm run test:rls` - Supabase Auth + RLS end-to-end (creates 2 real test users)
-- `npm run test:all-live` - All 4 live suites in sequence with cooldowns
-- `npm run test:smoke:tail` (and `test:race:tail`, `test:realtime:tail`, `test:rls:tail`, `test:all-live:tail`, `test:e2e:tail`) — same scripts wrapped with `wrangler tail --env production` so Worker logs stream interleaved with the test output
+- `npm run test:all-live` - All 3 live suites in sequence with cooldowns (smoke, rls, race)
+- `npm run test:smoke:tail` (and `test:race:tail`, `test:rls:tail`, `test:all-live:tail`, `test:e2e:tail`) — same scripts wrapped with `wrangler tail --env production` so Worker logs stream interleaved with the test output
 - `npm run lint` - Run ESLint
 - `npm run check` - Run TypeScript typechecking
 
@@ -805,7 +812,7 @@ See [SUPABASE-MIGRATION.md](./SUPABASE-MIGRATION.md) for the in-flight plan. Hig
 - **Phase 4.4d** — Server-side email confirmation (Path C). Worker hosts `/auth/confirm`, calls `verifyOtp({ token_hash, type })`, sets HttpOnly cookies, 302s to `/my`. Site URL + email template patched via Supabase Management API. ✓ Shipped.
 - **Phase 4.4e** — OAuth providers + magic-link + recovery. GitHub OAuth with manual PKCE in Worker; magic-link via `signInWithOtp`; password recovery + reset flow. Automatic identity-linking on verified-email match. ✓ Shipped (3.6.0).
 - **Phase 4.5** — Analytics: `paste_stats()` PL/pgSQL function returning a JSONB summary (by language, by hour, encryption adoption) exposed via `GET /api/stats`. ✓ Shipped.
-- **Phase 4.7** — Anti-abuse and rate-limit hardening. **Custom SMTP via Resend ✓ shipped (3.5.0)** — `smtp.resend.com:465`, sender `noreply@erfi.io`, `rate_limit_email_sent` bumped 2/hr → 30/hr. Remaining items: per-IP signup rate limit at the Worker, honeypot field, anonymous paste size cap (64 KiB).
+- **Phase 4.7** — Anti-abuse and rate-limit hardening. **Custom SMTP via Resend ✓ shipped (3.5.0)**. **Per-endpoint Worker-side rate limiting ✓ shipped (3.7.0)** — Cloudflare Workers Rate Limiting bindings on `RL_AUTH_WRITE` (10/min), `RL_SESSION_READ` (60/min), `RL_PASTE_CREATE` (30/min), `RL_SEARCH` (30/min). Remaining items: Cloudflare Turnstile / honeypot field for `POST /api/auth/signup` and `POST /pastes`, anonymous paste size cap (currently 25 MiB for everyone).
 - **Phase 5** — Remove `KVPasteRepository`, `DualWriteRepository`, and the Cloudflare KV namespace itself. ✓ Shipped.
 
 Phase 6 (Deno-based Discord bot) was scoped and then dropped — pastebin-bot integration is a UX shortcut that doesn't overcome Discord's hard limits any more cleanly than existing tools (PasteThing, mclo.gs). See git history for the design notes if needed.
@@ -834,14 +841,15 @@ Pasteriser implements comprehensive security measures to protect user data and s
 
 ### Security Highlights
 
-- **Client-side E2EE** — content encryption (AES-GCM), key derivation (PBKDF2), key in URL fragment. Server sees ciphertext only.
-- **Paste deletion authorization** — `deleteToken` (UUID) issued at creation; required for `DELETE /pastes/:id/delete`. Authenticated users can also delete via RLS-gated direct DB queries.
+- **Client-side E2EE** — content encryption (XSalsa20-Poly1305), key derivation (PBKDF2 600k iter), key in URL fragment. Server sees ciphertext only.
+- **Paste deletion authorization** — `deleteToken` (UUID) issued at creation; required for `DELETE /pastes/:id/delete` in the JSON body only. Query-string form is rejected with 400 to prevent token leaks via Cloudflare logpush, browser history, and `Referer` headers.
 - **Supabase Auth + RLS** — when users sign in, paste ownership is enforced by 5 RLS policies on `public.pastes` (SELECT public, SELECT/INSERT/UPDATE/DELETE own). Worker validates JWTs via `supabase.auth.getUser()` before assigning `user_id`.
 - **XSS prevention** — user content rendered via `textContent` only; no `innerHTML` for any user-supplied data.
+- **Open-redirect defence** — `/auth/confirm?next=…` resolves the candidate URL against the request origin and rejects anything that lands off-origin. Closes the backslash-bypass (`/\evil.com` → `https://evil.com/`) the WHATWG URL parser opens by default.
 - **Content Security Policy** — `script-src 'self'`, no `unsafe-eval`. Web Workers via `worker-src blob:`.
 - **CORS** — explicit allowlist (no wildcard in production with credentials).
-- **Rate limiting** — per-IP cache bounded at 1000 entries with auto-eviction.
-- **Encrypted localStorage** — sensitive client state encrypted with a per-session master key.
+- **Rate limiting** — Cloudflare Workers Rate Limiting bindings on 4 endpoint groups (auth-write, session-read, paste-create, search). See SECURITY.md for limits.
+- **Browser-cached keys** — per-paste decryption keys are encrypted under a master key kept in **sessionStorage** (tab-scoped, cleared on close). Provides obfuscation against passive disk-scrape attackers; **does NOT defend against XSS** — see SECURITY.md.
 - **Security headers** — `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` (with preload), `Referrer-Policy`, `Permissions-Policy`.
 
 For the threat model, configuration guide, and disclosure policy see [SECURITY.md](./SECURITY.md).
@@ -874,9 +882,8 @@ Migrated from Cloudflare KV to **Supabase Postgres** in May 2026. KV was removed
 | Atomic view | `view_paste(uuid)` RPC | `SELECT ... FOR UPDATE` row lock — fixes burn-after-reading race |
 | Search | `search_vector` (GIN-indexed tsvector) | `websearch_to_tsquery` via `/api/search` |
 | Stats | `paste_stats()` RPC | jsonb summary via `/api/stats`; cached 5min + SWR 15min |
-| Live feed | Realtime broadcast on `recent:public` | `AFTER INSERT` trigger; private channel; RLS on `realtime.messages` |
 | User accounts | Supabase Auth + JWT verification | Worker validates `Authorization: Bearer <jwt>`; `/my` page uses RLS |
-| Expiration | pg_cron jobs | Expired pastes every 5min, expired slugs daily at 03:00 |
+| Expiration | pg_cron jobs | Both jobs batched at `LIMIT 1000`. Pastes every 5min, slugs every 15min |
 
 See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey: Phase 0-3 (KV→Supabase cutover), 3.5 (audit fixes), 4.1-4.5 (feature work), 5 (KV removal).
 
@@ -904,7 +911,7 @@ curl -s "https://paste.erfi.io/api/recent?limit=5"
 curl -s "https://paste.erfi.io/api/stats"
 ```
 
-For end-to-end verification of the live system see the `test:smoke`, `test:race`, `test:realtime`, `test:rls`, and `test:all-live` npm scripts.
+For end-to-end verification of the live system see the `test:smoke`, `test:race`, `test:rls`, and `test:all-live` npm scripts.
 
 ## License
 

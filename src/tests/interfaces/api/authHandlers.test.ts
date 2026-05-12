@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { __resetSupabaseClientCache } from '../../../infrastructure/supabase/getSupabaseClient';
 import { AuthHandlers } from '../../../interfaces/api/authHandlers';
 import { ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../../../interfaces/api/cookies';
 import { Logger } from '../../../infrastructure/logging/logger';
@@ -65,6 +66,10 @@ function getSetCookies(res: Response): string[] {
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	// Wipe the (url, key) → SupabaseClient cache so each test's
+	// createClient mock is honoured instead of returning the cached
+	// instance from a previous test.
+	__resetSupabaseClientCache();
 });
 
 describe('AuthHandlers', () => {
@@ -351,13 +356,20 @@ describe('AuthHandlers', () => {
 
 	describe('handleMyPastes', () => {
 		function withChain(rows: unknown[] | null, error: { message: string } | null = null) {
-			const terminator = Promise.resolve({ data: rows, error });
+			// Chain is thenable so `await query` resolves with the terminator
+			// regardless of where in the chain the handler stops calling
+			// methods. Each method returns the chain itself, including `.limit`
+			// — the handler may call `.lt(...)` after `.limit(...)` (cursor
+			// path) so `.limit` cannot terminate.
+			const result = { data: rows, error };
 			const chain: Record<string, any> = {
 				select: vi.fn(() => chain),
 				eq: vi.fn(() => chain),
 				gt: vi.fn(() => chain),
+				lt: vi.fn(() => chain),
 				order: vi.fn(() => chain),
-				limit: vi.fn(() => terminator),
+				limit: vi.fn(() => chain),
+				then: (resolve: (v: unknown) => void) => Promise.resolve(result).then(resolve),
 			};
 			return chain;
 		}
@@ -386,7 +398,9 @@ describe('AuthHandlers', () => {
 				data: { user: { id: 'user-99' } },
 				error: null,
 			});
-			const chain = withChain([{ id: 'p1', title: 'mine', user_id: 'user-99' }]);
+			const chain = withChain([
+				{ id: 'p1', title: 'mine', user_id: 'user-99', created_at: '2026-05-12T10:00:00Z' },
+			]);
 			const from = vi.fn(() => chain);
 			vi.mocked(createClient).mockReturnValue(clientWith({ getUser }, from) as any);
 			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
@@ -398,11 +412,14 @@ describe('AuthHandlers', () => {
 			expect(res.status).toBe(200);
 			expect(from).toHaveBeenCalledWith('pastes');
 			expect(chain.eq).toHaveBeenCalledWith('user_id', 'user-99');
-			const body = (await res.json()) as { pastes: unknown[] };
+			const body = (await res.json()) as { pastes: unknown[]; nextCursor: string | null };
 			expect(body.pastes).toHaveLength(1);
+			expect(body.nextCursor).toBeNull(); // single page, no more
 		});
 
-		it('clamps limit to [1, 100]', async () => {
+		// [M2] Pagination — handler asks Supabase for limit+1 rows so it knows
+		// whether to surface a nextCursor without a second query.
+		it('clamps limit to [1, 100] and asks for limit+1 rows for has-more probe', async () => {
 			const getUser = vi.fn().mockResolvedValue({
 				data: { user: { id: 'user-100' } },
 				error: null,
@@ -415,7 +432,72 @@ describe('AuthHandlers', () => {
 			await handler.handleMyPastes(
 				getRequest('https://x.test/api/my?limit=999', { Cookie: `${ACCESS_TOKEN_COOKIE}=v` }),
 			);
-			expect(chain.limit).toHaveBeenCalledWith(100);
+			// 999 → clamped to 100, then +1 for the has-more probe
+			expect(chain.limit).toHaveBeenCalledWith(101);
+		});
+
+		// [M2] nextCursor is the created_at of the LAST returned row (not the
+		// extra probe row), and only present when there are more pages.
+		it('returns nextCursor when more rows exist beyond the requested limit', async () => {
+			const getUser = vi.fn().mockResolvedValue({
+				data: { user: { id: 'user-101' } },
+				error: null,
+			});
+			// Limit=2, repository returns 3 rows (probe). The 3rd is dropped;
+			// nextCursor = created_at of row 2 (the last RETURNED row).
+			const rows = [
+				{ id: 'a', created_at: '2026-05-12T10:00:00Z' },
+				{ id: 'b', created_at: '2026-05-12T09:00:00Z' },
+				{ id: 'c', created_at: '2026-05-12T08:00:00Z' },
+			];
+			const chain = withChain(rows);
+			const from = vi.fn(() => chain);
+			vi.mocked(createClient).mockReturnValue(clientWith({ getUser }, from) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleMyPastes(
+				getRequest('https://x.test/api/my?limit=2', { Cookie: `${ACCESS_TOKEN_COOKIE}=v` }),
+			);
+
+			const body = (await res.json()) as { pastes: unknown[]; nextCursor: string | null };
+			expect(body.pastes).toHaveLength(2);
+			expect(body.nextCursor).toBe('2026-05-12T09:00:00Z');
+		});
+
+		// [M2] Cursor parameter triggers `.lt('created_at', cursor)` on the
+		// query. Bad cursor → 400 instead of silently returning page 1.
+		it('passes cursor through as a < filter on created_at', async () => {
+			const getUser = vi.fn().mockResolvedValue({
+				data: { user: { id: 'user-102' } },
+				error: null,
+			});
+			const chain = withChain([]);
+			const from = vi.fn(() => chain);
+			vi.mocked(createClient).mockReturnValue(clientWith({ getUser }, from) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			await handler.handleMyPastes(
+				getRequest('https://x.test/api/my?limit=10&cursor=2026-05-12T09:00:00Z', {
+					Cookie: `${ACCESS_TOKEN_COOKIE}=v`,
+				}),
+			);
+			expect(chain.lt).toHaveBeenCalledWith('created_at', '2026-05-12T09:00:00.000Z');
+		});
+
+		it('returns 400 on malformed cursor', async () => {
+			const getUser = vi.fn().mockResolvedValue({
+				data: { user: { id: 'user-103' } },
+				error: null,
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ getUser }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleMyPastes(
+				getRequest('https://x.test/api/my?cursor=not-a-date', { Cookie: `${ACCESS_TOKEN_COOKIE}=v` }),
+			);
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as { error?: { code?: string } };
+			expect(body.error?.code).toBe('bad_cursor');
 		});
 	});
 
@@ -477,6 +559,39 @@ describe('AuthHandlers', () => {
 			);
 			expect(res.status).toBe(302);
 			expect(res.headers.get('Location')).toBe('https://x.test/');
+		});
+
+		// WHATWG URL parser maps backslashes to forward slashes for special
+		// schemes (http/https/etc.). A naive `next.startsWith('/') && !next
+		// .startsWith('//')` check passes `'/\evil.com'` (second char is '\',
+		// not '/'), but
+		//   new URL('/\\evil.com', 'https://x.test') → 'https://evil.com/'
+		// — open redirect. The fix validates the *resolved* origin equals the
+		// request origin instead of pattern-matching the input string.
+		it.each([
+			['backslash variant', '/\\evil.com'],
+			['protocol-relative', '//evil.com/'],
+			['fully-qualified url', 'https://evil.com/'],
+			['javascript scheme', 'javascript:alert(1)'],
+			['data scheme', 'data:text/html,<script>1</script>'],
+		])('rejects malicious next param (%s)', async (_, nextValue) => {
+			const verifyOtp = vi.fn().mockResolvedValue({
+				data: {
+					user: { id: 'u11' },
+					session: { access_token: 'a', refresh_token: 'r' },
+				},
+				error: null,
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ verifyOtp }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleConfirm(
+				getRequest(`https://x.test/auth/confirm?token_hash=t&type=signup&next=${encodeURIComponent(nextValue)}`),
+			);
+			expect(res.status).toBe(302);
+			// Must redirect on-origin only — never to an attacker-controlled host.
+			const loc = res.headers.get('Location') || '';
+			expect(new URL(loc).origin).toBe('https://x.test');
 		});
 
 		it('302s to /login?error=... when verifyOtp fails', async () => {

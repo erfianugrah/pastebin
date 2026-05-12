@@ -229,18 +229,36 @@ describe('ApiHandlers', () => {
 	});
 
 	describe('handleDeletePaste', () => {
-		it('should return 200 on successful delete', async () => {
+		it('should return 200 on successful delete (body token)', async () => {
 			vi.mocked(mockDeleteCommand.execute).mockResolvedValue({
 				success: true,
 				message: 'Paste deleted successfully',
 			});
 
-			const req = new Request('https://example.com/pastes/abc123/delete?token=tok', {
+			const req = new Request('https://example.com/pastes/abc123/delete', {
 				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ token: 'tok' }),
 			});
 			const res = await handlers.handleDeletePaste(req, 'abc123');
 
 			expect(res.status).toBe(200);
+		});
+
+		// [H2/M1] Delete token used to be accepted as `?token=<uuid>` which
+		// landed in Cloudflare logpush via the global request-logger. We now
+		// hard-reject the query-string path so the surface area shrinks to
+		// "JSON body only".
+		it('rejects `?token=` query param with 400 [H2]', async () => {
+			const req = new Request('https://example.com/pastes/x/delete?token=leaked', {
+				method: 'DELETE',
+			});
+			const res = await handlers.handleDeletePaste(req, 'x');
+
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as { error?: { code?: string } };
+			expect(body.error?.code).toBe('token_in_query');
+			expect(mockDeleteCommand.execute).not.toHaveBeenCalled();
 		});
 
 		it('should return 404 when paste not found', async () => {
@@ -256,14 +274,18 @@ describe('ApiHandlers', () => {
 			expect(res.status).toBe(404);
 		});
 
-		it('should return 403 when unauthorized', async () => {
+		it('should return 403 when unauthorized (body token mismatch)', async () => {
 			vi.mocked(mockDeleteCommand.execute).mockResolvedValue({
 				success: false,
 				errorCode: DeleteErrorCode.UNAUTHORIZED,
 				message: 'Unauthorized',
 			});
 
-			const req = new Request('https://example.com/pastes/x/delete?token=bad', { method: 'DELETE' });
+			const req = new Request('https://example.com/pastes/x/delete', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ token: 'bad' }),
+			});
 			const res = await handlers.handleDeletePaste(req, 'x');
 
 			expect(res.status).toBe(403);

@@ -94,4 +94,58 @@ describe('DeletePasteCommand', () => {
 		expect(result.success).toBe(false);
 		expect(result.errorCode).toBe(DeleteErrorCode.FAILED);
 	});
+
+	// [C4] Defense-in-depth: a row whose delete_token was somehow stored as
+	// NULL or empty must NOT be deletable. Before the fix
+	//   if (storedToken && storedToken !== validParams.ownerToken)
+	// would short-circuit on a falsy storedToken and fall through to delete.
+	it('returns UNAUTHORIZED when stored token is missing — falsy guard [C4]', async () => {
+		const paste = new Paste(
+			PasteId.create('orphan'),
+			'content',
+			new Date(),
+			ExpirationPolicy.create(3600),
+			'title',
+			undefined,
+			'public',
+			false,
+			0,
+			false,
+			undefined,
+			0,
+			undefined, // deleteToken = undefined — must still block delete
+		);
+		vi.mocked(mockRepository.findById).mockResolvedValue(paste);
+
+		const result = await command.execute({ id: 'orphan', ownerToken: 'any-token' });
+
+		expect(result.success).toBe(false);
+		expect(result.errorCode).toBe(DeleteErrorCode.UNAUTHORIZED);
+		expect(mockRepository.delete).not.toHaveBeenCalled();
+	});
+
+	it('returns UNAUTHORIZED when stored token is empty string [C4]', async () => {
+		const paste = new Paste(
+			PasteId.create('emptytoken'),
+			'content',
+			new Date(),
+			ExpirationPolicy.create(3600),
+			'title',
+			undefined,
+			'public',
+			false,
+			0,
+			false,
+			undefined,
+			0,
+			'', // empty string — also falsy
+		);
+		vi.mocked(mockRepository.findById).mockResolvedValue(paste);
+
+		const result = await command.execute({ id: 'emptytoken', ownerToken: '' });
+
+		expect(result.success).toBe(false);
+		expect(result.errorCode).toBe(DeleteErrorCode.UNAUTHORIZED);
+		expect(mockRepository.delete).not.toHaveBeenCalled();
+	});
 });
