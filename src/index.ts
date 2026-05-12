@@ -208,6 +208,29 @@ app.get('/api/auth/session', async (c) => preventCaching(await c.get('authHandle
 app.post('/api/auth/resend-confirmation', async (c) =>
 	preventCaching(await c.get('authHandlers').handleResendConfirmation(c.req.raw)),
 );
+app.post('/api/auth/forgot-password', async (c) =>
+	preventCaching(await c.get('authHandlers').handleForgotPassword(c.req.raw)),
+);
+app.post('/api/auth/update-password', async (c) =>
+	preventCaching(await c.get('authHandlers').handleUpdatePassword(c.req.raw)),
+);
+app.post('/api/auth/magic-link', async (c) =>
+	preventCaching(await c.get('authHandlers').handleMagicLink(c.req.raw)),
+);
+
+// GET /api/auth/oauth/:provider — start the OAuth flow. Browser 302s
+// to Supabase's /authorize, which 302s to the provider, which lands
+// back on /auth/callback below.
+app.get('/api/auth/oauth/:provider', async (c) => {
+	const provider = c.req.param('provider');
+	return preventCaching(await c.get('authHandlers').handleOAuthStart(c.req.raw, provider));
+});
+
+// GET /auth/callback — OAuth flow returns here from Supabase with a
+// PKCE code. Worker exchanges + sets session cookies + 302s to /my.
+app.get('/auth/callback', async (c) =>
+	preventCaching(await c.get('authHandlers').handleOAuthCallback(c.req.raw)),
+);
 
 // GET /auth/confirm — landing page Supabase Auth redirects to from
 // confirmation emails (signup, password recovery, email change). The
@@ -341,6 +364,18 @@ app.get('/signup', async (c) => {
 app.get('/my', async (c) => {
 	const url = new URL(c.req.url);
 	const req = new Request(url.origin + '/my/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
+});
+
+app.get('/forgot-password', async (c) => {
+	const url = new URL(c.req.url);
+	const req = new Request(url.origin + '/forgot-password/index.html', c.req.raw);
+	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
+});
+
+app.get('/auth/reset-password', async (c) => {
+	const url = new URL(c.req.url);
+	const req = new Request(url.origin + '/auth/reset-password/index.html', c.req.raw);
 	return cacheStaticAsset(await c.env.ASSETS.fetch(req), 'html');
 });
 

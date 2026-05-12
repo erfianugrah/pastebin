@@ -28,6 +28,9 @@ export interface UseAuthResult extends AuthState {
 	signIn: (email: string, password: string) => Promise<{ error: { code?: string; message: string } | null }>;
 	signUp: (email: string, password: string) => Promise<{ error: { code?: string; message: string } | null; needsConfirm: boolean }>;
 	resendConfirmation: (email: string) => Promise<{ error: { message: string } | null }>;
+	forgotPassword: (email: string) => Promise<{ error: { message: string } | null }>;
+	updatePassword: (password: string) => Promise<{ error: { message: string } | null }>;
+	signInWithMagicLink: (email: string) => Promise<{ error: { message: string } | null }>;
 	signOut: () => Promise<void>;
 	refresh: () => Promise<void>;
 }
@@ -122,6 +125,48 @@ export function useAuth(): UseAuthResult {
 		return { error: null };
 	}, []);
 
+	const forgotPassword = useCallback(async (email: string) => {
+		const res = await fetch('/api/auth/forgot-password', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email }),
+			...FETCH_OPTS,
+		});
+		if (!res.ok) {
+			const data = await readJsonOrNull<{ error?: { message?: string } }>(res);
+			return { error: { message: data?.error?.message ?? `HTTP ${res.status}` } };
+		}
+		return { error: null };
+	}, []);
+
+	const updatePassword = useCallback(async (password: string) => {
+		const res = await fetch('/api/auth/update-password', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ password }),
+			...FETCH_OPTS,
+		});
+		if (!res.ok) {
+			const data = await readJsonOrNull<{ error?: { message?: string } }>(res);
+			return { error: { message: data?.error?.message ?? `HTTP ${res.status}` } };
+		}
+		return { error: null };
+	}, []);
+
+	const signInWithMagicLink = useCallback(async (email: string) => {
+		const res = await fetch('/api/auth/magic-link', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email }),
+			...FETCH_OPTS,
+		});
+		if (!res.ok) {
+			const data = await readJsonOrNull<{ error?: { message?: string } }>(res);
+			return { error: { message: data?.error?.message ?? `HTTP ${res.status}` } };
+		}
+		return { error: null };
+	}, []);
+
 	const signOut = useCallback(async () => {
 		try {
 			await fetch('/api/auth/logout', { method: 'POST', ...FETCH_OPTS });
@@ -130,5 +175,5 @@ export function useAuth(): UseAuthResult {
 		}
 	}, []);
 
-	return { ...state, signIn, signUp, signOut, refresh, resendConfirmation };
+	return { ...state, signIn, signUp, signOut, refresh, resendConfirmation, forgotPassword, updatePassword, signInWithMagicLink };
 }

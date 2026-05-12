@@ -23,7 +23,7 @@ Live at [paste.erfi.io](https://paste.erfi.io).
   - Encrypted localStorage for any sensitive client state
 
 - **Auth & ownership** (optional)
-  - Supabase Auth (email + password, server-side email confirmation via `/auth/confirm`)
+  - Supabase Auth (email + password, server-side email confirmation, password recovery, magic-link, GitHub OAuth)
   - Pastes optionally linked to a user via `user_id`
   - `/my` page lists user's pastes (browser → Supabase direct, filtered by RLS)
   - Anonymous use unchanged — `user_id = NULL`, `deleteToken` flow
@@ -486,10 +486,21 @@ Run `npm run test:realtime` to verify the pipeline end-to-end.
 
 **Pages:** `/login`, `/signup`, `/my`.
 
-Pasteriser supports optional Supabase Auth (email + password). When signed in:
+Pasteriser supports optional Supabase Auth. Five sign-in/up paths, all proxied through the Worker (BFF):
+
+| Path | Endpoint | Notes |
+|---|---|---|
+| Email + password signup | `POST /api/auth/signup` | Returns 409 `email_taken` for duplicates (decodes Supabase's anti-enumeration response) |
+| Email + password login | `POST /api/auth/login` | 403 `email_not_confirmed` distinguished from 401 `invalid_credentials` |
+| Password recovery | `POST /api/auth/forgot-password` + `POST /api/auth/update-password` | Email link lands at `/auth/confirm?type=recovery&next=/auth/reset-password` |
+| Magic link (passwordless) | `POST /api/auth/magic-link` | `signInWithOtp({ shouldCreateUser: false })` — re-entry only, not new signups |
+| GitHub OAuth | `GET /api/auth/oauth/github` → `GET /auth/callback` | Manual PKCE handling in the Worker; auto-links to existing email user when verified email matches |
+| Resend confirmation | `POST /api/auth/resend-confirmation` | Used by both the signup success panel and the "email_not_confirmed" login error |
+
+When signed in:
 
 - New pastes are linked to the authenticated user via `user_id`.
-- All Supabase Auth calls are proxied through the Worker (`/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/session`, `/api/auth/resend-confirmation`). The session is stored in HttpOnly `sb-access-token` + `sb-refresh-token` cookies (Secure, SameSite=Strict). Browser never receives the JWT directly — XSS-safe.
+- All Supabase Auth calls are proxied through the Worker (`/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/session`, `/api/auth/resend-confirmation`, `/api/auth/forgot-password`, `/api/auth/update-password`, `/api/auth/magic-link`, `/api/auth/oauth/:provider`). The session is stored in HttpOnly `sb-access-token` + `sb-refresh-token` cookies (Secure, SameSite=Strict). Browser never receives the JWT directly — XSS-safe.
 - Email confirmation uses the Path C server-side pattern: the email link points to `/auth/confirm?token_hash=...&type=signup&next=/my` on Pasteriser's domain (not Supabase's). The Worker calls `supabase.auth.verifyOtp({ token_hash, type })`, sets cookies, then 302s into the app. `next` is whitelisted to same-origin paths only.
 - The Worker derives `user_id` from the verified JWT (cookie wins over `Authorization: Bearer` header), never from the request body.
 - The `/api/my` Worker endpoint returns the calling user's pastes by filtering with `user_id` on the verified JWT — RLS is doubled up because the Worker uses `service_role`.
@@ -792,7 +803,7 @@ flowchart TD
 See [SUPABASE-MIGRATION.md](./SUPABASE-MIGRATION.md) for the in-flight plan. Highlights:
 
 - **Phase 4.4d** — Server-side email confirmation (Path C). Worker hosts `/auth/confirm`, calls `verifyOtp({ token_hash, type })`, sets HttpOnly cookies, 302s to `/my`. Site URL + email template patched via Supabase Management API. ✓ Shipped.
-- **Phase 4.4e** — OAuth providers (GitHub first, Google second). Email/password and email-confirm are shipped.
+- **Phase 4.4e** — OAuth providers + magic-link + recovery. GitHub OAuth with manual PKCE in Worker; magic-link via `signInWithOtp`; password recovery + reset flow. Automatic identity-linking on verified-email match. ✓ Shipped (3.6.0).
 - **Phase 4.5** — Analytics: `paste_stats()` PL/pgSQL function returning a JSONB summary (by language, by hour, encryption adoption) exposed via `GET /api/stats`. ✓ Shipped.
 - **Phase 4.7** — Anti-abuse and rate-limit hardening. **Custom SMTP via Resend ✓ shipped (3.5.0)** — `smtp.resend.com:465`, sender `noreply@erfi.io`, `rate_limit_email_sent` bumped 2/hr → 30/hr. Remaining items: per-IP signup rate limit at the Worker, honeypot field, anonymous paste size cap (64 KiB).
 - **Phase 5** — Remove `KVPasteRepository`, `DualWriteRepository`, and the Cloudflare KV namespace itself. ✓ Shipped.
@@ -871,7 +882,7 @@ See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration jo
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), `paste_stats()` RPC + complete KV removal (3.3.0), BFF auth proxy + server-side email confirmation + `title` NOT-NULL fix + `wrangler tail` test wrapper + `SUPABASE_URL` secret promotion (3.4.0), and the domain switch to `paste.erfi.io` + Resend SMTP + auth UX polish + email-template `type=` hardcoding fix + delete-paste handler POST-body bug fix + test-cleanup leak fixes (3.5.0).
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), `paste_stats()` RPC + complete KV removal (3.3.0), BFF auth proxy + server-side email confirmation + `title` NOT-NULL fix + `wrangler tail` test wrapper + `SUPABASE_URL` secret promotion (3.4.0), domain switch to `paste.erfi.io` + Resend SMTP + auth UX polish + email-template `type=` hardcoding fix + delete-paste handler POST-body bug fix + test-cleanup leak fixes (3.5.0), and password recovery + magic-link + GitHub OAuth + automatic identity-linking + `supabase config push` IaC migration (3.6.0).
 
 ### Quick verification
 

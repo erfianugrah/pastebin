@@ -1,5 +1,37 @@
 # Changelog
 
+## [3.6.0] - 2026-05-12
+
+### Auth — recovery + magic-link + GitHub OAuth
+
+- **Password recovery** (`/forgot-password` → email → `/auth/reset-password`). New Worker handlers `handleForgotPassword` (calls `resetPasswordForEmail`) and `handleUpdatePassword` (seeds session via `setSession`, calls `updateUser({ password })`). Recovery email template repointed to `/auth/confirm?type=recovery&next=/auth/reset-password`. New Astro pages `ForgotPasswordForm` + `ResetPasswordForm` + `/forgot-password` route + `/auth/reset-password` route. "Forgot?" link on AuthForm login mode. Live verified end-to-end with a fresh test user: recovery link → `/auth/reset-password` with cookies → POST `/api/auth/update-password` → 200 → login with new password works, old password rejected.
+- **Magic-link (passwordless) sign-in**. New Worker handler `handleMagicLink` (calls `signInWithOtp({ email, options: { shouldCreateUser: false } })`). AuthForm now has an "Email me a sign-in link instead" toggle on login mode — swaps to passwordless form, on submit shows the "check your email" panel. Magic-link email template already had `type=magiclink&next=/my` from 3.5.0. Live verified.
+- **GitHub OAuth**. Full PKCE-aware OAuth flow implemented in the Worker (no browser supabase-js). `handleOAuthStart` uses a capture-only storage to extract the PKCE verifier from supabase-js, stashes it in a short-lived HttpOnly `sb-pkce-verifier` cookie (SameSite=Lax), 302s to Supabase's `/authorize`. `handleOAuthCallback` reads the cookie, seeds it into a fresh client's storage, calls `exchangeCodeForSession(code)`, sets session cookies, clears the PKCE cookie, 302s to `/my`. "Continue with GitHub" button on AuthForm (login + signup). Supabase Auth config patched to enable the GitHub provider (`external_github_enabled`, `external_github_client_id`, `external_github_secret`). Live verified — same `user_id` returned for email-signup-then-GitHub-OAuth thanks to **automatic identity linking** on verified-email match (`auth.identities` now has 2 rows pointing at the same `auth.users` row).
+- **Automatic identity linking**. Documented: default GoTrue behavior auto-links OAuth identities to existing email/password users when both emails are verified. No code change needed; verified live. Manual linking (`security_manual_linking_enabled`) left off (default).
+
+### Email templates
+
+- All 5 production templates (confirmation, recovery, magic_link, invite, email_change) extracted to `supabase/templates/*.html` and referenced from `supabase/config.toml` via `content_path`.
+- Recovery template `next=` updated from `/login` to `/auth/reset-password` so users land on the password-reset form after clicking the link.
+- 2 notification templates (identity_linked, identity_unlinked) also extracted; toggles default to off (`mailer_notifications_identity_*_enabled: false`) — flip to true in `[auth.email.notification.identity_linked]` to opt in.
+
+### IaC: `supabase config push`
+
+- **Generated `supabase/config.toml`** as the single source of truth for project-level Supabase config (auth, email, SMTP, OAuth providers, rate limits, templates). Secrets live in `.env` via `env(VAR)` substitution; never committed.
+- Future config changes happen via `supabase config push` (versioned, reviewable, idempotent) rather than ad-hoc `curl -X PATCH` to the Management API. The Management API is still the only way to **read** live state — there's no `config pull` command.
+- Initial push successful — only diff vs. remote: MFA TOTP enroll/verify (true → false; we don't use MFA), email OTP length (8 → 6). All other live state preserved.
+
+### Tests
+
+- 172 unit tests (was 150): +6 forgot/update password, +4 magic-link, +8 OAuth start/callback.
+- Live smoke 35/35 after the config push.
+
+### Breaking changes
+
+None.
+
+---
+
 ## [3.5.0] - 2026-05-11
 
 ### Auth UX polish (post-domain-change session)

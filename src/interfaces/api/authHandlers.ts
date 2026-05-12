@@ -34,12 +34,19 @@ interface LoginBody {
  */
 export class AuthHandlers {
 	private readonly client: SupabaseClient;
+	// Kept around so the OAuth handlers can build per-request clients with
+	// custom (PKCE-aware) storage. The cached `client` above uses
+	// persistSession: false and isn't suitable for PKCE.
+	private readonly url: string;
+	private readonly secretKey: string;
 
 	constructor(
-		private readonly supabaseUrl: string,
+		supabaseUrl: string,
 		secretKey: string,
 		private readonly logger: Logger,
 	) {
+		this.url = supabaseUrl;
+		this.secretKey = secretKey;
 		this.client = createClient(supabaseUrl, secretKey, {
 			auth: {
 				autoRefreshToken: false,
@@ -147,6 +154,137 @@ export class AuthHandlers {
 
 		const res = json({ user: data.user });
 		return applySessionCookies(res, data.session.access_token, data.session.refresh_token);
+	}
+
+	/**
+	 * POST /api/auth/magic-link — send a passwordless sign-in link.
+	 * Body: { email: string }
+	 *
+	 * Calls `supabase.auth.signInWithOtp()` which sends an email using
+	 * `mailer_templates_magic_link_content`. The template points to
+	 * `/auth/confirm?type=magiclink&next=/my` so the same Worker handler
+	 * we use for signup confirmation handles the OTP exchange.
+	 *
+	 * Always returns 200 (anti-enumeration). Supabase's per-email rate
+	 * limit (`smtp_max_frequency`) prevents spamming a single address.
+	 */
+	async handleMagicLink(request: Request): Promise<Response> {
+		let body: { email?: string };
+		try {
+			body = (await request.json()) as { email?: string };
+		} catch {
+			return json({ error: { code: 'bad_request', message: 'Invalid JSON' } }, 400);
+		}
+
+		const email = body.email?.trim();
+		if (!email) {
+			return json({ error: { code: 'bad_request', message: 'Email is required' } }, 400);
+		}
+
+		// shouldCreateUser:false → if the email doesn't exist, no user is
+		// created and no email is sent. Keeps Pasteriser email-based
+		// signup as the only way to create accounts (matches current UX —
+		// magic link is for re-entry, not first signup).
+		const { error } = await this.client.auth.signInWithOtp({
+			email,
+			options: { shouldCreateUser: false },
+		});
+		if (error) {
+			this.logger.debug('Auth: magic-link error', { code: error.code, message: error.message });
+		}
+		return json({ ok: true });
+	}
+
+	/**
+	 * POST /api/auth/forgot-password — kick off the password-reset flow.
+	 * Body: { email: string }
+	 *
+	 * Calls `supabase.auth.resetPasswordForEmail()` which sends an email
+	 * using the `mailer_templates_recovery_content` template. The template
+	 * points at our `/auth/confirm?type=recovery&next=/auth/reset-password`
+	 * route, which exchanges the token for a session and 302s to the
+	 * reset-password page. From there the user submits a new password
+	 * via `handleUpdatePassword()` below.
+	 *
+	 * Always returns 200 to avoid email enumeration; Supabase's own
+	 * rate-limit (`rate_limit_email_sent`) gates abuse.
+	 */
+	async handleForgotPassword(request: Request): Promise<Response> {
+		let body: { email?: string };
+		try {
+			body = (await request.json()) as { email?: string };
+		} catch {
+			return json({ error: { code: 'bad_request', message: 'Invalid JSON' } }, 400);
+		}
+
+		const email = body.email?.trim();
+		if (!email) {
+			return json({ error: { code: 'bad_request', message: 'Email is required' } }, 400);
+		}
+
+		const { error } = await this.client.auth.resetPasswordForEmail(email);
+		if (error) {
+			this.logger.debug('Auth: forgot-password error', { code: error.code, message: error.message });
+		}
+		return json({ ok: true });
+	}
+
+	/**
+	 * POST /api/auth/update-password — change the password of the currently
+	 * signed-in user. Used by the reset-password page after the recovery
+	 * email's confirmation link landed the user with a fresh session.
+	 *
+	 * Body: { password: string }
+	 *
+	 * Requires the `sb-access-token` cookie. Calls `updateUser({ password })`
+	 * against a client that's seeded with the user's session via
+	 * `setSession()`. Without setSession the call would use the service-role
+	 * client and need an admin code path.
+	 */
+	async handleUpdatePassword(request: Request): Promise<Response> {
+		let body: { password?: string };
+		try {
+			body = (await request.json()) as { password?: string };
+		} catch {
+			return json({ error: { code: 'bad_request', message: 'Invalid JSON' } }, 400);
+		}
+
+		const password = body.password;
+		if (!password) {
+			return json({ error: { code: 'bad_request', message: 'Password is required' } }, 400);
+		}
+		if (password.length < 6) {
+			return json({ error: { code: 'bad_request', message: 'Password must be at least 6 characters' } }, 400);
+		}
+
+		const accessToken = getCookie(request, ACCESS_TOKEN_COOKIE);
+		const refreshToken = getCookie(request, REFRESH_TOKEN_COOKIE);
+		if (!accessToken || !refreshToken) {
+			return json({ error: { code: 'unauthorized', message: 'Sign in required' } }, 401);
+		}
+
+		// Set the session on the client so updateUser() runs as the user.
+		// Without this it would error out — service_role can't change
+		// passwords via the non-admin endpoint.
+		const { error: sessErr } = await this.client.auth.setSession({
+			access_token: accessToken,
+			refresh_token: refreshToken,
+		});
+		if (sessErr) {
+			this.logger.debug('Auth: update-password setSession failed', {
+				code: sessErr.code,
+				message: sessErr.message,
+			});
+			return json({ error: { code: 'unauthorized', message: 'Invalid session' } }, 401);
+		}
+
+		const { error } = await this.client.auth.updateUser({ password });
+		if (error) {
+			this.logger.debug('Auth: update-password error', { code: error.code, message: error.message });
+			return json({ error: { code: 'update_failed', message: error.message } }, 400);
+		}
+
+		return json({ ok: true });
 	}
 
 	/**
@@ -277,6 +415,163 @@ export class AuthHandlers {
 		const { data, error } = await this.client.auth.getUser(accessToken);
 		if (error || !data?.user) return null;
 		return data.user.id;
+	}
+
+	/**
+	 * GET /api/auth/oauth/:provider — kick off an OAuth redirect flow.
+	 *
+	 * Pattern: we need PKCE but don't have supabase-js in the browser, so
+	 * the Worker handles both sides. supabase-js stores the PKCE
+	 * code_verifier in `storage.setItem()` synchronously during
+	 * `signInWithOAuth()`; we provide a tiny capture-only storage and
+	 * stash the captured verifier in a short-lived HttpOnly cookie
+	 * (`sb-pkce-verifier`). The browser then bounces through Supabase's
+	 * /authorize and the provider's authorize, lands back on our
+	 * `/auth/callback?code=...`, and the callback handler reads the
+	 * cookie + exchanges the code for a session.
+	 *
+	 * SameSite=Lax on the PKCE cookie because the user returns to our
+	 * origin via a top-level redirect from Supabase — Strict would drop
+	 * the cookie cross-origin.
+	 */
+	async handleOAuthStart(request: Request, provider: string): Promise<Response> {
+		const validProviders = new Set(['github', 'google']);
+		if (!validProviders.has(provider)) {
+			return json({ error: { code: 'bad_request', message: 'Unknown OAuth provider' } }, 400);
+		}
+
+		// Capture the PKCE verifier as supabase-js writes it during
+		// signInWithOAuth. The storage key looks like
+		// `sb-<ref>-auth-token-code-verifier` — match by substring.
+		let capturedVerifier: string | null = null;
+		const captureStorage = {
+			getItem: () => null,
+			setItem: (key: string, value: string) => {
+				if (key.includes('code-verifier')) capturedVerifier = value;
+			},
+			removeItem: () => undefined,
+		};
+
+		const client = createClient(this.url, this.secretKey, {
+			auth: {
+				storage: captureStorage as unknown as Storage,
+				persistSession: true,
+				flowType: 'pkce',
+				autoRefreshToken: false,
+				detectSessionInUrl: false,
+			},
+		});
+
+		const origin = new URL(request.url).origin;
+		const { data, error } = await client.auth.signInWithOAuth({
+			provider: provider as 'github' | 'google',
+			options: {
+				redirectTo: `${origin}/auth/callback`,
+				skipBrowserRedirect: true,
+			},
+		});
+
+		if (error || !data?.url || !capturedVerifier) {
+			this.logger.debug('Auth: oauth start failed', {
+				provider,
+				code: error?.code,
+				message: error?.message,
+				hasUrl: !!data?.url,
+				hasVerifier: !!capturedVerifier,
+			});
+			return Response.redirect(
+				new URL(`/login?error=${encodeURIComponent(error?.code ?? 'oauth_failed')}`, request.url).toString(),
+				302,
+			);
+		}
+
+		const resp = new Response(null, {
+			status: 302,
+			headers: { Location: data.url },
+		});
+		// 10 min TTL is plenty — OAuth dances usually take seconds.
+		resp.headers.append(
+			'Set-Cookie',
+			`sb-pkce-verifier=${capturedVerifier}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
+		);
+		return resp;
+	}
+
+	/**
+	 * GET /auth/callback — OAuth flow lands here from Supabase after the
+	 * provider authorizes. Reads the `code` query param and the PKCE
+	 * verifier cookie, exchanges them for a session via supabase-js's
+	 * `exchangeCodeForSession`, sets the standard HttpOnly session cookies,
+	 * clears the temporary PKCE verifier cookie, and 302s to /my.
+	 */
+	async handleOAuthCallback(request: Request): Promise<Response> {
+		const url = new URL(request.url);
+		const code = url.searchParams.get('code');
+		const errorParam = url.searchParams.get('error');
+		const errorDesc = url.searchParams.get('error_description');
+
+		if (errorParam) {
+			this.logger.debug('Auth: oauth callback returned error', { error: errorParam, desc: errorDesc });
+			return Response.redirect(
+				new URL(`/login?error=${encodeURIComponent(errorParam)}`, request.url).toString(),
+				302,
+			);
+		}
+		if (!code) {
+			return Response.redirect(
+				new URL('/login?error=missing_code', request.url).toString(),
+				302,
+			);
+		}
+
+		const verifier = getCookie(request, 'sb-pkce-verifier');
+		if (!verifier) {
+			return Response.redirect(
+				new URL('/login?error=missing_verifier', request.url).toString(),
+				302,
+			);
+		}
+
+		// Seed the captured verifier into storage so supabase-js can read it
+		// in exchangeCodeForSession.
+		const seedStorage = {
+			getItem: (key: string) => (key.includes('code-verifier') ? verifier : null),
+			setItem: () => undefined,
+			removeItem: () => undefined,
+		};
+
+		const client = createClient(this.url, this.secretKey, {
+			auth: {
+				storage: seedStorage as unknown as Storage,
+				persistSession: true,
+				flowType: 'pkce',
+				autoRefreshToken: false,
+				detectSessionInUrl: false,
+			},
+		});
+
+		const { data, error } = await client.auth.exchangeCodeForSession(code);
+		if (error || !data.session) {
+			this.logger.debug('Auth: oauth exchange failed', { code: error?.code, message: error?.message });
+			return Response.redirect(
+				new URL(
+					`/login?error=${encodeURIComponent(error?.code ?? 'oauth_failed')}`,
+					request.url,
+				).toString(),
+				302,
+			);
+		}
+
+		const redirect = new Response(null, {
+			status: 302,
+			headers: { Location: new URL('/my', request.url).toString() },
+		});
+		// Clear the one-shot PKCE verifier cookie.
+		redirect.headers.append(
+			'Set-Cookie',
+			'sb-pkce-verifier=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax',
+		);
+		return applySessionCookies(redirect, data.session.access_token, data.session.refresh_token);
 	}
 
 	/**

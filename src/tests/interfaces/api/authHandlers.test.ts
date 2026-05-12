@@ -25,9 +25,16 @@ const mockLogger = {
 interface MockAuth {
 	signUp?: ReturnType<typeof vi.fn>;
 	signInWithPassword?: ReturnType<typeof vi.fn>;
+	signInWithOtp?: ReturnType<typeof vi.fn>;
+	signInWithOAuth?: ReturnType<typeof vi.fn>;
+	exchangeCodeForSession?: ReturnType<typeof vi.fn>;
 	getUser?: ReturnType<typeof vi.fn>;
 	refreshSession?: ReturnType<typeof vi.fn>;
 	verifyOtp?: ReturnType<typeof vi.fn>;
+	resend?: ReturnType<typeof vi.fn>;
+	resetPasswordForEmail?: ReturnType<typeof vi.fn>;
+	updateUser?: ReturnType<typeof vi.fn>;
+	setSession?: ReturnType<typeof vi.fn>;
 	admin?: { signOut?: ReturnType<typeof vi.fn> };
 }
 
@@ -486,6 +493,355 @@ describe('AuthHandlers', () => {
 			expect(res.status).toBe(302);
 			expect(res.headers.get('Location')).toContain('/login?error=otp_expired');
 			expect(getSetCookies(res).length).toBe(0);
+		});
+	});
+
+	describe('handleOAuthStart', () => {
+		it('rejects unknown providers with 400', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleOAuthStart(
+				getRequest('https://x.test/api/auth/oauth/myspace'),
+				'myspace',
+			);
+			expect(res.status).toBe(400);
+		});
+
+		it('302s to Supabase URL + sets PKCE cookie on success', async () => {
+			// Mock signInWithOAuth to both return the URL AND write the
+			// PKCE verifier through the capture-storage we passed in.
+			let storageRef: { setItem: (k: string, v: string) => void } | null = null;
+			vi.mocked(createClient).mockImplementation((_url: any, _key: any, opts: any) => {
+				storageRef = opts.auth.storage;
+				return {
+					auth: {
+						signInWithOAuth: vi.fn().mockImplementation(async () => {
+							// Simulate supabase-js writing the verifier into storage
+							// synchronously before returning the URL.
+							storageRef!.setItem('sb-x-auth-token-code-verifier', 'verifier-xyz-123');
+							return {
+								data: { provider: 'github', url: 'https://x.supabase.co/auth/v1/authorize?...' },
+								error: null,
+							};
+						}),
+					},
+				} as any;
+			});
+
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+			const res = await handler.handleOAuthStart(
+				getRequest('https://paste.test/api/auth/oauth/github'),
+				'github',
+			);
+
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('supabase.co/auth/v1/authorize');
+			const setCookies = res.headers.getSetCookie?.() ?? [];
+			const pkce = setCookies.find((c) => c.startsWith('sb-pkce-verifier='));
+			expect(pkce).toBeDefined();
+			expect(pkce).toContain('verifier-xyz-123');
+			expect(pkce).toContain('HttpOnly');
+			expect(pkce).toContain('Secure');
+			expect(pkce).toContain('SameSite=Lax');
+		});
+
+		it('302s to /login?error=... when signInWithOAuth fails', async () => {
+			vi.mocked(createClient).mockImplementation(() => ({
+				auth: {
+					signInWithOAuth: vi.fn().mockResolvedValue({
+						data: null,
+						error: { code: 'provider_disabled', message: 'github is not enabled' },
+					}),
+				},
+			}) as any);
+
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+			const res = await handler.handleOAuthStart(
+				getRequest('https://paste.test/api/auth/oauth/github'),
+				'github',
+			);
+
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('/login?error=provider_disabled');
+		});
+	});
+
+	describe('handleOAuthCallback', () => {
+		it('redirects to /login?error=<error> when provider returns an error', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleOAuthCallback(
+				getRequest('https://x.test/auth/callback?error=access_denied'),
+			);
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('/login?error=access_denied');
+		});
+
+		it('redirects to /login?error=missing_code when no code', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleOAuthCallback(
+				getRequest('https://x.test/auth/callback'),
+			);
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('/login?error=missing_code');
+		});
+
+		it('redirects to /login?error=missing_verifier when PKCE cookie absent', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleOAuthCallback(
+				getRequest('https://x.test/auth/callback?code=abc'),
+			);
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('/login?error=missing_verifier');
+		});
+
+		it('sets session cookies + 302s to /my on successful exchange', async () => {
+			const exchangeCodeForSession = vi.fn().mockResolvedValue({
+				data: {
+					user: { id: 'u-oauth' },
+					session: { access_token: 'a.jwt', refresh_token: 'r.jwt' },
+				},
+				error: null,
+			});
+			vi.mocked(createClient).mockReturnValue(
+				clientWith({ exchangeCodeForSession }) as any,
+			);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleOAuthCallback(
+				getRequest('https://x.test/auth/callback?code=abc123', {
+					Cookie: 'sb-pkce-verifier=v-xyz',
+				}),
+			);
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toBe('https://x.test/my');
+			expect(exchangeCodeForSession).toHaveBeenCalledWith('abc123');
+
+			const setCookies = res.headers.getSetCookie?.() ?? [];
+			expect(setCookies.some((c) => c.startsWith('sb-access-token='))).toBe(true);
+			expect(setCookies.some((c) => c.startsWith('sb-refresh-token='))).toBe(true);
+			// PKCE cookie is cleared
+			expect(setCookies.some((c) => c.startsWith('sb-pkce-verifier=;') && c.includes('Max-Age=0'))).toBe(true);
+		});
+
+		it('redirects to /login?error=... when exchangeCodeForSession fails', async () => {
+			const exchangeCodeForSession = vi.fn().mockResolvedValue({
+				data: { user: null, session: null },
+				error: { code: 'invalid_grant', message: 'expired' },
+			});
+			vi.mocked(createClient).mockReturnValue(
+				clientWith({ exchangeCodeForSession }) as any,
+			);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleOAuthCallback(
+				getRequest('https://x.test/auth/callback?code=abc', {
+					Cookie: 'sb-pkce-verifier=v',
+				}),
+			);
+			expect(res.status).toBe(302);
+			expect(res.headers.get('Location')).toContain('/login?error=invalid_grant');
+			expect(getSetCookies(res).some((c) => c.startsWith('sb-access-token='))).toBe(false);
+		});
+	});
+
+	describe('handleMagicLink', () => {
+		it('rejects malformed body with 400', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleMagicLink(
+				new Request('https://x.test/api/auth/magic-link', {
+					method: 'POST',
+					body: 'not json',
+					headers: { 'Content-Type': 'application/json' },
+				}),
+			);
+			expect(res.status).toBe(400);
+		});
+
+		it('rejects missing email with 400', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleMagicLink(
+				jsonRequest('https://x.test/api/auth/magic-link', {}),
+			);
+			expect(res.status).toBe(400);
+		});
+
+		it('returns 200 and calls signInWithOtp with shouldCreateUser:false', async () => {
+			const signInWithOtp = vi.fn().mockResolvedValue({ data: {}, error: null });
+			vi.mocked(createClient).mockReturnValue(clientWith({ signInWithOtp }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleMagicLink(
+				jsonRequest('https://x.test/api/auth/magic-link', { email: 'a@b.test' }),
+			);
+			expect(res.status).toBe(200);
+			expect(signInWithOtp).toHaveBeenCalledWith({
+				email: 'a@b.test',
+				options: { shouldCreateUser: false },
+			});
+		});
+
+		it('returns 200 even when Supabase errors (no enumeration)', async () => {
+			const signInWithOtp = vi.fn().mockResolvedValue({
+				data: {},
+				error: { code: 'user_not_found', message: 'no such user' },
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ signInWithOtp }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleMagicLink(
+				jsonRequest('https://x.test/api/auth/magic-link', { email: 'nobody@b.test' }),
+			);
+			expect(res.status).toBe(200);
+		});
+	});
+
+	describe('handleForgotPassword', () => {
+		it('rejects malformed body with 400', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleForgotPassword(
+				new Request('https://x.test/api/auth/forgot-password', {
+					method: 'POST',
+					body: 'not json',
+					headers: { 'Content-Type': 'application/json' },
+				}),
+			);
+			expect(res.status).toBe(400);
+		});
+
+		it('rejects missing email with 400', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleForgotPassword(
+				jsonRequest('https://x.test/api/auth/forgot-password', {}),
+			);
+			expect(res.status).toBe(400);
+		});
+
+		it('returns 200 ok and calls resetPasswordForEmail with the email', async () => {
+			const resetPasswordForEmail = vi.fn().mockResolvedValue({ data: {}, error: null });
+			vi.mocked(createClient).mockReturnValue(clientWith({ resetPasswordForEmail }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleForgotPassword(
+				jsonRequest('https://x.test/api/auth/forgot-password', { email: 'a@b.test' }),
+			);
+			expect(res.status).toBe(200);
+			expect(resetPasswordForEmail).toHaveBeenCalledWith('a@b.test');
+		});
+
+		it('returns 200 ok even when Supabase errors (no email enumeration)', async () => {
+			const resetPasswordForEmail = vi.fn().mockResolvedValue({
+				data: {},
+				error: { code: 'user_not_found', message: 'no such user' },
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ resetPasswordForEmail }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleForgotPassword(
+				jsonRequest('https://x.test/api/auth/forgot-password', { email: 'nobody@b.test' }),
+			);
+			expect(res.status).toBe(200);
+		});
+	});
+
+	describe('handleUpdatePassword', () => {
+		it('rejects missing password with 400', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleUpdatePassword(
+				jsonRequest('https://x.test/api/auth/update-password', {}),
+			);
+			expect(res.status).toBe(400);
+		});
+
+		it('rejects short passwords with 400', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleUpdatePassword(
+				jsonRequest('https://x.test/api/auth/update-password', { password: 'short' }),
+			);
+			expect(res.status).toBe(400);
+		});
+
+		it('returns 401 when no session cookie', async () => {
+			vi.mocked(createClient).mockReturnValue(clientWith({}) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleUpdatePassword(
+				jsonRequest('https://x.test/api/auth/update-password', { password: 'longenough' }),
+			);
+			expect(res.status).toBe(401);
+		});
+
+		it('returns 401 when setSession rejects the cookies', async () => {
+			const setSession = vi.fn().mockResolvedValue({
+				data: {},
+				error: { code: 'invalid_token', message: 'bad' },
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ setSession }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleUpdatePassword(
+				jsonRequest(
+					'https://x.test/api/auth/update-password',
+					{ password: 'longenough' },
+					{ Cookie: `${ACCESS_TOKEN_COOKIE}=a; ${REFRESH_TOKEN_COOKIE}=r` },
+				),
+			);
+			expect(res.status).toBe(401);
+		});
+
+		it('returns 200 ok when updateUser succeeds', async () => {
+			const setSession = vi.fn().mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
+			const updateUser = vi.fn().mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
+			vi.mocked(createClient).mockReturnValue(clientWith({ setSession, updateUser }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleUpdatePassword(
+				jsonRequest(
+					'https://x.test/api/auth/update-password',
+					{ password: 'new-and-long-enough' },
+					{ Cookie: `${ACCESS_TOKEN_COOKIE}=a; ${REFRESH_TOKEN_COOKIE}=r` },
+				),
+			);
+			expect(res.status).toBe(200);
+			expect(setSession).toHaveBeenCalledWith({ access_token: 'a', refresh_token: 'r' });
+			expect(updateUser).toHaveBeenCalledWith({ password: 'new-and-long-enough' });
+		});
+
+		it('returns 400 when updateUser rejects (e.g. password policy)', async () => {
+			const setSession = vi.fn().mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
+			const updateUser = vi.fn().mockResolvedValue({
+				data: {},
+				error: { code: 'weak_password', message: 'too weak' },
+			});
+			vi.mocked(createClient).mockReturnValue(clientWith({ setSession, updateUser }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+
+			const res = await handler.handleUpdatePassword(
+				jsonRequest(
+					'https://x.test/api/auth/update-password',
+					{ password: 'longenough' },
+					{ Cookie: `${ACCESS_TOKEN_COOKIE}=a; ${REFRESH_TOKEN_COOKIE}=r` },
+				),
+			);
+			expect(res.status).toBe(400);
 		});
 	});
 
