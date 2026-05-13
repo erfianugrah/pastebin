@@ -6,6 +6,17 @@ Pasteriser — code-sharing service on Cloudflare Workers (Hono) with Astro+Reac
 
 Storage: **Supabase Postgres** (Frankfurt, project `dewddkcmwrzbpynylyhg`). Migrated from Cloudflare KV in May 2026 — see `SUPABASE-MIGRATION.md`.
 
+## CSP
+
+Two-layer CSP since 3.8.0:
+
+1. **Header**: `src/interfaces/api/middleware.ts` — strict directives, **no `'unsafe-inline'`**. Includes header-only directives (`frame-ancestors`, `base-uri`, `form-action`, etc.) that `<meta>` CSP cannot express.
+2. **Meta tag**: Astro 6's `security.csp` (configured in `astro/astro.config.mjs`) emits a per-page `<meta http-equiv="content-security-policy">` with SHA-256 hashes for every bundled and inline script/style in that page.
+
+Browser AND-s both: meta is the more specific (carries hashes), and `'unsafe-inline'` is implicitly disabled in any directive that has a hash. To add a new inline script: just write it in an `.astro` file — Astro hashes it automatically at build time. JSON / API responses see only the header (no inline scripts in JSON anyway).
+
+`api.qrserver.com` was removed from `img-src` when QR rendering moved client-side (B2). Adding any new third-party host requires touching BOTH the Worker header (for non-HTML responses) AND Astro `security.csp.directives` (for HTML).
+
 ## Structure
 
 Two separate packages with **independent `node_modules`**:
@@ -18,7 +29,7 @@ Two separate packages with **independent `node_modules`**:
 - **Worker entry**: `src/index.ts` — Hono app, all routing, serves Astro static assets via `ASSETS` binding
 - **Worker config**: `wrangler.jsonc` — `run_worker_first: true`, assets from `./astro/dist`
 - **DDD layers** in `src/`: `domain/` → `application/` → `infrastructure/` → `interfaces/`
-- **Storage abstraction**: `PasteRepository` interface (9 methods: `save`, `findById`, `view`, `delete`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`). One implementation: `SupabasePasteRepository`. KV bindings + `DualWriteRepository` removed in Phase 5.
+- **Storage abstraction**: `PasteRepository` interface (10 methods: `save`, `findById`, `view`, `delete`, `deleteWithToken`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`). One implementation: `SupabasePasteRepository`. KV bindings + `DualWriteRepository` removed in Phase 5.
 - **Env bindings** (`src/types.ts`):
   - `ASSETS: Fetcher` — Astro static assets
   - `SUPABASE_URL: string` — project URL (Wrangler secret, never in source)
@@ -39,11 +50,12 @@ Two separate packages with **independent `node_modules`**:
 
 ## Supabase migrations
 
-- All schema in `supabase/migrations/` — 16 files, applied to `dewddkcmwrzbpynylyhg`
+- All schema in `supabase/migrations/` — 17 files, applied to `dewddkcmwrzbpynylyhg`
 - Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema and Phase 3.5 audit fixes)
 - `set_updated_at` trigger has a `WHEN (OLD.x IS DISTINCT FROM NEW.x)` clause — required because `upsert()` sends all columns and `UPDATE OF col` fires on column presence, not value change
 - `createClient()` always passes `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }` — Supabase-recommended for server-side contexts. The three Worker call sites (`SupabasePasteRepository`, `AuthService`, `AuthHandlers`) go through `getServiceRoleClient(url, key)` in `src/infrastructure/supabase/getSupabaseClient.ts` which memoises by `(url, key)`. The cached client is stateless given the auth flags above. PKCE-flow clients in `handleOAuthStart`/`handleOAuthCallback` still call `createClient` directly because they inject a custom storage shim that's not safe to share. Tests reset the cache via `__resetSupabaseClientCache()` in `beforeEach`.
 - `view_paste(uuid)` RPC handles atomic view + burn-after-reading + view-limit with `SELECT ... FOR UPDATE`. The Supabase repository uses this; KV repository mirrors the logic without locking (documented race for rollback safety only)
+- `delete_paste(uuid, uuid)` RPC handles atomic delete-with-token in a single round-trip (replaces the legacy findById + delete two-step). Returns `(was_found, was_deleted)` so handlers distinguish 404 / 403 / 200. Same SECURITY DEFINER pattern as `view_paste`; granted to `service_role` only.
 - `search_vector` is a STORED generated tsvector column (`to_tsvector('english', title || ' ' || language)`) backed by a GIN index. Query via `.textSearch('search_vector', q, { type: 'websearch', config: 'english' })`
 - Realtime: not used. The migration `20260512102410_drop_realtime_broadcast.sql` removes the dead `broadcast_public_paste_insert` trigger and RLS policies on `realtime.messages`. The frontend has no supabase-js client and CSP (`connect-src 'self'`) blocks WebSocket to `*.supabase.co`. Recent-paste UX is polling-based (`GET /api/recent`).
 - RLS for authenticated users: 5 policies on `public.pastes` (view public, view own, create own, update own, delete own). Worker still uses `service_role` (RLS bypass); these policies activate when the frontend queries Supabase directly with a user JWT.
@@ -63,6 +75,19 @@ Two separate packages with **independent `node_modules`**:
 - **Server-side query-string logger redaction**: `SENSITIVE_QUERY_KEYS` set in `src/index.ts` is allowlist-style (add, never remove). Any new endpoint that puts a secret in a query param should add the key here and consider whether the endpoint should reject it outright (like the delete handler does).
 - Never run DDL directly via pgcli — always create a new migration file
 - Verify with `supabase db query --linked "SELECT ..."` or via `pgpasteriser` alias
+- **Explicit GRANTs are MANDATORY for every new `public.*` table** (rule applies after Supabase's Oct 30, 2026 cutover — see [Supabase changelog 45329](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically)). Existing tables (`pastes`, `slugs`) keep their grants; this rule only constrains NEW migrations. The Worker uses `service_role` so that grant is the minimum required:
+  ```sql
+  GRANT SELECT, INSERT, UPDATE, DELETE ON public.new_table TO service_role;
+  -- only add anon/authenticated grants if the frontend queries Supabase
+  -- directly with a user JWT — pasteriser does NOT (BFF pattern through
+  -- the Worker; CSP `connect-src 'self'` blocks browser→Supabase WSS too).
+  ```
+  Same for functions:
+  ```sql
+  REVOKE EXECUTE ON FUNCTION public.new_fn(...) FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION public.new_fn(...) TO service_role;
+  ```
+  `npm run check:migrations` (CI) greps for `CREATE TABLE public.` without a matching `GRANT … TO service_role` in the same file and fails the build.
 
 ## Commands
 

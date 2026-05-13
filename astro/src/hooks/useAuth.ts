@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
 /**
  * Browser-side auth hook. Does NOT talk to Supabase directly — every
@@ -11,6 +11,18 @@ import { useEffect, useState, useCallback } from 'react';
  *  - CSP stays at `connect-src 'self'`
  *  - Tokens in HttpOnly cookies (XSS-safe)
  *  - One rate-limit surface (the Worker), not two
+ *
+ * Shared store: every component that calls `useAuth()` subscribes to a
+ * single module-level store via `useSyncExternalStore`. Previous design
+ * gave each instance its own `useState` so a `signIn` inside one
+ * component (e.g. AuthForm) didn't propagate to another (e.g. the
+ * Header's UserMenu) until that component's own `refresh` ran. Page
+ * navigations papered over it; an in-place auth flow would have shown
+ * stale state.
+ *
+ * The store also dedupes the initial `/api/auth/session` fetch — five
+ * `useAuth` consumers used to fire five copies on first load; now they
+ * all await the same promise.
  */
 
 interface User {
@@ -26,7 +38,10 @@ interface AuthState {
 
 export interface UseAuthResult extends AuthState {
 	signIn: (email: string, password: string) => Promise<{ error: { code?: string; message: string } | null }>;
-	signUp: (email: string, password: string) => Promise<{ error: { code?: string; message: string } | null; needsConfirm: boolean }>;
+	signUp: (
+		email: string,
+		password: string,
+	) => Promise<{ error: { code?: string; message: string } | null; needsConfirm: boolean }>;
 	resendConfirmation: (email: string) => Promise<{ error: { message: string } | null }>;
 	forgotPassword: (email: string) => Promise<{ error: { message: string } | null }>;
 	updatePassword: (password: string) => Promise<{ error: { message: string } | null }>;
@@ -45,22 +60,64 @@ async function readJsonOrNull<T>(res: Response): Promise<T | null> {
 	}
 }
 
-export function useAuth(): UseAuthResult {
-	const [state, setState] = useState<AuthState>({ user: null, loading: true });
+// ─── Module-level singleton store ──────────────────────────────────────
 
-	const refresh = useCallback(async () => {
+let state: AuthState = { user: null, loading: true };
+const listeners = new Set<() => void>();
+let inFlightRefresh: Promise<void> | null = null;
+let initialised = false;
+
+function setState(next: AuthState): void {
+	state = next;
+	for (const fn of listeners) fn();
+}
+
+function subscribe(fn: () => void): () => void {
+	listeners.add(fn);
+	return () => {
+		listeners.delete(fn);
+	};
+}
+
+function getSnapshot(): AuthState {
+	return state;
+}
+
+// SSR snapshot — must match initial client render to avoid hydration
+// mismatches. Render skeleton/loading state on the server.
+function getServerSnapshot(): AuthState {
+	return { user: null, loading: true };
+}
+
+async function refresh(): Promise<void> {
+	// Dedupe concurrent refresh calls so five `useAuth` consumers all
+	// share a single in-flight `/api/auth/session` request.
+	if (inFlightRefresh) return inFlightRefresh;
+	inFlightRefresh = (async () => {
 		try {
 			const res = await fetch('/api/auth/session', FETCH_OPTS);
 			const data = await readJsonOrNull<{ user: User | null }>(res);
 			setState({ user: data?.user ?? null, loading: false });
 		} catch {
 			setState({ user: null, loading: false });
+		} finally {
+			inFlightRefresh = null;
 		}
-	}, []);
+	})();
+	return inFlightRefresh;
+}
 
-	useEffect(() => {
-		void refresh();
-	}, [refresh]);
+function ensureInitialised(): void {
+	if (initialised || typeof window === 'undefined') return;
+	initialised = true;
+	void refresh();
+}
+
+// ─── Hook ──────────────────────────────────────────────────────────────
+
+export function useAuth(): UseAuthResult {
+	ensureInitialised();
+	const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
 	const signIn = useCallback(async (email: string, password: string) => {
 		const res = await fetch('/api/auth/login', {
@@ -175,5 +232,25 @@ export function useAuth(): UseAuthResult {
 		}
 	}, []);
 
-	return { ...state, signIn, signUp, signOut, refresh, resendConfirmation, forgotPassword, updatePassword, signInWithMagicLink };
+	return {
+		...snapshot,
+		signIn,
+		signUp,
+		signOut,
+		refresh,
+		resendConfirmation,
+		forgotPassword,
+		updatePassword,
+		signInWithMagicLink,
+	};
 }
+
+// Exposed for tests so a fresh suite can wipe singleton state.
+export const __test__ = {
+	reset(): void {
+		state = { user: null, loading: true };
+		inFlightRefresh = null;
+		initialised = false;
+		listeners.clear();
+	},
+};

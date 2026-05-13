@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from './ui/button';
 import { T } from '../lib/typography';
+import { loadPasteToken, removePasteToken } from '../lib/pasteTokenStorage';
 
 type DeleteState = 'confirm' | 'loading' | 'success' | 'error';
 
@@ -16,13 +17,17 @@ export default function DeletePaste() {
 	async function handleDelete() {
 		setState('loading');
 		try {
-			// Read token from sessionStorage (set by PasteActions) or localStorage
+			// Token resolution order:
+			//  1. sessionStorage hand-off from PasteActions (one-shot key).
+			//  2. secureStorage / legacy plaintext fallback via loadPasteToken.
 			let token: string | null = null;
 			try {
 				token = sessionStorage.getItem('pasteriser_delete_token');
 				if (token) sessionStorage.removeItem('pasteriser_delete_token');
-				if (!token) token = localStorage.getItem(`paste_token_${pasteId}`);
 			} catch { /* ignore */ }
+			if (!token) {
+				token = await loadPasteToken(pasteId);
+			}
 
 			const response = await fetch(`/pastes/${pasteId}/delete`, {
 				method: 'DELETE',
@@ -32,8 +37,7 @@ export default function DeletePaste() {
 			const result = (await response.json()) as { error?: { message?: string } };
 
 			if (response.ok) {
-				// Clean up stored token
-				try { localStorage.removeItem(`paste_token_${pasteId}`); } catch { /* ignore */ }
+				removePasteToken(pasteId);
 				setState('success');
 			} else {
 				setErrorMessage(result.error?.message || 'Could not delete this paste.');

@@ -71,23 +71,30 @@ The publishable key is safe to ship — it maps to the `anon` Postgres role and 
 
 ### Content security
 
-- **XSS prevention** — every user-supplied string rendered via React's escaping; pastes/titles/languages are never injected as raw HTML. No `dangerouslySetInnerHTML`.
-- **CSP** — strict `script-src 'self'`, no `unsafe-eval`, Web Workers via `worker-src blob:`:
+- **XSS prevention** — every user-supplied string rendered via React's escaping; pastes/titles/languages are never injected as raw HTML. The single `dangerouslySetInnerHTML` call (markdown render in `CodeViewer.tsx`) feeds output from DOMPurify (defaults including `SANITIZE_DOM` + `SANITIZE_NAMED_PROPS`) with a tightly-scoped `data-slug → id` hook used only on heading elements.
+- **CSP** — two layers, both with no `'unsafe-inline'` in `script-src`:
 
-  ```
-  default-src 'self';
-  script-src 'self';
-  style-src 'self' 'unsafe-inline';
-  connect-src 'self' https://<supabase-host> wss://<supabase-host>;
-  img-src 'self' data: blob:;
-  font-src 'self';
-  object-src 'none';
-  media-src 'self';
-  worker-src 'self' blob:;
-  frame-ancestors 'none';
-  base-uri 'self';
-  form-action 'self';
-  ```
+  1. **Header** (sent on every response, including JSON / API):
+
+     ```
+     default-src 'self';
+     script-src 'self';
+     style-src 'self';
+     connect-src 'self';
+     img-src 'self' data: blob:;
+     font-src 'self';
+     object-src 'none';
+     media-src 'self';
+     worker-src 'self' blob:;
+     child-src 'self';
+     frame-ancestors 'none';
+     base-uri 'self';
+     form-action 'self';
+     ```
+
+  2. **Meta tag** (emitted per HTML page by Astro 6's `security.csp`): adds `script-src` + `style-src` with SHA-256 hashes for every bundled / inline script and style on that page. Modern browsers AND-combine header + meta and disable `'unsafe-inline'` in any directive carrying a hash (CSP3). Result: only hashed scripts execute; injection via inline `<script>` is rejected with no allowlist to fall back on.
+
+  Header-only directives (`frame-ancestors`, `report-uri`, `sandbox`) stay on the Worker because `<meta>` CSP ignores them. JSON responses see only the header.
 
 - **HSTS** — `max-age=31536000; includeSubDomains; preload`
 - **X-Frame-Options** — `DENY`
@@ -148,10 +155,11 @@ See `SUPABASE-MIGRATION.md` "Phase 4.7" for the full mitigation roadmap with cit
 
 ### Client-side encryption
 
-- **AES-GCM-256** via Web Crypto API. Encryption happens in a Web Worker for non-blocking UX.
-- **Password mode** — PBKDF2 with the project's iteration count for key derivation. Password never leaves the browser.
+- **XSalsa20-Poly1305** (NaCl `secretbox`) via tweetnacl. Encryption happens in a Web Worker for non-blocking UX; main-thread fallback for small payloads.
+- **Password mode** — PBKDF2-SHA-256 with 300,000 iterations + 16-byte salt for key derivation. Password never leaves the browser.
 - **Key mode** — 256-bit random key in the URL fragment (`#key=...`). Fragment is never sent in HTTP requests.
-- **Storage** — paste content stored as ciphertext + IV. Server cannot derive the plaintext under any path.
+- **Storage** — paste content stored as `[salt? nonce ciphertext+MAC]` base64. Server cannot derive the plaintext under any path.
+- **QR rendering** — rendered locally in the browser via the `qrcode` npm package. Previously sent `window.location.href` (including the `#key=…` fragment) to `api.qrserver.com`; that's gone since 3.8.0.
 
 ## Security checklist
 
@@ -205,6 +213,7 @@ If you discover a security vulnerability:
 - Encryption keys are derived from URLs or passwords. URL-based keys are exposed to anyone with the link; password-based keys are only as strong as the password.
 - The cached-key store (`astro/src/lib/secureStorage.ts`) keeps per-paste decryption keys in localStorage encrypted under a master key. **The master key lives in `sessionStorage`** (cleared on tab close) — earlier versions stored it in the same `localStorage` it "protected", which co-located key and ciphertext and provided no defense beyond casual DOM inspection. Moving the master key to sessionStorage shortens the persistence window but does not protect against XSS or browser-extension reads. Use the key cache for UX (don't re-prompt the same user), not as a security boundary.
 - An attacker with disk access to the browser profile can still recover localStorage ciphertext; without the (volatile) sessionStorage master key they cannot decrypt it. After the tab closes the cached items become permanently unrecoverable, by design.
+- **Delete tokens** (`pasteTokenStorage` wrapper, since 3.8.0) follow the same routing — written/read through `secureStorage`, falling back to and migrating any legacy plaintext `paste_token_<id>` entry. Same caveat: XSS that can read both `localStorage` AND `sessionStorage` defeats this layer.
 - No key-rotation flow is implemented; encrypted pastes are immutable.
 
 ### Browser requirements

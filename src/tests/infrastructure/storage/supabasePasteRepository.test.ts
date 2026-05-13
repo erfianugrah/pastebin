@@ -64,7 +64,7 @@ function makeSupabaseMock(overrides: {
 	deleteResult?: { error: null | { message: string }; count: number | null };
 	queryResult?: { data: Record<string, unknown>[] | null; error: null | { message: string } };
 	insertResult?: { error: null | { message: string } };
-	rpcResult?: { data: unknown; error: null | { message: string } };
+	rpcResult?: { data: unknown; error: null | { message: string; code?: string } };
 	searchResult?: { data: Record<string, unknown>[] | null; error: null | { message: string } };
 } = {}) {
 	// searchPublic chains: .from().select().eq().gt().textSearch().order().limit()
@@ -339,6 +339,87 @@ describe('SupabasePasteRepository', () => {
 			const result = await repository.delete(PasteId.create('test-uuid-1234'));
 			expect(result).toBe(false);
 			expect(mockLogger.error).toHaveBeenCalled();
+		});
+	});
+
+	describe('deleteWithToken (atomic RPC delete) [M20]', () => {
+		it('returns {found:true, deleted:true} when RPC reports a successful delete', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: [{ was_found: true, was_deleted: true }], error: null },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.deleteWithToken(PasteId.create('test-uuid'), 'token-uuid');
+			expect(result).toEqual({ found: true, deleted: true });
+			expect(mockClient.rpc).toHaveBeenCalledWith('delete_paste', {
+				paste_uuid: 'test-uuid',
+				owner_token: 'token-uuid',
+			});
+		});
+
+		it('returns {found:false} when RPC reports paste not found', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: [{ was_found: false, was_deleted: false }], error: null },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.deleteWithToken(PasteId.create('nope'), 'tok');
+			expect(result).toEqual({ found: false, deleted: false });
+		});
+
+		it('returns {found:true, deleted:false} when token mismatched', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: [{ was_found: true, was_deleted: false }], error: null },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.deleteWithToken(PasteId.create('id'), 'wrong-tok');
+			expect(result).toEqual({ found: true, deleted: false });
+		});
+
+		it('returns {found:false} on invalid-UUID token (Postgres 22P02)', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: null, error: { code: '22P02', message: 'invalid input syntax for type uuid' } },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.deleteWithToken(PasteId.create('id'), 'not-a-uuid');
+			expect(result).toEqual({ found: false, deleted: false });
+			// 22P02 is expected — no error log spam.
+			expect(mockLogger.error).not.toHaveBeenCalled();
+		});
+
+		it('returns {found:false} and logs on other RPC errors', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: null, error: { message: 'connection lost' } },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.deleteWithToken(PasteId.create('id'), 'tok');
+			expect(result).toEqual({ found: false, deleted: false });
+			expect(mockLogger.error).toHaveBeenCalled();
+		});
+
+		it('returns {found:false} when RPC returns an empty array', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: [], error: null },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.deleteWithToken(PasteId.create('id'), 'tok');
+			expect(result).toEqual({ found: false, deleted: false });
 		});
 	});
 

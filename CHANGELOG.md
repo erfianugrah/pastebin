@@ -1,5 +1,86 @@
 # Changelog
 
+## [3.8.0] - 2026-05-13
+
+Code-review hardening pass. 14 verified findings fixed across security
+(burn-after-reading cache bypass, E2EE key leak, DOM-clobbering, plaintext
+delete tokens), correctness (SyntaxError → 500, UTF-8 byte counting), and
+operational hygiene (shared auth store, visibility-aware polling, single-
+statement delete, Supabase grants prep). 251 unit tests (was 224).
+
+### Critical / High — security
+
+- **Cache leak on burn-after-reading + view-limit** [B1]. `GET /pastes/:id` and `GET /p/:slug` JSON responses were emitted with `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`. Browser and downstream shared caches (corporate proxies, ISP caches) could serve the burned content to subsequent viewers within the cache window. The Postgres `view_paste()` function had correctly deleted the row, but the cached response carried it. Both paths now use `preventCaching` (`no-store`). `cachePasteView` in `cacheControl.ts` was converted into a throwing guardrail so callers can't accidentally re-introduce the bug. 5 new tests in `cacheControl.test.ts`.
+
+- **QR code leaked E2EE decryption key to third party** [B2]. `PasteActions.tsx` rendered the QR by sending `encodeURIComponent(window.location.href)` to `api.qrserver.com`. For E2EE pastes the URL fragment `#key=…` was re-encoded as `%23key=…` and landed in the third-party request. Now rendered locally via the `qrcode` npm package (dynamic-imported, skeleton placeholder during load). `api.qrserver.com` removed from CSP `img-src`.
+
+- **"Save password" feature was dead-code that silently never worked** [B3]. `CodeViewer.tsx` wrote `dk:${salt}:${key}` to secureStorage on opt-in but the reader path passed the raw `"dk:..."` string to `decryptData(_, /*isPassword*/ false)`, which tried to base64-decode `"dk:salt:key"` and failed every time. No decoder for the `dk:` prefix existed anywhere. The save modal is removed; users keep typing the password (the only path that ever worked). Reducing the surface area also drops the storage of derived keys, which was a debatable design even when correct.
+
+- **Markdown sanitiser allowed `id`/`class` injection on every element** [B4]. DOMPurify was configured with `SANITIZE_DOM: false` and `SANITIZE_NAMED_PROPS: false` so heading anchors could keep slugged ids. The collateral damage was that any inline `<div id="defaultView">` or `<form name="body">` in a paste's markdown could shadow document-named properties (DOM-clobbering attack vector against any library that resolves globals through the document tree). Both flags restored to their defaults. Heading anchors now travel from the marked renderer as `data-slug="hello-world"` and a DOMPurify `afterSanitizeAttributes` hook hoists the slug to a real `id` only on `<h1>..<h6>` elements. 4 new regression tests: `<div id="defaultView">`, `<form name="body">`, `<input name="cookie">`, and `[click](javascript:alert(1))` neutralisation.
+
+- **Delete tokens stored in plain `localStorage`** [B5]. Six call sites wrote/read `localStorage.setItem('paste_token_<id>', token)`. XSS could enumerate the prefix and delete every paste the user had ever created from that browser. New `pasteTokenStorage` wrapper routes all reads/writes through `secureStorage` (encrypted under a session-scoped master key). Synchronous `hasPasteToken` probe avoids awaiting decryption for the boolean UI state on `PasteActions` mount. Legacy plaintext entries are detected on read and opportunistically migrated forward. **Caveat unchanged**: XSS that can also read `sessionStorage` can still pull the master key and decrypt — the layered defence raises the bar for passive disk-scrape and console-window enumeration but doesn't defeat a real injection.
+
+- **Malformed JSON returned 500 instead of 400** [B6]. `await request.json()` SyntaxError in `handleCreatePaste`, `handleUpdatePaste`, `handleDeletePaste` fell through `rethrowIfZodError` (which only handles errors with an `issues` field) and reached `app.onError` as an unstructured 500. Added `parseJsonBody<T>(request)` helper that catches the parse error and throws `AppError('bad_request', 'Invalid JSON body', 400)`. Delete handler keeps its tolerant catch — a DELETE without a body is a legitimate "I don't have the token" path that the downstream command maps to UNAUTHORIZED.
+
+- **Astro-native CSP with hashes for inline scripts** [B7]. The Worker's `Content-Security-Policy` header previously included `script-src 'self' 'unsafe-inline'` + `style-src 'self' 'unsafe-inline'` because Astro emitted inline `<script set:html={…}>` (theme detection) and inline JSON-LD. Astro 6 `security.csp` is now enabled: every page gets a per-page `<meta http-equiv="content-security-policy">` with SHA-256 hashes for the bundled and inline scripts/styles. The Worker header drops `'unsafe-inline'` — header + meta intersect, so the stricter meta (hashes only, no `'unsafe-inline'`) wins for HTML. Header-only directives (`frame-ancestors`, etc.) stay on the Worker. JSON / API responses still see the tight `script-src 'self'` from the header (no inline scripts in JSON anyway).
+
+- **`getCookie` regex was malformed** [B8]. The character class `/[.*+?^${}()|[\\]\\\\]/g` closed early (after `[\\]`), so the "escape regex metacharacters in the cookie name" replacement matched nothing. Inert in practice — only inputs were `sb-…-token` names containing no metacharacters — but a quiet bug waiting for the day someone added a `.` or `+` to a cookie name. Replaced with the standard `/[-/\\^$*+?.()|[\]{}]/g` pattern. 2 new tests: `a.b+c?` cookie and longest-prefix non-match.
+
+### Important — correctness
+
+- **Validation counted UTF-16 code units, not UTF-8 bytes** [B19]. `createContentSizeRules` checked `value.length <= 25 MB`. Each 4-byte UTF-8 character (emoji, CJK supplementary plane, math symbols) is 2 UTF-16 code units, so an emoji-heavy paste could carry up to 2× the byte limit through the client check then fail server-side as an opaque 500. Now uses `new TextEncoder().encode(value).length`. 6 new tests including a 300k-emoji surrogate-pair regression.
+
+- **Astro structured-data lies** [B18]. The JSON-LD block claimed `url: pasteriser.com` (wrong host — site is `paste.erfi.io`), `AES-GCM` (actual crypto is XSalsa20-Poly1305 via NaCl secretbox), and `Live recent feed via Supabase Realtime` (deleted in migration `20260512102410`). Now driven from `Astro.url.origin` and `description`, with correct algo string and Realtime claim replaced by "Vanity URL slugs".
+
+- **Single-statement atomic delete-with-token** [B20/M20]. `DeletePasteCommand` did `findById` (RT 1) + `delete` (RT 2). Replaced with `deleteWithToken(id, token)` which calls a new `delete_paste(uuid, uuid)` Postgres function: `SELECT ... FOR UPDATE` + comparison + `DELETE` in a single transaction. Returns `(was_found, was_deleted)` so the handler distinguishes 404 / 403 / 200 with one round-trip on the happy path. Migration `20260513170000_add_delete_paste_rpc.sql`. Empty/missing token short-circuits before any DB call. 6 new tests on the repository + 5 on the command.
+
+- **Slug regex tightened** [M7]. Previous regex `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` accepted `a--b`. Replaced with `^[a-z0-9](?:-?[a-z0-9])*$` which rejects consecutive hyphens (DNS-label-style). 4 new Zod tests.
+
+### Important — UX / performance
+
+- **Visibility-aware polling on /recent** [B15]. `RecentPastes.tsx` ran `setInterval(load, 15_000)` regardless of `document.visibilityState`. A user with the tab in the background kept hitting `/api/recent` four times a minute for hours. Now pauses when hidden, resumes + kicks a single fresh fetch on visibility return.
+
+- **Shared `useAuth` store** [B16]. Each of the five `useAuth` consumers (UserMenu, AuthForm, ResetPasswordForm, ForgotPasswordForm, MyPastes) owned its own `useState<AuthState>`. `signIn` in AuthForm didn't propagate to the Header's UserMenu until the latter's own refresh ran (typically via the page navigation after auth). An in-place auth flow would have shown stale state. Refactored to a module-level store + `useSyncExternalStore` — all consumers subscribe to one state. Concurrent `/api/auth/session` calls also deduplicated via `inFlightRefresh`. SSR-safe via `getServerSnapshot`.
+
+- **Astro frontend display URL** [B14]. `PasteForm.tsx` hardcoded `paste.erfi.io/p/` in the vanity-slug prefix label. Replaced with `window.location.origin` so staging / preview / dev display the actual deploy host.
+
+### Operational
+
+- **Supabase Data API grants — Oct 30, 2026 cutover** [SG1/SG2]. Supabase's auto-grant default for new tables in `public` is being revoked. Existing pastes/slugs schema is unaffected. Future migrations must include explicit `GRANT … TO service_role` for every new `public.*` table. Documented in `AGENTS.md` (rule + code snippet) and enforced by `npm run check:migrations` (new), a tsx grep script that flags any `CREATE TABLE public.<name>` without a matching `GRANT … <name> … TO service_role` in the same file. Verified by running against synthetic bad / good migrations.
+
+- **`/api/recent` + `/api/search` cache safety guard** [B10]. Both endpoints emit `Cache-Control: public, max-age=…`. Today they expose only public, non-user-scoped data, but a future change that adds user-scoped filtering would silently leak via shared caches. SAFETY comments added at each route handler enumerating the public-only requirement so future regressions surface in code review.
+
+### Internal cleanup
+
+- **`ConfigurationService` deleted** [M1]. Six-section nested config object whose only consumer was `application.baseUrl`. Replaced with a 16-line `getApplicationBaseUrl(url)` helper. `config.ts` shrunk from 116 lines to 16. The other five getters (`getStorageConfig`, `getSecurityConfig`, `getPasteConfig`, `getLoggingConfig`, plus the dead KV-era settings) had zero call sites.
+
+- **`@typescript-eslint/no-unused-vars` re-enabled** [M22]. Was switched off globally. Re-enabled at `warn` with `argsIgnorePattern: '^_'`. One unused `logger` binding in `/p/:slug` handler removed.
+
+- **Cookie test coverage expanded**. +2 regression tests in `cookies.test.ts` (escape regex metacharacters, longest-prefix non-match).
+
+### Tests
+
+- **251 unit tests** (was 224): +5 cacheControl, +6 deleteWithToken on the repository, +5 deleteWithToken on the command, +4 markdown DOM-clobbering / javascript: href regressions, +6 validation TextEncoder, +4 slug regex tightening, +2 cookie escape regression, +1 SyntaxError → 400, +1 paste-token migration path.
+- **25 component tests** unchanged (Astro/jsdom).
+- All migrations applied to the linked Supabase project (`dewddkcmwrzbpynylyhg`). 17 migrations total.
+
+### Migrations
+
+- `20260513170000_add_delete_paste_rpc.sql` — adds `delete_paste(uuid, uuid)` SECURITY DEFINER PL/pgSQL function. Granted to `service_role` only. Applied.
+
+### Breaking changes
+
+None at the HTTP API surface. The internal `PasteRepository` interface gained a new method (`deleteWithToken`); add to any custom implementations.
+
+### Verification — claims retracted on second pass
+
+- **SSR/hydration "flash of error" in PasteViewer** (initial review claim) — retracted. `state` initialises to `'loading'` and the SSR + initial client render both emit the loading spinner regardless of pathname value; no hydration mismatch.
+- **`view_paste()` two-statement pattern is wasteful** — retracted. Early-exit branches (expired row, view-limit already reached) need the leading `SELECT … FOR UPDATE` so the function can `RETURN` without doing the `UPDATE`. Single-UPDATE refactor would lose those branches.
+- **`IS DISTINCT FROM` comment is stale** — retracted. Migration `20260511180117_title_nullable.sql` made `title` nullable; `IS DISTINCT FROM` is now exactly the correct idiom for the trigger WHEN clause.
+- **OAuth PKCE client uses service_role key (leak concern)** — retracted. Those `createClient` calls run server-side inside the Worker; the apikey header is on Worker→Supabase HTTP, never reaching the browser.
+
+---
+
 ## [3.7.0] - 2026-05-12
 
 Security + scalability hardening pass driven by the

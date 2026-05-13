@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Lock, Unlock, Flame, Eye, Clock, KeyRound, ShieldCheck } from 'lucide-react';
-import { decryptData, deriveKeyFromPassword } from '../lib/crypto';
+import { Lock, Unlock, Flame, Eye, KeyRound } from 'lucide-react';
+import { decryptData } from '../lib/crypto';
 import { toast } from './ui/toast';
 import { Button } from './ui/button';
 import util from 'tweetnacl-util';
@@ -260,6 +260,13 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 	}
 
 	// ── Password submit ──────────────────────────────────────────────
+	//
+	// Previously this offered a "save password" confirmation that stored
+	// `dk:<salt>:<key>` in secureStorage. On revisit, the auto-decrypt
+	// path read that value back and passed the raw string straight into
+	// `performDecryption(value, /*isPassword*/ false)`, which tried to
+	// decode `"dk:..."` as base64 and failed every time. The feature
+	// silently never worked. Removed — users keep typing the password.
 	async function handlePasswordSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!passwordInput.trim()) return;
@@ -268,24 +275,6 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 
 		try {
 			await performDecryption(passwordInput, true);
-
-			// Offer to save password-derived key
-			const { showConfirmModal } = await import('./ui/modal');
-			const save = await showConfirmModal({
-				title: 'Save password?',
-				description: 'Save the decryption key in your browser for future visits?',
-				confirmText: 'Save',
-				cancelText: 'No thanks',
-			});
-
-			if (save && paste.id) {
-				try {
-					const { key, salt } = await deriveKeyFromPassword(passwordInput);
-					const { secureStore } = await import('../lib/secureStorage');
-					await secureStore(`paste_key_${paste.id}`, `dk:${salt}:${key}`);
-					toast({ message: 'Password saved for this paste.', type: 'success', duration: 2000 });
-				} catch { /* ignore */ }
-			}
 		} finally {
 			setIsDecrypting(false);
 		}

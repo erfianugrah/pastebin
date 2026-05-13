@@ -16,11 +16,12 @@ Live at [paste.erfi.io](https://paste.erfi.io).
   - Multi-file pastes
   
 - **Encryption & privacy**
-  - End-to-end encryption (client-side, AES-GCM via Web Crypto API)
+  - End-to-end encryption (client-side, XSalsa20-Poly1305 via NaCl secretbox)
   - Key in URL fragment — server never sees plaintext or keys
-  - Password mode (PBKDF2 key derivation) and key mode (256-bit random)
+  - Password mode (PBKDF2-SHA-256, 300k iterations) and key mode (256-bit random)
   - Decryption happens in a Web Worker for non-blocking UX
-  - Encrypted localStorage for any sensitive client state
+  - QR codes rendered locally (no third-party requests, since 3.8.0)
+  - Per-paste delete tokens encrypted under a session-scoped master key
 
 - **Auth & ownership** (optional)
   - Supabase Auth (email + password, server-side email confirmation, password recovery, magic-link, GitHub OAuth)
@@ -34,11 +35,14 @@ Live at [paste.erfi.io](https://paste.erfi.io).
 
 - **Hardening**
   - Per-IP rate limiting via Cloudflare Workers Rate Limiting bindings on auth, paste-create, session, and search endpoints
-  - CSP, X-Frame-Options, HSTS, X-Content-Type-Options
+  - Two-layer CSP: Worker header (no `unsafe-inline`) + Astro per-page `<meta>` with SHA-256 hashes for every inline script/style
+  - X-Frame-Options, HSTS, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
   - CORS allowlist
-  - XSS prevention (no `innerHTML` on user data, programmatic DOM creation)
+  - DOMPurify on rendered markdown with `SANITIZE_NAMED_PROPS` enabled (blocks DOM-clobbering via `id="defaultView"` etc.)
+  - Burn-after-reading + view-limit responses uncacheable (`no-store`)
   - Open-redirect defence on `/auth/confirm?next=…` via origin-equality post-URL-parse
   - Delete-token rejected in query string (body-only) to prevent leakage via logpush
+  - Atomic single-statement delete (`delete_paste(uuid, uuid)` RPC) — auth check + delete in one transaction
   
 - **Enhanced User Experience**
   - Modern UI with dark mode support
@@ -652,7 +656,8 @@ npm run deploy
 - `npm run deploy` - Deploy to Cloudflare Workers
 
 ### Testing & Quality Assurance
-- `npm run test` - Run unit tests (vitest) — Worker + Astro lib tests, 224 cases
+- `npm run test` - Run unit tests (vitest) — Worker + Astro lib tests, 251 cases
+- `npm run check:migrations` - Verify every `CREATE TABLE public.*` migration includes an explicit `GRANT … TO service_role` (Supabase Oct-30-2026 cutover guardrail)
 - `npm run test:ui` - Run Astro component tests (jsdom) — 25 cases
 - `npm run test:e2e` - Run Playwright e2e against **production** (`paste.erfi.io`)
 - `npm run test:e2e:local` - Run Playwright e2e against a locally-spawned Astro dev server (`http://127.0.0.1:4321`)
@@ -846,7 +851,7 @@ Pasteriser implements comprehensive security measures to protect user data and s
 - **Supabase Auth + RLS** — when users sign in, paste ownership is enforced by 5 RLS policies on `public.pastes` (SELECT public, SELECT/INSERT/UPDATE/DELETE own). Worker validates JWTs via `supabase.auth.getUser()` before assigning `user_id`.
 - **XSS prevention** — user content rendered via `textContent` only; no `innerHTML` for any user-supplied data.
 - **Open-redirect defence** — `/auth/confirm?next=…` resolves the candidate URL against the request origin and rejects anything that lands off-origin. Closes the backslash-bypass (`/\evil.com` → `https://evil.com/`) the WHATWG URL parser opens by default.
-- **Content Security Policy** — `script-src 'self'`, no `unsafe-eval`. Web Workers via `worker-src blob:`.
+- **Content Security Policy** — two layers: Worker header (`script-src 'self'`, no `unsafe-inline`) + Astro per-page `<meta>` with SHA-256 hashes for every bundled / inline script. `unsafe-inline` is implicitly disabled by browsers in any directive with a hash (CSP3). Web Workers via `worker-src blob:`.
 - **CORS** — explicit allowlist (no wildcard in production with credentials).
 - **Rate limiting** — Cloudflare Workers Rate Limiting bindings on 4 endpoint groups (auth-write, session-read, paste-create, search). See SECURITY.md for limits.
 - **Browser-cached keys** — per-paste decryption keys are encrypted under a master key kept in **sessionStorage** (tab-scoped, cleared on close). Provides obfuscation against passive disk-scrape attackers; **does NOT defend against XSS** — see SECURITY.md.
@@ -869,7 +874,7 @@ For more detailed security information, configuration guides, and security check
 
 **Domain**: https://paste.erfi.io
 **Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
-**Migrations**: 14 applied — see `supabase/migrations/`
+**Migrations**: 17 applied — see `supabase/migrations/`
 
 ### Storage Backend
 
@@ -880,6 +885,7 @@ Migrated from Cloudflare KV to **Supabase Postgres** in May 2026. KV was removed
 | Paste data | Supabase `pastes` table | RLS enabled (6 policies: 1 anon + 5 authenticated) |
 | Vanity slugs | Supabase `slugs` table | RLS enabled (non-expired slugs visible to `anon`) |
 | Atomic view | `view_paste(uuid)` RPC | `SELECT ... FOR UPDATE` row lock — fixes burn-after-reading race |
+| Atomic delete | `delete_paste(uuid, uuid)` RPC | Token check + delete in one transaction; single-RT happy path |
 | Search | `search_vector` (GIN-indexed tsvector) | `websearch_to_tsquery` via `/api/search` |
 | Stats | `paste_stats()` RPC | jsonb summary via `/api/stats`; cached 5min + SWR 15min |
 | User accounts | Supabase Auth + JWT verification | Worker validates `Authorization: Bearer <jwt>`; `/my` page uses RLS |
@@ -891,7 +897,7 @@ For day-to-day operations (when to use the Dashboard vs CLI vs Management API, h
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full release history, including the Cloudflare KV → Supabase Postgres migration (3.0.0), trigger/audit fixes (3.0.x), `view_paste()` RPC + full-text search + Realtime feed (3.1.0), Supabase Auth + RLS + frontend login/`/my` page (3.2.0), `paste_stats()` RPC + complete KV removal (3.3.0), BFF auth proxy + server-side email confirmation + `title` NOT-NULL fix + `wrangler tail` test wrapper + `SUPABASE_URL` secret promotion (3.4.0), domain switch to `paste.erfi.io` + Resend SMTP + auth UX polish + email-template `type=` hardcoding fix + delete-paste handler POST-body bug fix + test-cleanup leak fixes (3.5.0), and password recovery + magic-link + GitHub OAuth + automatic identity-linking + `supabase config push` IaC migration (3.6.0).
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history. The most recent release, **3.8.0** (May 13, 2026), is a code-review hardening pass: burn-after-reading cache bypass, E2EE-key leak through third-party QR generator, DOM-clobbering in markdown, plaintext delete tokens, and SyntaxError-as-500 bugs fixed; shared `useAuth` store; visibility-aware polling; single-statement atomic delete; two-layer CSP with Astro 6 hash-based meta tags; and Supabase Data API grants CI guardrail.
 
 ### Quick verification
 

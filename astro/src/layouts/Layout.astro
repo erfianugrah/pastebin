@@ -92,30 +92,24 @@ const themeScript = `
 		<script set:html={themeScript} />
 
 		<!-- Structured Data -->
-		<script type="application/ld+json">
-			{
-				"@context": "https://schema.org",
-				"@type": "WebApplication",
-				"name": "Pasteriser",
-				"url": "https://pasteriser.com",
-				"description": "A modern, secure code sharing service",
-				"applicationCategory": "DeveloperApplication",
-				"operatingSystem": "All",
-				"offers": {
-					"@type": "Offer",
-					"price": "0",
-					"priceCurrency": "USD"
-				},
-				"featureList": [
-					"Syntax highlighting for 40+ languages",
-					"Client-side end-to-end encryption (AES-GCM)",
-					"Burn after reading",
-					"Expiration options (1 hour to 1 year)",
-					"Full-text search",
-					"Live recent feed via Supabase Realtime"
-				]
-			}
-		</script>
+		<script type="application/ld+json" set:html={JSON.stringify({
+			"@context": "https://schema.org",
+			"@type": "WebApplication",
+			"name": "Pasteriser",
+			"url": Astro.site?.toString() ?? Astro.url.origin,
+			"description": description,
+			"applicationCategory": "DeveloperApplication",
+			"operatingSystem": "All",
+			"offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+			"featureList": [
+				"Syntax highlighting for 40+ languages",
+				"Client-side end-to-end encryption (XSalsa20-Poly1305 via NaCl secretbox)",
+				"Burn after reading",
+				"Expiration options (1 hour to 1 year)",
+				"Full-text search (Postgres tsvector + GIN)",
+				"Vanity URL slugs"
+			]
+		})} />
 		
 		<!-- Accessibility Enhancements -->
 		<meta name="color-scheme" content="dark light">

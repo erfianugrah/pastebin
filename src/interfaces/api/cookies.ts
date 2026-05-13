@@ -75,7 +75,12 @@ export function buildClearSessionCookies(): { access: string; refresh: string } 
 export function getCookie(request: Request, name: string): string | null {
 	const header = request.headers.get('Cookie') ?? request.headers.get('cookie');
 	if (!header) return null;
-	const re = new RegExp(`(?:^|;\\s*)${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}=([^;]+)`);
+	// Escape regex metacharacters in the cookie name. Previous expression
+	// `/[.*+?^${}()|[\\]\\\\]/g` closed the character class early (after `[\\`)
+	// and matched nothing in practice; inputs today are all `sb-…-token`
+	// names so the bug was inert, but the fix is one line.
+	const escaped = name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+	const re = new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`);
 	const match = header.match(re);
 	return match ? decodeURIComponent(match[1]) : null;
 }

@@ -201,6 +201,26 @@ describe('ApiHandlers', () => {
 				{ userId: undefined },
 			);
 		});
+
+		// [B6] Regression: malformed JSON used to bubble SyntaxError up to
+		// app.onError which returned a generic 500. Should now be a
+		// structured 400 bad_request.
+		it('returns 400 bad_request on malformed JSON body', async () => {
+			const req = new Request('https://example.com/pastes', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: '{not json',
+			});
+			const res = await handlers.handleCreatePaste(req).catch((err) => {
+				// AppError is thrown out of the handler; the global error
+				// handler in src/index.ts converts it via toResponse().
+				return err.toResponse?.() ?? err;
+			});
+			expect(res.status).toBe(400);
+			const body = await res.json();
+			expect(body.error?.code).toBe('bad_request');
+			expect(mockCreateCommand.execute).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('handleGetPaste', () => {

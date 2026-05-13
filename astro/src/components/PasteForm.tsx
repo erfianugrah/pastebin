@@ -10,6 +10,7 @@ import { toast } from './ui/toast';
 import { Tooltip } from './ui/tooltip';
 import { PasswordStrengthMeter } from './ui/password-strength';
 import { generateEncryptionKey, encryptData, deriveKeyFromPassword } from '../lib/crypto';
+import { savePasteToken } from '../lib/pasteTokenStorage';
 import { validatePasteForm } from '../lib/validation';
 import { detectLanguage } from '../lib/language-detect';
 import { useErrorHandler } from '../hooks/useErrorHandler';
@@ -265,9 +266,12 @@ export default function PasteForm() {
 				resultUrl = `${data.url}#key=${encodedKey}`;
 			}
 
-			// Save delete/edit token for this paste
+			// Save delete/edit token for this paste. Routed through
+			// secureStorage so an XSS payload that greps localStorage can't
+			// enumerate every paste the user has ever made. See
+			// pasteTokenStorage.ts for the threat model.
 			if (data.deleteToken) {
-				try { localStorage.setItem(`paste_token_${data.id}`, data.deleteToken); } catch { /* ignore */ }
+				await savePasteToken(data.id, data.deleteToken);
 			}
 
 			setResult({
@@ -631,7 +635,9 @@ export default function PasteForm() {
 							<div className="pt-2 border-t border-border">
 								<label htmlFor="slug" className={T.formLabel}>Custom URL (optional)</label>
 								<div className="flex items-center gap-2">
-									<span className="text-xs text-muted-foreground whitespace-nowrap">paste.erfi.io/p/</span>
+									<span className="text-xs text-muted-foreground whitespace-nowrap">
+										{typeof window !== 'undefined' ? new URL('/p/', window.location.origin).host + '/p/' : '/p/'}
+									</span>
 									<input
 										id="slug"
 										type="text"

@@ -168,6 +168,42 @@ describe('renderMarkdown — DOMPurify sanitization', () => {
 		const html = renderMarkdown('# Hello');
 		expect(html).toMatch(/<h1 id="hello"/);
 	});
+
+	// [B4] DOM-clobbering regression: previously SANITIZE_DOM/SANITIZE_NAMED_PROPS
+	// were both disabled so user markdown could `<div id="defaultView">…</div>`
+	// and shadow window.defaultView. Hook-driven heading anchors keep working
+	// without that hole.
+	it('strips inline id attributes that shadow window globals', () => {
+		const html = renderMarkdown('<div id="defaultView">attacker</div>');
+		expect(html).not.toContain('id="defaultView"');
+	});
+
+	it('strips inline name attributes that could clobber the DOM', () => {
+		const html = renderMarkdown('<form name="body"><input name="cookie"></form>');
+		expect(html).not.toMatch(/name="body"/);
+		expect(html).not.toMatch(/name="cookie"/);
+	});
+
+	// DOMPurify's SANITIZE_NAMED_PROPS specifically targets the DOM-named-
+	// property attack surface — ids/names that resolve to window/document
+	// properties via the named-access mechanism. Not every "global JS name"
+	// (e.g. `alert`) is in that set; this test covers the canonical ones.
+	it('strips id values that match document named properties', () => {
+		const html = renderMarkdown(
+			'<div id="defaultView">x</div>\n\n<div id="body">y</div>\n\n<div id="forms">z</div>',
+		);
+		expect(html).not.toContain('id="defaultView"');
+		expect(html).not.toContain('id="body"');
+		expect(html).not.toContain('id="forms"');
+	});
+
+	// [I12] / regression: `javascript:` URLs in markdown links must be neutralised.
+	// DOMPurify's default `ALLOWED_URI_REGEXP` is what enforces this; pin the
+	// behaviour with a test so future config changes can't silently weaken it.
+	it('blocks javascript: hrefs in links', () => {
+		const html = renderMarkdown('[click](javascript:alert(1))');
+		expect(html).not.toMatch(/href="javascript:/i);
+	});
 });
 
 describe('renderMarkdown — input handling', () => {

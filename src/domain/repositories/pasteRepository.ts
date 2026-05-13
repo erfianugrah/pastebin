@@ -57,11 +57,29 @@ export interface PasteRepository {
   view(id: PasteId): Promise<ViewResult>;
 
   /**
-   * Delete a paste from the repository
-   * @param id The ID of the paste to delete
-   * @returns A promise that resolves to true if the paste was deleted, false if not found
+   * Delete a paste from the repository unconditionally. Used by internal
+   * cleanup paths (none today) and the legacy delete flow that did its own
+   * token check. Prefer {@link PasteRepository.deleteWithToken} for the
+   * user-facing delete which checks the owner token atomically.
+   * @returns true if the paste existed and was deleted, false if not found
    */
   delete(id: PasteId): Promise<boolean>;
+
+  /**
+   * Atomic delete-with-token. Single round-trip happy path: takes a row
+   * lock, compares the stored `delete_token` against the supplied
+   * `ownerToken`, and deletes the row only if they match.
+   *
+   * Returns a discriminated result so the caller can map:
+   *   - {found:false, deleted:false} → 404 not_found
+   *   - {found:true,  deleted:false} → 403 unauthorized
+   *   - {found:true,  deleted:true}  → 200 success
+   *
+   * Backed by the `delete_paste(uuid, uuid)` Postgres function in the
+   * Supabase implementation (see migration 20260513170000). The token is
+   * expected to be a UUID; non-UUID input results in {found:false}.
+   */
+  deleteWithToken(id: PasteId, ownerToken: string): Promise<{ found: boolean; deleted: boolean }>;
 
   /**
    * Find recent public pastes

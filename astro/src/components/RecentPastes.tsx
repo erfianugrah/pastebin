@@ -52,6 +52,7 @@ export default function RecentPastes() {
 
 	useEffect(() => {
 		let cancelled = false;
+		let pollHandle: ReturnType<typeof setInterval> | null = null;
 
 		async function load() {
 			try {
@@ -69,16 +70,40 @@ export default function RecentPastes() {
 			}
 		}
 
-		// Initial load + periodic refresh. The Realtime subscription was
-		// removed when we migrated to the BFF pattern (browser no longer
-		// talks to Supabase directly). Could be reintroduced as a
-		// Worker-proxied SSE stream if push semantics are needed.
+		// Visibility-aware polling. A user with the tab in the background
+		// previously kept hitting /api/recent four times a minute for hours
+		// — wasted Supabase round-trips and Worker invocations. Pause when
+		// the tab is hidden; resume + kick a single fresh load when it
+		// becomes visible again (covers the "left tab open overnight" case
+		// where stale data is much more annoying than a missed tick).
+		function startPolling() {
+			if (pollHandle != null) return;
+			pollHandle = setInterval(load, POLL_INTERVAL_MS);
+		}
+		function stopPolling() {
+			if (pollHandle == null) return;
+			clearInterval(pollHandle);
+			pollHandle = null;
+		}
+		function onVisibility() {
+			if (document.visibilityState === 'visible') {
+				void load();
+				startPolling();
+			} else {
+				stopPolling();
+			}
+		}
+
 		void load();
-		const handle = setInterval(load, POLL_INTERVAL_MS);
+		if (document.visibilityState === 'visible') {
+			startPolling();
+		}
+		document.addEventListener('visibilitychange', onVisibility);
 
 		return () => {
 			cancelled = true;
-			clearInterval(handle);
+			stopPolling();
+			document.removeEventListener('visibilitychange', onVisibility);
 		};
 	}, []);
 

@@ -82,6 +82,24 @@ describe('cookies', () => {
 			});
 			expect(getCookie(req, 'foo')).toBe('lower-case');
 		});
+
+		// Regression: the regex previously had a broken character class
+		// (`[.*+?^${}()|[\\]\\\\]`) that closed early and matched nothing.
+		// Inputs in production only use `[a-z-]` so the bug was inert, but
+		// the fix needs to actually escape metacharacters now.
+		it('escapes regex metacharacters in cookie name', () => {
+			const req = new Request('https://x.test', {
+				headers: { cookie: 'a.b+c?=value; other=ignored' },
+			});
+			expect(getCookie(req, 'a.b+c?')).toBe('value');
+		});
+
+		it('does not match a substring of a longer cookie name', () => {
+			const req = new Request('https://x.test', {
+				headers: { cookie: 'sb-access-token-extra=wrong; sb-access-token=right' },
+			});
+			expect(getCookie(req, 'sb-access-token')).toBe('right');
+		});
 	});
 
 	describe('applySessionCookies', () => {

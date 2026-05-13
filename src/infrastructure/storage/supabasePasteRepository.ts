@@ -135,6 +135,35 @@ export class SupabasePasteRepository implements PasteRepository {
 		return (count ?? 0) > 0;
 	}
 
+	async deleteWithToken(id: PasteId, ownerToken: string): Promise<{ found: boolean; deleted: boolean }> {
+		this.logger.debug('Supabase: delete_paste RPC', { pasteId: id.toString() });
+
+		const { data, error } = await this.client.rpc('delete_paste', {
+			paste_uuid: id.toString(),
+			owner_token: ownerToken,
+		});
+
+		if (error) {
+			// 22P02 (invalid_text_representation) = the token wasn't a valid
+			// UUID. Treat the same as not-found from the caller's perspective
+			// — they supplied a token that couldn't possibly match.
+			if (error.code === '22P02') {
+				return { found: false, deleted: false };
+			}
+			this.logger.error('Supabase: delete_paste RPC failed', { pasteId: id.toString(), error });
+			return { found: false, deleted: false };
+		}
+
+		// RPC returns one row of {was_found, was_deleted}. Defend against an
+		// empty array (shouldn't happen but supabase-js typing is loose).
+		const rows = (data ?? []) as Array<{ was_found: boolean; was_deleted: boolean }>;
+		if (rows.length === 0) {
+			return { found: false, deleted: false };
+		}
+		const row = rows[0];
+		return { found: row.was_found, deleted: row.was_deleted };
+	}
+
 	async searchPublic(query: string, limit: number): Promise<Paste[]> {
 		const trimmed = query.trim();
 		if (!trimmed) return [];

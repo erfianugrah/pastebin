@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { Env } from './types';
-import { ConfigurationService } from './infrastructure/config/config';
+import { getApplicationBaseUrl } from './infrastructure/config/config';
 import { SupabasePasteRepository } from './infrastructure/storage/supabasePasteRepository';
 import { AuthService } from './infrastructure/auth/authService';
 import { PasteRepository } from './domain/repositories/pasteRepository';
@@ -19,7 +19,7 @@ import { securityHeaders } from './interfaces/api/middleware';
 import { rateLimit } from './interfaces/api/rateLimit';
 import { AppError } from './infrastructure/errors/AppError';
 import { Logger } from './infrastructure/logging/logger';
-import { addCacheHeaders, cacheStaticAsset, cachePasteView, preventCaching } from './infrastructure/caching/cacheControl';
+import { addCacheHeaders, cacheStaticAsset, preventCaching } from './infrastructure/caching/cacheControl';
 
 // ---------- Stateless singletons (safe to reuse across requests) ----------
 
@@ -96,15 +96,6 @@ app.use('*', async (c, next) => {
 	c.set('requestId', requestId);
 	c.set('logger', logger);
 
-	// Create request-scoped services
-	const configService = new ConfigurationService({
-		application: {
-			name: 'pastebin',
-			version: '1.0.0',
-			baseUrl: url.origin,
-		},
-	});
-
 	const pasteRepository: PasteRepository = new SupabasePasteRepository(
 		c.env.SUPABASE_URL,
 		c.env.SUPABASE_SECRET_KEY,
@@ -115,7 +106,7 @@ app.use('*', async (c, next) => {
 		pasteRepository,
 		uniqueIdService,
 		expirationService,
-		configService.getApplicationConfig().baseUrl,
+		getApplicationBaseUrl(url),
 	);
 	const deletePasteCommand = new DeletePasteCommand(pasteRepository);
 	const getPasteQuery = new GetPasteQuery(pasteRepository);
@@ -195,6 +186,13 @@ app.post('/pastes', rateLimit('RL_PASTE_CREATE', 'paste-create'), async (c) => {
 });
 
 // GET /api/recent — recent public pastes
+//
+// SAFETY: The handler returns ONLY public, non-expired pastes (no user
+// scoping, no auth-derived data). The response is identical for every
+// caller, which is why `Cache-Control: public` is safe here. If you ever
+// add user-scoped or auth-derived data to this endpoint, switch to
+// `preventCaching` (or `private` + `Vary: Cookie`) FIRST or the cache
+// becomes a leak vector.
 app.get('/api/recent', async (c) => {
 	return addCacheHeaders(await c.get('handlers').handleGetRecentPastes(c.req.raw), {
 		maxAge: 60,
@@ -203,6 +201,9 @@ app.get('/api/recent', async (c) => {
 });
 
 // GET /api/search — full-text search across public pastes
+//
+// SAFETY: Same as /api/recent. Public-only data. Keep it that way or
+// drop the `public` cache directive.
 app.get('/api/search', rateLimit('RL_SEARCH', 'search'), async (c) => {
 	return addCacheHeaders(await c.get('handlers').handleSearchPastes(c.req.raw), {
 		maxAge: 30,
@@ -211,6 +212,8 @@ app.get('/api/search', rateLimit('RL_SEARCH', 'search'), async (c) => {
 });
 
 // GET /api/stats — aggregate stats over non-expired public pastes
+//
+// SAFETY: Aggregates only. Public-only data. Same rule as above.
 app.get('/api/stats', async (c) => {
 	return addCacheHeaders(await c.get('handlers').handlePasteStats(c.req.raw), {
 		maxAge: 300,
@@ -322,6 +325,18 @@ app.get('/pastes/raw/:id', async (c) => {
 });
 
 // GET|POST /pastes/:id — view paste (JSON or HTML page)
+//
+// JSON path is ALWAYS uncacheable. `handleGetPaste` goes through
+// `view_paste()` which atomically bumps read_count, may burn the row
+// (burn-after-reading), and enforces view_limit. A cached response
+// would let:
+//   - the original viewer refresh and re-read burned content (no
+//     server round-trip, DB row already gone)
+//   - downstream shared caches (corporate proxy, ISP) serve burned
+//     content to subsequent users hitting the same Cache-Control:
+//     public response.
+// The HTML viewer shell stays cacheable — it's a generic Astro page
+// that fetches the JSON itself with appropriate cache semantics.
 app.on(['GET', 'POST'], '/pastes/:id', async (c) => {
 	const pasteId = c.req.param('id');
 	const accept = c.req.header('accept') || '';
@@ -329,7 +344,7 @@ app.on(['GET', 'POST'], '/pastes/:id', async (c) => {
 
 	if (wantsJson) {
 		const response = await c.get('handlers').handleGetPaste(c.req.raw, pasteId);
-		return response.status === 200 ? cachePasteView(response) : preventCaching(response);
+		return preventCaching(response);
 	}
 
 	// Serve the Astro-generated viewer page
@@ -342,7 +357,6 @@ app.on(['GET', 'POST'], '/pastes/:id', async (c) => {
 
 app.get('/p/:slug', async (c) => {
 	const slug = c.req.param('slug');
-	const logger = c.get('logger');
 
 	// Resolve slug using the same repository instantiated by middleware
 	const pasteId = await c.get('pasteRepository').resolveSlug(slug);
@@ -354,7 +368,8 @@ app.get('/p/:slug', async (c) => {
 	const accept = c.req.header('accept') || '';
 	if (accept.includes('application/json')) {
 		const response = await c.get('handlers').handleGetPaste(c.req.raw, pasteId);
-		return response.status === 200 ? cachePasteView(response) : preventCaching(response);
+		// JSON path uncacheable — see /pastes/:id route for rationale.
+		return preventCaching(response);
 	}
 
 	// Serve the vanity viewer page (or fall back to paste viewer page)

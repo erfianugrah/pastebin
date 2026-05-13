@@ -4,6 +4,13 @@ import { Button } from './ui/button';
 import { toast } from './ui/toast';
 import { showConfirmModal } from './ui/modal';
 import { cn } from '../lib/utils';
+import { hasPasteToken, loadPasteToken } from '../lib/pasteTokenStorage';
+
+// [B2] QR rendering is local-only. Previous version sent `window.location.href`
+// — including any `#key=…` E2EE fragment — as a query string to a third-party
+// QR generator. encodeURIComponent rewrote `#` to `%23`, so the decryption
+// key landed in an outbound request to api.qrserver.com. Rendering in the
+// browser keeps the fragment local to the user's device.
 
 interface PasteActionsProps {
 	pasteId: string;
@@ -35,14 +42,40 @@ export default function PasteActions({
 }: PasteActionsProps) {
 	const [showPanel, setShowPanel] = useState<'none' | 'qr' | 'embed'>('none');
 	const [hasEditToken, setHasEditToken] = useState(false);
+	const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+	const [qrError, setQrError] = useState<string | null>(null);
 
-	// Check if user has a saved token for this paste (means they created it)
+	// Check if user has a saved token for this paste (means they created it).
+	// hasPasteToken is sync — it probes both the secureStorage prefix and
+	// the legacy plaintext key for a presence check without decrypting.
 	useEffect(() => {
-		try {
-			const token = localStorage.getItem(`paste_token_${pasteId}`);
-			setHasEditToken(!!token);
-		} catch { /* ignore */ }
+		setHasEditToken(hasPasteToken(pasteId));
 	}, [pasteId]);
+
+	// Render QR locally on demand. Dynamic import keeps `qrcode` out of the
+	// initial bundle — most viewers never open the QR panel.
+	useEffect(() => {
+		if (showPanel !== 'qr' || qrDataUrl) return;
+		let cancelled = false;
+		(async () => {
+			try {
+				const QRCode = (await import('qrcode')).default;
+				const url = await QRCode.toDataURL(window.location.href, {
+					errorCorrectionLevel: 'M',
+					margin: 2,
+					width: 240,
+				});
+				if (!cancelled) setQrDataUrl(url);
+			} catch (err) {
+				if (!cancelled) {
+					setQrError(err instanceof Error ? err.message : 'QR generation failed');
+				}
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [showPanel, qrDataUrl]);
 
 	const getContent = () => {
 		const text = isEncrypted ? getDecryptedContent() : getRawContent();
@@ -103,15 +136,16 @@ export default function PasteActions({
 		window.location.href = '/';
 	};
 
-	const handleEdit = () => {
+	const handleEdit = async () => {
 		const text = getContent();
 		if (!text) return;
+		const token = await loadPasteToken(pasteId);
 		sessionStorage.setItem('pasteriser_edit', JSON.stringify({
 			pasteId,
 			content: text,
 			title: pasteTitle,
 			language: pasteLanguage,
-			token: localStorage.getItem(`paste_token_${pasteId}`),
+			token,
 		}));
 		window.location.href = '/';
 	};
@@ -127,14 +161,13 @@ export default function PasteActions({
 		if (confirmed) {
 			// Pass the delete token via sessionStorage so the delete page can use it
 			try {
-				const token = localStorage.getItem(`paste_token_${pasteId}`);
+				const token = await loadPasteToken(pasteId);
 				if (token) sessionStorage.setItem('pasteriser_delete_token', token);
 			} catch { /* ignore */ }
 			window.location.href = `/pastes/${pasteId}/delete`;
 		}
 	};
 
-	const pasteUrl = typeof window !== 'undefined' ? window.location.href : '';
 	const rawUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/pastes/raw/${pasteId}`;
 
 	const embedSnippet = `<iframe src="${rawUrl}" style="width:100%;height:400px;border:1px solid #ccc;border-radius:4px;" sandbox="allow-same-origin"></iframe>`;
@@ -178,16 +211,22 @@ export default function PasteActions({
 				</Button>
 			</div>
 
-			{/* ── QR Code panel ── */}
+			{/* ── QR Code panel — rendered locally, never sent to a third party ── */}
 			{showPanel === 'qr' && (
 				<div className="mt-3 flex flex-col items-center gap-2 p-4 rounded-lg border border-border bg-card animate-fade-in">
-					<img
-						src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(pasteUrl)}`}
-						alt="QR Code"
-						width={200}
-						height={200}
-						className="rounded bg-white p-2"
-					/>
+					{qrError && <p className="text-xs text-destructive">QR error: {qrError}</p>}
+					{!qrError && qrDataUrl && (
+						<img
+							src={qrDataUrl}
+							alt="QR Code"
+							width={240}
+							height={240}
+							className="rounded bg-white p-2"
+						/>
+					)}
+					{!qrError && !qrDataUrl && (
+						<div className="h-[240px] w-[240px] rounded bg-muted animate-pulse" aria-label="Generating QR code" />
+					)}
 					<p className="text-xs text-muted-foreground">Scan to open this paste</p>
 				</div>
 			)}

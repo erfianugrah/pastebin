@@ -7,8 +7,18 @@ import { AppError } from '../../infrastructure/errors/AppError';
 import { SlugTakenError } from '../../infrastructure/storage/supabasePasteRepository';
 
 // Using Zod 4 schema definition
-/** Vanity slug: 3-64 chars, lowercase alphanumeric + hyphens, no leading/trailing hyphens */
-const SlugSchema = z.string().min(3).max(64).regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Slug must be lowercase alphanumeric with hyphens');
+//
+// Vanity slug rules (DNS-label-style):
+//   - 3 to 64 characters total
+//   - lowercase ASCII letters, digits, hyphens
+//   - must start and end with an alphanumeric (no leading/trailing hyphen)
+//   - no consecutive hyphens (`a--b` rejected) — keeps slugs readable and
+//     prevents homograph-style trickery with double-hyphen separators.
+const SlugSchema = z
+	.string()
+	.min(3)
+	.max(64)
+	.regex(/^[a-z0-9](?:-?[a-z0-9])*$/, 'Slug must be lowercase alphanumeric with single hyphens between characters');
 
 export const CreatePasteSchema = z.object({
 	content: z

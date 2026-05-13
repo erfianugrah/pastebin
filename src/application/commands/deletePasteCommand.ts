@@ -30,27 +30,10 @@ export class DeletePasteCommand {
 		// Validate input
 		const validParams = DeletePasteSchema.parse(params);
 
-		// Create a paste ID from the string parameter
+		// Owner token is required for authorisation. Empty/missing token
+		// can short-circuit without touching the DB.
 		const pasteId = PasteId.create(validParams.id);
-
-		// Check if the paste exists first
-		const paste = await this.repository.findById(pasteId);
-		if (!paste) {
-			return {
-				success: false,
-				errorCode: DeleteErrorCode.NOT_FOUND,
-				message: 'Paste not found',
-			};
-		}
-
-		// Verify the delete token matches (required for authorization).
-		// Defence in depth: also reject when the stored token is missing —
-		// the DB has `delete_token uuid NOT NULL DEFAULT gen_random_uuid()`
-		// and Paste.create() auto-generates a token, so this branch shouldn't
-		// fire in practice, but the previous `if (storedToken && …)` would
-		// have fallen through to delete on a falsy storedToken.
-		const storedToken = paste.getDeleteToken();
-		if (!storedToken || storedToken !== validParams.ownerToken) {
+		if (!validParams.ownerToken) {
 			return {
 				success: false,
 				errorCode: DeleteErrorCode.UNAUTHORIZED,
@@ -58,20 +41,35 @@ export class DeletePasteCommand {
 			};
 		}
 
-		// Delete the paste
-		const deleted = await this.repository.delete(pasteId);
+		// Single-statement atomic delete-with-token (Postgres RPC).
+		// `delete_paste(uuid, uuid)` takes a row lock, compares the stored
+		// `delete_token` against the supplied token, and deletes only on
+		// match. Two booleans in the response distinguish the three
+		// outcomes (not found / unauthorized / success) so the API layer
+		// can map them to 404 / 403 / 200 with one round-trip on the
+		// happy path. See supabase/migrations/20260513170000.
+		const { found, deleted } = await this.repository.deleteWithToken(pasteId, validParams.ownerToken);
 
 		if (deleted) {
 			return {
 				success: true,
 				message: 'Paste deleted successfully',
 			};
-		} else {
+		}
+
+		if (!found) {
 			return {
 				success: false,
-				errorCode: DeleteErrorCode.FAILED,
-				message: 'Failed to delete paste',
+				errorCode: DeleteErrorCode.NOT_FOUND,
+				message: 'Paste not found',
 			};
 		}
+
+		// Found but not deleted = token mismatch.
+		return {
+			success: false,
+			errorCode: DeleteErrorCode.UNAUTHORIZED,
+			message: 'Unauthorized',
+		};
 	}
 }

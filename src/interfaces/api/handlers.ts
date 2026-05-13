@@ -18,6 +18,19 @@ function json(body: unknown, status = 200): Response {
 	});
 }
 
+/** Parse the JSON body of a request. Throws AppError(400) on malformed JSON
+ *  so callers don't need to wrap `request.json()` in their own try/catch and
+ *  callers that previously surfaced SyntaxError as a 500 (via `app.onError`)
+ *  now produce a structured 400 `bad_request`.
+ */
+async function parseJsonBody<T = unknown>(request: Request): Promise<T> {
+	try {
+		return (await request.json()) as T;
+	} catch {
+		throw new AppError('bad_request', 'Invalid JSON body', 400);
+	}
+}
+
 /** Convert a Zod validation error (which has `issues`) into an AppError */
 function rethrowIfZodError(error: unknown): void {
 	if (error && typeof error === 'object' && 'issues' in error) {
@@ -65,7 +78,7 @@ export class ApiHandlers {
 				? (await this.authService.getUserIdFromRequest(request)) ?? undefined
 				: undefined;
 
-			const body = (await request.json()) as CreatePasteParams;
+			const body = await parseJsonBody<CreatePasteParams>(request);
 			const result = await this.createPasteCommand.execute(body, { userId });
 
 			return json(result, 201);
@@ -139,11 +152,14 @@ export class ApiHandlers {
 				(request.method === 'DELETE' || request.method === 'POST') &&
 				request.headers.get('Content-Type')?.includes('application/json')
 			) {
+				// Tolerant parse here: a missing body or malformed JSON on DELETE
+				// is acceptable (caller may not have a token at all) — the
+				// downstream command returns UNAUTHORIZED when ownerToken is null.
 				try {
 					const body = (await request.json()) as { token?: string };
 					ownerToken = body.token || null;
 				} catch {
-					// Ignore JSON parsing errors
+					/* tolerate empty / malformed body — falls through to auth check */
 				}
 			}
 
@@ -174,7 +190,7 @@ export class ApiHandlers {
 				return json({ error: { code: 'internal_error', message: 'Repository not configured' } }, 500);
 			}
 
-			const body = (await request.json()) as { token: string; content: string; title?: string; language?: string };
+			const body = await parseJsonBody<{ token: string; content: string; title?: string; language?: string }>(request);
 
 			if (!body.token) {
 				return json({ error: { code: 'unauthorized', message: 'Token required' } }, 403);

@@ -124,14 +124,24 @@ export const VALIDATION_RULES = {
 };
 
 /**
- * Create validation rules for content size
+ * Create validation rules for content size.
+ *
+ * Counts UTF-8 bytes, not UTF-16 code units. Previous implementation used
+ * `value.length` which is JS string code units — a paste full of 4-byte
+ * UTF-8 chars (emoji, CJK supplementary, math symbols) consumes 2 code
+ * units per char but 4 bytes per char, so the old check let through up to
+ * 2× the byte limit. The server then rejected the upload (Supabase column
+ * limit) and the user got a generic 500 instead of a clear UI error.
+ *
+ * `TextEncoder.encode(...).length` is the byte length in the wire format
+ * the server actually stores; same units on both sides.
  */
 export function createContentSizeRules(maxSizeBytes: number): ValidationRule[] {
 	const maxSizeMB = maxSizeBytes / (1024 * 1024);
 
 	return [
 		{
-			validate: (value) => value.length <= maxSizeBytes,
+			validate: (value) => new TextEncoder().encode(value).length <= maxSizeBytes,
 			message: `Content size exceeds the maximum allowed (${maxSizeMB.toFixed(2)} MB)`,
 		},
 	];

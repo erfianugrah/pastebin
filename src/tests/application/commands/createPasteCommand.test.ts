@@ -13,6 +13,7 @@ const mockRepository: PasteRepository = {
   findById: vi.fn(),
   view: vi.fn(),
   delete: vi.fn(),
+  deleteWithToken: vi.fn(),
   findRecentPublic: vi.fn(),
   searchPublic: vi.fn(),
   getPublicStats: vi.fn(),
@@ -248,5 +249,39 @@ describe('CreatePasteCommand', () => {
 
     await expect(command.execute(params)).rejects.toBeInstanceOf(AppError);
     expect(mockRepository.saveSlug).not.toHaveBeenCalled();
+  });
+
+  describe('slug validation [M7]', () => {
+    const baseParams = {
+      content: 'content',
+      expiration: 86400,
+      visibility: 'public' as const,
+      burnAfterReading: false,
+      isEncrypted: false,
+      version: 0,
+    };
+
+    it('rejects slugs with consecutive hyphens', async () => {
+      vi.mocked(mockRepository.resolveSlug).mockResolvedValue(null);
+      await expect(command.execute({ ...baseParams, slug: 'foo--bar' })).rejects.toBeDefined();
+    });
+
+    it('rejects slugs starting with a hyphen', async () => {
+      vi.mocked(mockRepository.resolveSlug).mockResolvedValue(null);
+      await expect(command.execute({ ...baseParams, slug: '-foo' })).rejects.toBeDefined();
+    });
+
+    it('rejects slugs ending with a hyphen', async () => {
+      vi.mocked(mockRepository.resolveSlug).mockResolvedValue(null);
+      await expect(command.execute({ ...baseParams, slug: 'foo-' })).rejects.toBeDefined();
+    });
+
+    it('accepts slugs with single internal hyphens', async () => {
+      vi.mocked(mockRepository.resolveSlug).mockResolvedValue(null);
+      vi.mocked(mockRepository.saveSlug).mockResolvedValue(undefined);
+      vi.mocked(mockRepository.save).mockResolvedValue(undefined);
+      vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('id'));
+      await expect(command.execute({ ...baseParams, slug: 'my-cool-snippet' })).resolves.toBeDefined();
+    });
   });
 });

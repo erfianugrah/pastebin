@@ -102,13 +102,16 @@ export function cacheStaticAsset(response: Response, fileExtension?: string): Re
 }
 
 /**
- * Adds caching headers for paste content (view)
+ * @deprecated Do NOT use for paste view JSON responses. The `view_paste`
+ * Postgres function atomically increments read_count and may delete the
+ * row (burn-after-reading / view-limit). A cached response would defeat
+ * both. Kept as a stub so old imports fail loudly via a thrown error.
  */
-export function cachePasteView(response: Response): Response {
-  return addCacheHeaders(response, {
-    maxAge: 3600, // 1 hour
-    staleWhileRevalidate: 86400, // 1 day
-  });
+export function cachePasteView(_response: Response): never {
+  throw new Error(
+    'cachePasteView is unsafe for paste content: burn-after-reading + view-limit ' +
+    'require server-side single-shot. Use preventCaching() on JSON responses.',
+  );
 }
 
 /**
