@@ -100,6 +100,23 @@ describe('cookies', () => {
 			});
 			expect(getCookie(req, 'sb-access-token')).toBe('right');
 		});
+
+		// Regression: `decodeURIComponent` throws `URIError` on malformed
+		// percent-escape sequences (truncated UTF-8, lone surrogates, etc.).
+		// Before the guard, `Cookie: sb-access-token=%E0%A4` propagated the
+		// throw up through every authenticated route and turned into HTTP 500
+		// via `app.onError`. Verified live: production returned 500 for that
+		// exact cookie header. The fix wraps `decodeURIComponent` in try/catch
+		// and returns null (treats malformed cookie value as absent).
+		it('returns null for cookies with malformed percent-escapes (no URIError)', () => {
+			for (const malformed of ['%E0%A4', '%2', '%G0', '%E0%']) {
+				const req = new Request('https://x.test', {
+					headers: { cookie: `sb-access-token=${malformed}` },
+				});
+				expect(() => getCookie(req, 'sb-access-token')).not.toThrow();
+				expect(getCookie(req, 'sb-access-token')).toBeNull();
+			}
+		});
 	});
 
 	describe('applySessionCookies', () => {

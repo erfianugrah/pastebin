@@ -43,6 +43,7 @@ Live at [paste.erfi.io](https://paste.erfi.io).
   - Open-redirect defence on `/auth/confirm?next=…` via origin-equality post-URL-parse
   - Delete-token rejected in query string (body-only) to prevent leakage via logpush
   - Atomic single-statement delete (`delete_paste(uuid, uuid)` RPC) — auth check + delete in one transaction
+  - Atomic single-statement update (`update_paste(uuid, uuid, text, text, text)` RPC) — partial update with token check inside a `FOR UPDATE` row lock; race-free against `view_paste` burns
   
 - **Enhanced User Experience**
   - Modern UI with dark mode support
@@ -556,10 +557,12 @@ Implemented via **Cloudflare Workers Rate Limiting bindings** (`[[ratelimits]]` 
 
 | Binding | Limit | Endpoints |
 |---|---|---|
-| `RL_AUTH_WRITE` | 10 / 60s | `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}` |
+| `RL_AUTH_WRITE` | 10 / 60s | `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}`, `GET /api/auth/oauth/:provider`, `GET /auth/confirm` |
 | `RL_SESSION_READ` | 60 / 60s | `GET /api/auth/session` |
-| `RL_PASTE_CREATE` | 30 / 60s | `POST /pastes` |
+| `RL_PASTE_CREATE` | 30 / 60s | `POST /pastes`, `PUT /pastes/:id`, `DELETE\|POST /pastes/:id/delete` |
 | `RL_SEARCH` | 30 / 60s | `GET /api/search` |
+
+`GET /auth/callback` is intentionally not rate-limited — PKCE codes are single-use and bound to a verifier cookie the legitimate flow holds.
 
 Over-limit requests return `HTTP 429` with `Retry-After: 60` and a structured body: `{ "error": { "code": "rate_limited", "message": "Too many requests. Try again in a minute." } }`.
 
@@ -656,7 +659,7 @@ npm run deploy
 - `npm run deploy` - Deploy to Cloudflare Workers
 
 ### Testing & Quality Assurance
-- `npm run test` - Run unit tests (vitest) — Worker + Astro lib tests, 251 cases
+- `npm run test` - Run unit tests (vitest) — Worker + Astro lib tests, 287 cases
 - `npm run check:migrations` - Verify every `CREATE TABLE public.*` migration includes an explicit `GRANT … TO service_role` (Supabase Oct-30-2026 cutover guardrail)
 - `npm run test:ui` - Run Astro component tests (jsdom) — 25 cases
 - `npm run test:e2e` - Run Playwright e2e against **production** (`paste.erfi.io`)
@@ -851,7 +854,7 @@ Pasteriser implements comprehensive security measures to protect user data and s
 - **Supabase Auth + RLS** — when users sign in, paste ownership is enforced by 5 RLS policies on `public.pastes` (SELECT public, SELECT/INSERT/UPDATE/DELETE own). Worker validates JWTs via `supabase.auth.getUser()` before assigning `user_id`.
 - **XSS prevention** — user content rendered via `textContent` only; no `innerHTML` for any user-supplied data.
 - **Open-redirect defence** — `/auth/confirm?next=…` resolves the candidate URL against the request origin and rejects anything that lands off-origin. Closes the backslash-bypass (`/\evil.com` → `https://evil.com/`) the WHATWG URL parser opens by default.
-- **Content Security Policy** — two layers: Worker header (`script-src 'self'`, no `unsafe-inline`) + Astro per-page `<meta>` with SHA-256 hashes for every bundled / inline script. `unsafe-inline` is implicitly disabled by browsers in any directive with a hash (CSP3). Web Workers via `worker-src blob:`.
+- **Content Security Policy** — single-layer header set by the Worker on every response. Uses `'unsafe-inline'` for `script-src` / `style-src` / `style-src-attr`. The two-layer hash-based design 3.8.0 attempted was rolled back in 3.9.0 after a production incident — see SECURITY.md and the CHANGELOG for the five reasons (CSP composition is intersection-of-allowances, Astro doesn't hash inline `style=""` attrs, Radix UI inline-style accessibility shims, Cloudflare Bot Fight Mode per-request beacon, etc.). XSS prevention in HTML now rests on React auto-escaping + DOMPurify on the markdown render path; CSP is policy / defense-in-depth.
 - **CORS** — explicit allowlist (no wildcard in production with credentials).
 - **Rate limiting** — Cloudflare Workers Rate Limiting bindings on 4 endpoint groups (auth-write, session-read, paste-create, search). See SECURITY.md for limits.
 - **Browser-cached keys** — per-paste decryption keys are encrypted under a master key kept in **sessionStorage** (tab-scoped, cleared on close). Provides obfuscation against passive disk-scrape attackers; **does NOT defend against XSS** — see SECURITY.md.
@@ -874,7 +877,7 @@ For more detailed security information, configuration guides, and security check
 
 **Domain**: https://paste.erfi.io
 **Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
-**Migrations**: 17 applied — see `supabase/migrations/`
+**Migrations**: 18 applied — see `supabase/migrations/`
 
 ### Storage Backend
 
@@ -886,6 +889,7 @@ Migrated from Cloudflare KV to **Supabase Postgres** in May 2026. KV was removed
 | Vanity slugs | Supabase `slugs` table | RLS enabled (non-expired slugs visible to `anon`) |
 | Atomic view | `view_paste(uuid)` RPC | `SELECT ... FOR UPDATE` row lock — fixes burn-after-reading race |
 | Atomic delete | `delete_paste(uuid, uuid)` RPC | Token check + delete in one transaction; single-RT happy path |
+| Atomic update | `update_paste(uuid, uuid, text, text, text)` RPC | Partial update under `FOR UPDATE` lock; race-free against `view_paste` burns. Only `content` / `title` / `language` updatable. |
 | Search | `search_vector` (GIN-indexed tsvector) | `websearch_to_tsquery` via `/api/search` |
 | Stats | `paste_stats()` RPC | jsonb summary via `/api/stats`; cached 5min + SWR 15min |
 | User accounts | Supabase Auth + JWT verification | Worker validates `Authorization: Bearer <jwt>`; `/my` page uses RLS |
@@ -897,7 +901,7 @@ For day-to-day operations (when to use the Dashboard vs CLI vs Management API, h
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full release history. The most recent release, **3.8.0** (May 13, 2026), is a code-review hardening pass: burn-after-reading cache bypass, E2EE-key leak through third-party QR generator, DOM-clobbering in markdown, plaintext delete tokens, and SyntaxError-as-500 bugs fixed; shared `useAuth` store; visibility-aware polling; single-statement atomic delete; two-layer CSP with Astro 6 hash-based meta tags; and Supabase Data API grants CI guardrail.
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history. The most recent release, **3.9.0** (May 19, 2026), is a verification-driven fix pass on top of 3.8.0: CSP rewrite (the two-layer hash design was incompatible with Radix UI inline `style=""` attrs and Cloudflare Bot Fight Mode); race-free atomic update via new `update_paste(uuid, uuid, text, text, text)` Postgres RPC (closes burn-resurrection); `UpdatePasteSchema` Zod validation at the API boundary; rate limits added to `/auth/confirm`, `/api/auth/oauth/:provider`, `PUT /pastes/:id`, `DELETE|POST /pastes/:id/delete`; per-request Supabase auth client (the shared client carrying any user's session through `_saveSession` was actively breaking subsequent `service_role` writes — discovered by smoke-test verification post-deploy); `getCookie` URIError fix (malformed cookies no longer 500); Zod row validation in `SupabasePasteRepository.mapRow`. 287 unit tests + smoke/RLS/race suites all green against production. The 3.8.0 release that preceded this was a code-review hardening pass: burn-after-reading cache bypass, E2EE-key leak through third-party QR generator, DOM-clobbering in markdown, plaintext delete tokens, and SyntaxError-as-500 bugs fixed.
 
 ### Quick verification
 

@@ -1677,7 +1677,7 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **astro/.env** | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`. | Phases 4.3-4.4. |
 | **Unit tests** | 172 passing (+ 22 Astro). | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm`) → 150 after 3.5.0 (+1 duplicate-email, +2 delete-paste regression) → 172 after 3.6.0 (+22 across recovery, magic-link, OAuth handlers). |
 | **Live test scripts** | `test:smoke` (52 cases now), `test:race`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. Smoke +17 auth cases in 3.6.0. `test:realtime` removed in 3.7.0 alongside the Realtime trigger. |
-| **Migrations** | 17 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3, dropped in 3.7.0) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix) + drop-realtime (3.7.0) + batch-cron (3.7.0) + `delete_paste()` RPC (3.8.0). |
+| **Migrations** | 18 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3, dropped in 3.7.0) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix) + drop-realtime (3.7.0) + batch-cron (3.7.0) + `delete_paste()` RPC (3.8.0) + `update_paste()` RPC (3.9.0). |
 | **Config IaC** | `supabase/config.toml` + `supabase/templates/*.html`. Push via `supabase config push`. Secrets via `env(VAR)` from `.env`. | New in 3.6.0. Reading live state still needs the Management API (no `config pull`). |
 
 ---

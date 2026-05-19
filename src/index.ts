@@ -9,6 +9,7 @@ import { CloudflareUniqueIdService } from './infrastructure/services/cloudflareU
 import { DefaultExpirationService } from './domain/services/expirationService';
 import { CreatePasteCommand } from './application/commands/createPasteCommand';
 import { DeletePasteCommand } from './application/commands/deletePasteCommand';
+import { UpdatePasteCommand } from './application/commands/updatePasteCommand';
 import { GetPasteQuery } from './application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from './application/queries/getRecentPastesQuery';
 import { SearchPastesQuery } from './application/queries/searchPastesQuery';
@@ -109,6 +110,7 @@ app.use('*', async (c, next) => {
 		getApplicationBaseUrl(url),
 	);
 	const deletePasteCommand = new DeletePasteCommand(pasteRepository);
+	const updatePasteCommand = new UpdatePasteCommand(pasteRepository);
 	const getPasteQuery = new GetPasteQuery(pasteRepository);
 	const getRecentPastesQuery = new GetRecentPastesQuery(pasteRepository, logger);
 	const searchPastesQuery = new SearchPastesQuery(pasteRepository, logger);
@@ -120,12 +122,12 @@ app.use('*', async (c, next) => {
 	const apiHandlers = new ApiHandlers(
 		createPasteCommand,
 		deletePasteCommand,
+		updatePasteCommand,
 		getPasteQuery,
 		getRecentPastesQuery,
 		searchPastesQuery,
 		getPasteStatsQuery,
 		logger,
-		pasteRepository,
 		authService,
 	);
 
@@ -252,14 +254,19 @@ app.post('/api/auth/magic-link', rateLimit('RL_AUTH_WRITE', 'magic-link'), async
 
 // GET /api/auth/oauth/:provider — start the OAuth flow. Browser 302s
 // to Supabase's /authorize, which 302s to the provider, which lands
-// back on /auth/callback below.
-app.get('/api/auth/oauth/:provider', async (c) => {
+// back on /auth/callback below. Rate-limited because each call burns a
+// Supabase /authorize round-trip + writes a PKCE-verifier cookie.
+app.get('/api/auth/oauth/:provider', rateLimit('RL_AUTH_WRITE', 'oauth-start'), async (c) => {
 	const provider = c.req.param('provider');
 	return preventCaching(await c.get('authHandlers').handleOAuthStart(c.req.raw, provider));
 });
 
 // GET /auth/callback — OAuth flow returns here from Supabase with a
 // PKCE code. Worker exchanges + sets session cookies + 302s to /my.
+// Not rate-limited: the PKCE code is single-use and bound to a verifier
+// cookie that only the legitimate flow holds. A flood here would just
+// exchange invalid codes, costing one Supabase RPC per attempt — same
+// shape as `/auth/confirm` below but with a stronger natural gate.
 app.get('/auth/callback', async (c) =>
 	preventCaching(await c.get('authHandlers').handleOAuthCallback(c.req.raw)),
 );
@@ -268,16 +275,28 @@ app.get('/auth/callback', async (c) =>
 // confirmation emails (signup, password recovery, email change). The
 // Worker verifies the token, sets HttpOnly session cookies, and 302s to
 // `?next=` (defaults to `/`). Same-origin redirect target only.
-app.get('/auth/confirm', async (c) => preventCaching(await c.get('authHandlers').handleConfirm(c.req.raw)));
+// Rate-limited because each request fires `auth.verifyOtp` — without a
+// bucket, an attacker can amplify Supabase calls 1:1 per HTTP request.
+app.get('/auth/confirm', rateLimit('RL_AUTH_WRITE', 'auth-confirm'), async (c) =>
+	preventCaching(await c.get('authHandlers').handleConfirm(c.req.raw)),
+);
 
 // GET /api/my — current user's pastes (browser via Worker, RLS-bypass + filter)
 app.get('/api/my', async (c) => preventCaching(await c.get('authHandlers').handleMyPastes(c.req.raw)));
 
-// DELETE|POST /pastes/:id/delete — delete paste (API)
-app.on(['DELETE', 'POST'], '/pastes/:id/delete', async (c) => {
-	const pasteId = c.req.param('id');
-	return preventCaching(await c.get('handlers').handleDeletePaste(c.req.raw, pasteId));
-});
+// DELETE|POST /pastes/:id/delete — delete paste (API). Token-gated
+// (delete_token UUID is the only authorisation), but still rate-limited
+// to bound the cost of an attacker flooding random IDs+tokens. Each
+// request fires the `delete_paste` Postgres RPC.
+app.on(
+	['DELETE', 'POST'],
+	'/pastes/:id/delete',
+	rateLimit('RL_PASTE_CREATE', 'paste-delete'),
+	async (c) => {
+		const pasteId = c.req.param('id');
+		return preventCaching(await c.get('handlers').handleDeletePaste(c.req.raw, pasteId));
+	},
+);
 
 // GET /pastes/:id/delete — serve the delete confirmation HTML page
 // (token is NOT accepted via GET query params to avoid leaking in logs/referer)
@@ -291,8 +310,11 @@ app.get('/pastes/:id/delete', async (c) => {
 	return c.json({ error: { code: 'method_not_allowed', message: 'Use DELETE or POST to delete a paste' } }, 405);
 });
 
-// PUT /pastes/:id — update paste (requires token)
-app.put('/pastes/:id', async (c) => {
+// PUT /pastes/:id — update paste (requires delete_token). Same bucket
+// as paste-create + a distinct scope. The update path goes through
+// `update_paste` RPC so it's race-free with `view_paste` burns (see
+// supabase/migrations/.../update_paste_rpc.sql).
+app.put('/pastes/:id', rateLimit('RL_PASTE_CREATE', 'paste-update'), async (c) => {
 	const pasteId = c.req.param('id');
 	return preventCaching(await c.get('handlers').handleUpdatePaste(c.req.raw, pasteId));
 });

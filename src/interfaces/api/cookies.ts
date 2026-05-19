@@ -82,7 +82,17 @@ export function getCookie(request: Request, name: string): string | null {
 	const escaped = name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
 	const re = new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`);
 	const match = header.match(re);
-	return match ? decodeURIComponent(match[1]) : null;
+	if (!match) return null;
+	// `decodeURIComponent` throws `URIError` on malformed input (truncated UTF-8
+	// escape, lone surrogate, etc.). Without this guard an attacker can send
+	// `Cookie: sb-access-token=%E0%A4` and turn the whole request into an
+	// unhandled 500 via `app.onError`. Treat malformed cookie values as
+	// absent — the request simply proceeds as unauthenticated.
+	try {
+		return decodeURIComponent(match[1]);
+	} catch {
+		return null;
+	}
 }
 
 /**

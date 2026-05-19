@@ -69,32 +69,45 @@ The publishable key is safe to ship — it maps to the `anon` Postgres role and 
 - **Realtime channel authorization** — not applicable. The Realtime broadcast trigger + RLS policies on `realtime.messages` were dropped in `20260512102410_drop_realtime_broadcast.sql` because the frontend never subscribed and the CSP `connect-src 'self'` directive physically blocked WebSocket to `*.supabase.co`. Recent-paste UX uses polling against `/api/recent` instead.
 - **Paste deletion** — anonymous pastes require the `deleteToken` (UUID returned at creation), accepted in the JSON request body only. The query-string form (`?token=…`) is rejected with HTTP 400 `token_in_query` to keep the secret out of logpush, browser history, and `Referer` headers. The handler also validates `!storedToken || storedToken !== ownerToken` (inverted from the previous `storedToken &&` form so a row with a falsy stored token can't be world-deleted as defense-in-depth — the DB constraint `delete_token NOT NULL DEFAULT gen_random_uuid()` already prevents this in practice). Authenticated users can also delete via direct DB (RLS-gated by `auth.uid() = user_id`).
 
+- **Paste update** — atomic, race-free, token-gated. `PUT /pastes/:id` goes through `update_paste(uuid, uuid, text, text, text)` Postgres RPC that takes `SELECT … FOR UPDATE` and applies a partial `UPDATE` only on token match. Same pattern as `delete_paste`. Pre-3.9.0 the handler did a read-modify-write with `.upsert()` — that had two race bugs: (1) concurrent `view_paste` increments to `read_count` would be clobbered by the upsert's stale snapshot, and (2) if `view_paste` burned the row between findById and save, the upsert's INSERT branch would **resurrect the burned paste** with new content and `read_count = 0`. The new RPC eliminates both by serialising against `view_paste` on the row lock. `read_count`, `view_limit`, `burn_after_reading`, `expires_at`, `visibility`, `version`, `is_encrypted`, `delete_token`, and `user_id` are NOT updatable via this endpoint (changing them mid-life would invalidate the security model). Body validated by `UpdatePasteSchema` (Zod): token must be a UUID, content/title/language are optional strings within size limits (25 MiB / 100 chars / 50 chars).
+
 ### Content security
 
 - **XSS prevention** — every user-supplied string rendered via React's escaping; pastes/titles/languages are never injected as raw HTML. The single `dangerouslySetInnerHTML` call (markdown render in `CodeViewer.tsx`) feeds output from DOMPurify (defaults including `SANITIZE_DOM` + `SANITIZE_NAMED_PROPS`) with a tightly-scoped `data-slug → id` hook used only on heading elements.
-- **CSP** — two layers, both with no `'unsafe-inline'` in `script-src`:
+- **CSP** — single layer, set as a header on every response by the Worker (`src/interfaces/api/middleware.ts`):
 
-  1. **Header** (sent on every response, including JSON / API):
+  ```
+  default-src 'self';
+  script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline';
+  style-src-attr 'unsafe-inline';
+  connect-src 'self';
+  img-src 'self' data: blob:;
+  font-src 'self';
+  object-src 'none';
+  media-src 'self';
+  worker-src 'self' blob:;
+  child-src 'self';
+  frame-ancestors 'none';
+  base-uri 'self';
+  form-action 'self';
+  ```
 
-     ```
-     default-src 'self';
-     script-src 'self';
-     style-src 'self';
-     connect-src 'self';
-     img-src 'self' data: blob:;
-     font-src 'self';
-     object-src 'none';
-     media-src 'self';
-     worker-src 'self' blob:;
-     child-src 'self';
-     frame-ancestors 'none';
-     base-uri 'self';
-     form-action 'self';
-     ```
+  **Why `'unsafe-inline'`?** 3.8.0 attempted to use Astro v6's `security.csp` feature to emit a per-page `<meta http-equiv="content-security-policy">` with SHA-256 hashes for every bundled / inline script and style, and to drop `'unsafe-inline'` from the Worker header. That design didn't survive contact with the runtime:
 
-  2. **Meta tag** (emitted per HTML page by Astro 6's `security.csp`): adds `script-src` + `style-src` with SHA-256 hashes for every bundled / inline script and style on that page. Modern browsers AND-combine header + meta and disable `'unsafe-inline'` in any directive carrying a hash (CSP3). Result: only hashed scripts execute; injection via inline `<script>` is rejected with no allowlist to fall back on.
+  1. Per CSP3 / MDN [Multiple content security policies](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy#multiple_content_security_policies), policies compose by **intersection of allowances** — a request is allowed only if every policy independently permits it. The header's `script-src 'self'` (no hashes, no `'unsafe-inline'`) therefore blocked every inline script that the meta lawfully hash-permitted. The "meta wins" mental model was incorrect.
+  2. Astro v6's `security.csp` always appends `script-src 'self' 'sha256-…'` and `style-src 'self' 'sha256-…'` to the meta. CSP3 §6.6.2.5 auto-disables `'unsafe-inline'` in any directive carrying a hash, so we couldn't relax the meta from the Astro side.
+  3. Astro hashes inline `<style>` blocks but never inline `style="…"` attributes. Radix UI (`Select` accessibility shim) emits `<span style="pointer-events:none">` and a visually-hidden native `<select>` with an inline a11y-shim style. React components render dynamic inline styles for progress bars (PasteForm, CodeViewer, password-strength), tooltip positioning, and stagger animation (RecentPastes). All blocked by hash-based `style-src` with no escape hatch.
+  4. Astro's `security.csp.directives` whitelist (see `ALLOWED_DIRECTIVES` in `astro/node_modules/astro/dist/core/csp/config.js`) excludes `style-src-attr`, `script-src-attr`, `script-src-elem`, and `style-src-elem` — Astro reserves these. We can't add `style-src-attr 'unsafe-inline'` to override the implicit fallback.
+  5. Cloudflare Bot Fight Mode injects an inline JS Detection beacon (`/cdn-cgi/challenge-platform/scripts/jsd/main.js`) at the edge with a per-request nonce in the body. The hash cannot be pre-computed at build time.
 
-  Header-only directives (`frame-ancestors`, `report-uri`, `sandbox`) stay on the Worker because `<meta>` CSP ignores them. JSON responses see only the header.
+  Net: hash-based CSP is fundamentally incompatible with the codebase as long as Radix UI / React render-time inline styles and Cloudflare edge injection are in scope. CSP is downgraded to defense-in-depth (policy layer); XSS prevention in HTML is provided by:
+
+  - React auto-escaping for every user-supplied string rendered (`{content}`).
+  - DOMPurify on the single `dangerouslySetInnerHTML` call path (markdown render in `CodeViewer.tsx`).
+  - No user content reflected into the HTML envelope by the Worker.
+
+  These layers were already the real defense; the CSP hashes were never carrying the load. JSON responses also see the header above; CSP on JSON is mostly belt-and-braces against MIME-confusion attacks (also mitigated by `X-Content-Type-Options: nosniff`).
 
 - **HSTS** — `max-age=31536000; includeSubDomains; preload`
 - **X-Frame-Options** — `DENY`
@@ -110,10 +123,12 @@ Implemented via **Cloudflare Workers Rate Limiting bindings** (`[[ratelimits]]` 
 
 | Binding | Scope | Limit | Endpoints |
 |---|---|---|---|
-| `RL_AUTH_WRITE` | per IP+endpoint | 10 / 60s | `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}` |
+| `RL_AUTH_WRITE` | per IP+endpoint | 10 / 60s | `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}`, `GET /api/auth/oauth/:provider`, `GET /auth/confirm` |
 | `RL_SESSION_READ` | per IP | 60 / 60s | `GET /api/auth/session` |
-| `RL_PASTE_CREATE` | per IP | 30 / 60s | `POST /pastes` |
+| `RL_PASTE_CREATE` | per IP+endpoint | 30 / 60s | `POST /pastes`, `PUT /pastes/:id`, `DELETE\|POST /pastes/:id/delete` |
 | `RL_SEARCH` | per IP | 30 / 60s | `GET /api/search` |
+
+`GET /auth/callback` is not rate-limited: PKCE codes are single-use and bound to a verifier cookie the legitimate flow holds — a flood here just costs one Supabase exchange per attempt with no amplification.
 
 Blocks return `429 Too Many Requests` with `Retry-After: 60` and a structured `{ error: { code: "rate_limited", message: "..." } }` body. Implementation: `src/interfaces/api/rateLimit.ts`. Middleware fails open (passes the request) if the binding throws — never blocks real traffic on infrastructure issues.
 

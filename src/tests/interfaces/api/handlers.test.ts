@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ApiHandlers } from '../../../interfaces/api/handlers';
 import { CreatePasteCommand } from '../../../application/commands/createPasteCommand';
 import { DeletePasteCommand, DeleteErrorCode } from '../../../application/commands/deletePasteCommand';
+import { UpdatePasteCommand, UpdateErrorCode } from '../../../application/commands/updatePasteCommand';
 import { GetPasteQuery } from '../../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../../application/queries/getRecentPastesQuery';
 import { SearchPastesQuery } from '../../../application/queries/searchPastesQuery';
@@ -19,6 +20,10 @@ const mockCreateCommand = {
 const mockDeleteCommand = {
 	execute: vi.fn(),
 } as unknown as DeletePasteCommand;
+
+const mockUpdateCommand = {
+	execute: vi.fn(),
+} as unknown as UpdatePasteCommand;
 
 const mockGetQuery = {
 	execute: vi.fn(),
@@ -87,6 +92,7 @@ describe('ApiHandlers', () => {
 		handlers = new ApiHandlers(
 			mockCreateCommand,
 			mockDeleteCommand,
+			mockUpdateCommand,
 			mockGetQuery,
 			mockRecentQuery,
 			mockSearchQuery,
@@ -127,12 +133,12 @@ describe('ApiHandlers', () => {
 			handlers = new ApiHandlers(
 				mockCreateCommand,
 				mockDeleteCommand,
+				mockUpdateCommand,
 				mockGetQuery,
 				mockRecentQuery,
 				mockSearchQuery,
 				mockStatsQuery,
 				mockLogger,
-				undefined,
 				mockAuthService,
 			);
 
@@ -180,12 +186,12 @@ describe('ApiHandlers', () => {
 			handlers = new ApiHandlers(
 				mockCreateCommand,
 				mockDeleteCommand,
+				mockUpdateCommand,
 				mockGetQuery,
 				mockRecentQuery,
 				mockSearchQuery,
 				mockStatsQuery,
 				mockLogger,
-				undefined,
 				mockAuthService,
 			);
 
@@ -354,6 +360,107 @@ describe('ApiHandlers', () => {
 				id: 'x',
 				ownerToken: 'tok-via-delete',
 			});
+		});
+	});
+
+	describe('handleUpdatePaste', () => {
+		// [B7-update] The old read-modify-write `handleUpdatePaste` would
+		// `findById → new Paste(..., snapshot read_count) → repository.save()`.
+		// `.save()` did an upsert, so any concurrent `view_paste` burn
+		// between the read and the save would RESURRECT the burned paste.
+		// The new path goes through `UpdatePasteCommand → updateWithToken`
+		// which delegates to the `update_paste(uuid, uuid, …)` Postgres
+		// RPC that takes `SELECT ... FOR UPDATE` and does a partial UPDATE
+		// inside the same transaction — atomic and race-free.
+		//
+		// Tests below exercise the handler/command boundary; the race-
+		// freedom itself is enforced by Postgres and verified at the
+		// repository test level (the new `updateWithToken` is tested via
+		// the supabasePasteRepository.test.ts mock).
+
+		it('returns 200 on successful update via command', async () => {
+			vi.mocked(mockUpdateCommand.execute).mockResolvedValue({
+				success: true,
+				message: 'Paste updated',
+			});
+
+			const req = new Request('https://example.com/pastes/abc', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					token: '12345678-1234-1234-1234-123456789012',
+					content: 'updated content',
+				}),
+			});
+			const res = await handlers.handleUpdatePaste(req, 'abc');
+
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as { success: boolean; id: string };
+			expect(body.success).toBe(true);
+			expect(body.id).toBe('abc');
+		});
+
+		it('returns 404 when paste not found', async () => {
+			vi.mocked(mockUpdateCommand.execute).mockResolvedValue({
+				success: false,
+				errorCode: UpdateErrorCode.NOT_FOUND,
+				message: 'Paste not found',
+			});
+
+			const req = new Request('https://example.com/pastes/x', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					token: '12345678-1234-1234-1234-123456789012',
+					content: 'x',
+				}),
+			});
+			const res = await handlers.handleUpdatePaste(req, 'x');
+
+			expect(res.status).toBe(404);
+		});
+
+		it('returns 403 on token mismatch', async () => {
+			vi.mocked(mockUpdateCommand.execute).mockResolvedValue({
+				success: false,
+				errorCode: UpdateErrorCode.UNAUTHORIZED,
+				message: 'Unauthorized',
+			});
+
+			const req = new Request('https://example.com/pastes/x', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					token: '00000000-0000-0000-0000-000000000000',
+					content: 'x',
+				}),
+			});
+			const res = await handlers.handleUpdatePaste(req, 'x');
+
+			expect(res.status).toBe(403);
+		});
+
+		// Schema validation is exercised at the command level in
+		// `tests/application/commands/updatePasteCommand.test.ts`. The
+		// handler delegates to the command and just maps result codes to
+		// HTTP statuses; tests at this layer mock the command and
+		// therefore can't exercise Zod parsing. Keep the malformed-JSON
+		// test below — that one IS handler-level (parseJsonBody throws
+		// AppError before the command is invoked).
+
+		it('returns 400 bad_request on malformed JSON body', async () => {
+			const req = new Request('https://example.com/pastes/x', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: '{not json',
+			});
+			const res = await handlers
+				.handleUpdatePaste(req, 'x')
+				.catch((err) => err.toResponse?.() ?? err);
+
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as { error?: { code?: string } };
+			expect(body.error?.code).toBe('bad_request');
 		});
 	});
 

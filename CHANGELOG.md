@@ -1,5 +1,218 @@
 # Changelog
 
+## [3.9.0] - 2026-05-19
+
+Verified code-review fixes. CSP rewrite + atomic update RPC + missing
+rate limits + per-request auth-client + Zod row validation + dead-code
+removal. 287 unit tests (was 251). 18 migrations.
+
+### Critical / High — security
+
+- **CSP rewrite — single-layer header, Astro CSP disabled.** 3.8.0
+  introduced a two-layer design: Worker header with
+  `script-src 'self'; style-src 'self'` (no hashes, no `'unsafe-inline'`)
+  plus an Astro 6 `security.csp` meta tag carrying SHA-256 hashes. The
+  claim that "meta with hashes wins" was incorrect — per
+  [MDN](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy#multiple_content_security_policies)
+  and CSP3, multiple policies on a resource compose by **intersection
+  of allowances** ("can only further restrict"). The header's
+  `script-src 'self'` blocked every inline script the meta would have
+  hash-permitted. Every page in production fired CSP violations for
+  legitimate Astro-emitted inline scripts (`astro-island` runtime, theme
+  bootstrap, JSON-LD) and inline `style=""` attributes (Radix UI
+  `Select` accessibility shim, React inline styles for progress bars +
+  tooltip positioning). The hash-based approach is fundamentally
+  incompatible with three things in the stack: Astro v6 doesn't hash
+  inline `style="…"` attributes (only `<style>` blocks); Astro's
+  `security.csp.directives` whitelist refuses `style-src-attr`,
+  `script-src-attr`, etc. (reserved internally); Cloudflare Bot Fight
+  Mode injects a per-request beacon (`__CF$cv$params` nonce varies) that
+  no build-time hash matches. Fix: disable `security.csp` in
+  `astro/astro.config.mjs`; Worker header allows `'unsafe-inline'` for
+  `script-src` / `style-src` / `style-src-attr`. XSS prevention now
+  rests on React auto-escaping + DOMPurify (markdown render in
+  `CodeViewer.tsx`) — which was already doing the actual work. CSP is
+  defense-in-depth / policy layer. `SECURITY.md` + `AGENTS.md` updated
+  with the 5-reason failure analysis.
+
+- **Atomic `update_paste` RPC — closes burn-resurrection race.**
+  `handleUpdatePaste` previously did `findById` (no row lock) → build
+  new `Paste` with snapshot `read_count` → `repository.save()` which
+  ran `.upsert()`. Two race bugs: (1) concurrent `view_paste`
+  increments were clobbered by the stale snapshot; (2) if `view_paste`
+  burned (DELETEd) the row between findById and save, the upsert's
+  INSERT branch **resurrected the burned paste** with new content and
+  `read_count = 0` — defeating burn-after-reading entirely. New
+  migration `20260519121514_add_update_paste_rpc.sql` adds
+  `update_paste(uuid, uuid, text, text, text)` which takes
+  `SELECT ... FOR UPDATE` and applies a partial `UPDATE` with
+  `COALESCE(new_x, x)` semantics (NULL arg = leave column unchanged).
+  Same SECURITY DEFINER + `service_role`-only grant pattern as
+  `delete_paste`. Returns `(was_found, was_updated)`. Touches only
+  `content` / `title` / `language` — never `read_count`, `view_limit`,
+  `burn_after_reading`, `expires_at`, `visibility`, `version`,
+  `is_encrypted`, `delete_token`, or `user_id` (those would invalidate
+  the security model if updatable mid-life). New `UpdatePasteCommand` +
+  `PasteRepository.updateWithToken()` method + `UpdatePasteSchema` Zod
+  schema. `handleUpdatePaste` is now a thin command delegation.
+  Production blast radius for the old bug was bounded because no
+  frontend calls `PUT /pastes/:id` (verified — only token holders
+  hitting the API directly could trigger), but the endpoint itself was
+  reachable and broken.
+
+- **`UpdatePasteSchema` Zod validation at the API boundary.** The old
+  handler used `parseJsonBody<{token,content,...}>(req)` which is a TS
+  cast, not a runtime check. `body.content` could be any type, any
+  size — there was no upper bound on the request body, so a
+  token-holder could DoS the Worker isolate with a single >128 MiB
+  payload. New schema enforces `token` is a UUID, `content` is a string
+  ≤25 MiB, `title` ≤100 chars, `language` ≤50 chars; all body fields
+  except `token` are optional with "no-change" semantics matching the
+  RPC's COALESCE.
+
+- **Rate limits on three previously-unprotected endpoints.**
+  `/auth/confirm`, `DELETE|POST /pastes/:id/delete`, `PUT /pastes/:id`,
+  and `GET /api/auth/oauth/:provider` had no `rateLimit(...)`
+  middleware. Each fires a Supabase round-trip per call → 1:1
+  amplification. Reuse existing buckets with distinct scopes:
+  `/auth/confirm` and `/api/auth/oauth/:provider` use `RL_AUTH_WRITE`
+  (10/60s); delete + update use `RL_PASTE_CREATE` (30/60s). No
+  wrangler.jsonc changes — same 4 bindings + 4 namespace IDs.
+  `/auth/callback` deliberately not rate-limited (PKCE code is
+  single-use, bound to verifier cookie — no amplification possible).
+
+- **`getCookie` URIError exploit (live 500).** `decodeURIComponent`
+  throws on malformed percent-escapes (`%E0%A4`, `%2`, lone surrogates,
+  etc.). The previous implementation unwrapped the result directly, so
+  `Cookie: sb-access-token=%E0%A4` propagated the throw through every
+  authenticated route and became HTTP 500 via `app.onError`. Verified
+  live before the fix. Now wrapped in try/catch — malformed cookie
+  values return null (treated as absent). 4 new regression test cases
+  covering different malformation patterns.
+
+### Important — correctness
+
+- **All state-mutating auth calls now use a per-request Supabase
+  client.** Initial code review flagged `handleUpdatePassword`'s
+  `setSession` as a "latent footgun" — but live smoke testing against
+  the deployed 3.9.0 candidate revealed the leak was **actively
+  breaking production**, not latent: after ANY successful auth call on
+  the shared cached client (`signUp`, `signInWithPassword`,
+  `signInWithOtp`, `refreshSession`, `verifyOtp`, `setSession`),
+  supabase-js's internal `_saveSession` writes the user's session into
+  the GoTrueClient's in-memory storage on the singleton. Subsequent
+  outgoing requests from the cached client attach the user's JWT in
+  `Authorization`, which overrides the apikey-derived `service_role`
+  and makes every following operation execute as `authenticated`. The
+  next POST `/pastes` (or any other RLS-bypass write) on the same V8
+  isolate fails with `42501 new row violates row-level security policy
+  for table "pastes"`. Verified live: a smoke-test login triggered the
+  state leak; subsequent POST `/pastes` returned HTTP 500. Initial
+  code-review fix touched only `setSession` and left signIn/signUp/
+  refreshSession/verifyOtp on the cached client — those 4 paths kept
+  the bug alive.
+
+  Comprehensive fix: introduce `AuthHandlers.newClient()` private
+  helper returning a fresh per-request `createClient(...)` with
+  `persistSession: false`. **All** auth handlers that internally call
+  `_saveSession` now route through `newClient()`: `handleSignup`,
+  `handleLogin`, `handleMagicLink`, `handleForgotPassword`,
+  `handleUpdatePassword`, `handleResendConfirmation`, `handleSession`
+  (refresh path), `handleConfirm`. Stateless calls (`getUser(jwt)`,
+  `admin.signOut(jwt, scope)`) keep using the cached client because
+  they don't touch session storage.
+
+  This was the most severe regression in the 3.9.0 cycle — an active
+  production-breaking bug that the code-review verification stage
+  rated as latent. Surfaced by running smoke tests after deploy.
+
+- **Zod row validation in `SupabasePasteRepository.mapRow`.** Every row
+  field used to be a TypeScript `as` cast. If Supabase returned an
+  unexpected shape (schema drift, RLS-stripped column, partial select),
+  the cast succeeded and the bug surfaced deep inside the domain layer
+  (e.g. `ExpirationPolicy.create(NaN)` throws with no context when
+  `created_at` is missing). New `PasteRowSchema` Zod object validates
+  every row at the storage boundary with `.passthrough()` so future
+  added columns don't break the read path. Failures throw the new
+  `RepositoryShapeError` with the Zod issues attached for debugging.
+
+### Internal cleanup
+
+- **Dead code removal.** `cachePasteView` (a throw-only stub from
+  3.8.0) was only referenced by its own test; production callers
+  always use `preventCaching` per the route-level cache safety comments
+  added in 3.8.0. Removed both the function and its test.
+  `getDefaultTtl` had zero references anywhere — removed.
+
+### Tests
+
+- **287 unit tests** (was 251). Per-file delta (Vitest grouping — `it.each`
+  blocks count as a single test in the per-file total):
+  - +22 `UpdatePasteCommand` (new file): schema validation matrix
+    covering all field types + execute path (success, NOT_FOUND,
+    UNAUTHORIZED, Zod throw on invalid input).
+  - +9 `SupabasePasteRepository`: 6 `updateWithToken` (success, partial
+    update, not-found, token mismatch, 22P02 invalid UUID, RPC error)
+    + 3 `mapRow` Zod validation (missing field, wrong type, passthrough
+    of extra columns).
+  - +4 `handlers.test.ts` `handleUpdatePaste`: 200 happy path, 404
+    not-found, 403 token mismatch, 400 malformed JSON.
+  - +1 `authHandlers.test.ts` `handleUpdatePassword` per-request-client
+    regression (asserts createClient called twice: constructor + per
+    request, second call uses `persistSession: false`).
+  - +1 `cookies.test.ts` malformed-cookie regression (one test with 4
+    inputs verified via inner loop).
+  - −1 `cacheControl.test.ts` (`cachePasteView` test removed alongside
+    the function).
+
+### Migrations
+
+- `20260519121514_add_update_paste_rpc.sql` — adds
+  `update_paste(uuid, uuid, text, text, text)` SECURITY DEFINER
+  PL/pgSQL function with `FOR UPDATE` row lock and partial COALESCE
+  update. Granted to `service_role` only. **Must be applied before
+  deploying this version** — `PUT /pastes/:id` will 500 until the RPC
+  exists in the live DB. Apply via `supabase db push --linked` or
+  `pgpasteriser` then deploy with `npm run deploy:prod`.
+
+### Breaking changes
+
+- `PUT /pastes/:id` body now validated by Zod. Non-string content,
+  non-UUID tokens, or oversized payloads return 400 `validation_error`
+  instead of being silently passed through to the DB. Body fields
+  `visibility`, `burnAfterReading`, `viewLimit`, `readCount`, `version`,
+  `isEncrypted`, `expiration`, `deleteToken`, and `userId` are dropped
+  by the schema (they were never honoured by the old handler either,
+  but the surface is now explicit). The frontend doesn't use this
+  endpoint, so end-user impact is zero.
+- Internal `PasteRepository` interface gained `updateWithToken` method.
+  Custom implementations must add it.
+
+### Verification — claims retracted on second pass
+
+- **DDD layer leakage (interface imports `DeleteErrorCode` from
+  application).** Initial finding flagged this as a layering violation.
+  Retracted: interface → application is the *normal* dependency
+  direction in layered DDD architecture, not a violation. No code
+  change.
+- **Open-redirect attack vector tests missing.** Initial finding said
+  only the external-host case was tested. Re-reading
+  `authHandlers.test.ts:571-595` showed all 5 attack vectors already
+  covered via `it.each([...])`: backslash, protocol-relative,
+  fully-qualified URL, `javascript:`, `data:`. No new tests needed.
+- **`setSession` shared-client leak severity.** Initial code review
+  rated this Important; second-pass verification downgraded it to
+  "latent footgun, not active exploit" on the grounds that no read
+  path existed. **Re-upgraded to Critical after smoke-test
+  verification** — the leak path runs through `_saveSession` (called
+  from signUp/signIn/refreshSession/verifyOtp/setSession), not the
+  no-arg getSession/getUser. Fix expanded from one call site to all
+  state-mutating auth calls (see Important section above). The
+  verification process correctly identified the bug class but
+  under-estimated which supabase-js methods exercise it.
+
+---
+
 ## [3.8.0] - 2026-05-13
 
 Code-review hardening pass. 14 verified findings fixed across security

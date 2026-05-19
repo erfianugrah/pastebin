@@ -34,10 +34,21 @@ interface LoginBody {
  *  - HttpOnly cookies are inaccessible to XSS-injected JS.
  */
 export class AuthHandlers {
+	// Cached service-role client. **Only safe to use for stateless calls**
+	// that explicitly pass a JWT (auth.getUser(jwt), auth.admin.*).
+	// **DO NOT use** for signUp/signIn/signInWithOtp/refreshSession/
+	// verifyOtp/setSession — all of those call supabase-js's internal
+	// `_saveSession` on success, which writes the user's session into the
+	// GoTrueClient's in-memory storage. With our shared cached client,
+	// the next outgoing request from this client carries the user's JWT
+	// in `Authorization`, overrides the apikey-derived service-role role,
+	// and breaks every subsequent RLS-bypass operation in the same
+	// isolate (verified in production: caused `42501 new row violates
+	// row-level security policy` on POST /pastes after a smoke-test
+	// login). Use `newClient()` for any state-mutating auth call.
 	private readonly client: SupabaseClient;
-	// Kept around so the OAuth handlers can build per-request clients with
-	// custom (PKCE-aware) storage. The cached `client` above uses
-	// persistSession: false and isn't suitable for PKCE.
+	// Kept around so handlers can build per-request clients (PKCE-aware
+	// flows + the state-leak workaround described above).
 	private readonly url: string;
 	private readonly secretKey: string;
 
@@ -49,6 +60,28 @@ export class AuthHandlers {
 		this.url = supabaseUrl;
 		this.secretKey = secretKey;
 		this.client = getServiceRoleClient(supabaseUrl, secretKey);
+	}
+
+	/**
+	 * Build a fresh per-request Supabase client. Use for every auth call
+	 * that internally calls `_saveSession` on success (signUp,
+	 * signInWithPassword, signInWithOtp, refreshSession, verifyOtp,
+	 * setSession). The client's `memoryStorage` is request-scoped: it
+	 * lives only for the duration of the handler, so any session written
+	 * during the call doesn't leak to subsequent requests landing on the
+	 * same V8 isolate.
+	 *
+	 * Cost: ~1 ms of GoTrueClient setup per call. Negligible compared to
+	 * the surrounding Supabase round-trip.
+	 */
+	private newClient(): SupabaseClient {
+		return createClient(this.url, this.secretKey, {
+			auth: {
+				autoRefreshToken: false,
+				persistSession: false,
+				detectSessionInUrl: false,
+			},
+		});
 	}
 
 	async handleSignup(request: Request): Promise<Response> {
@@ -69,7 +102,7 @@ export class AuthHandlers {
 			return json({ error: { code: 'bad_request', message: 'Password must be at least 6 characters' } }, 400);
 		}
 
-		const { data, error } = await this.client.auth.signUp({ email, password });
+		const { data, error } = await this.newClient().auth.signUp({ email, password });
 
 		if (error) {
 			this.logger.debug('Auth: signup error', { code: error.code, message: error.message });
@@ -122,7 +155,7 @@ export class AuthHandlers {
 			return json({ error: { code: 'bad_request', message: 'Email and password are required' } }, 400);
 		}
 
-		const { data, error } = await this.client.auth.signInWithPassword({ email, password });
+		const { data, error } = await this.newClient().auth.signInWithPassword({ email, password });
 
 		if (error || !data.session) {
 			this.logger.debug('Auth: login error', { code: error?.code, message: error?.message });
@@ -180,7 +213,7 @@ export class AuthHandlers {
 		// created and no email is sent. Keeps Pasteriser email-based
 		// signup as the only way to create accounts (matches current UX —
 		// magic link is for re-entry, not first signup).
-		const { error } = await this.client.auth.signInWithOtp({
+		const { error } = await this.newClient().auth.signInWithOtp({
 			email,
 			options: { shouldCreateUser: false },
 		});
@@ -217,7 +250,10 @@ export class AuthHandlers {
 			return json({ error: { code: 'bad_request', message: 'Email is required' } }, 400);
 		}
 
-		const { error } = await this.client.auth.resetPasswordForEmail(email);
+		// Doesn't mutate session storage (only enqueues an email), so the
+		// cached client would technically be safe — but using `newClient()`
+		// everywhere keeps the rule simple: state-touching → fresh client.
+		const { error } = await this.newClient().auth.resetPasswordForEmail(email);
 		if (error) {
 			this.logger.debug('Auth: forgot-password error', { code: error.code, message: error.message });
 		}
@@ -258,10 +294,11 @@ export class AuthHandlers {
 			return json({ error: { code: 'unauthorized', message: 'Sign in required' } }, 401);
 		}
 
-		// Set the session on the client so updateUser() runs as the user.
-		// Without this it would error out — service_role can't change
-		// passwords via the non-admin endpoint.
-		const { error: sessErr } = await this.client.auth.setSession({
+		// Per-request client — setSession mutates the GoTrueClient's
+		// in-memory storage. See `newClient()` doc + class-level comment.
+		const requestClient = this.newClient();
+
+		const { error: sessErr } = await requestClient.auth.setSession({
 			access_token: accessToken,
 			refresh_token: refreshToken,
 		});
@@ -273,7 +310,7 @@ export class AuthHandlers {
 			return json({ error: { code: 'unauthorized', message: 'Invalid session' } }, 401);
 		}
 
-		const { error } = await this.client.auth.updateUser({ password });
+		const { error } = await requestClient.auth.updateUser({ password });
 		if (error) {
 			this.logger.debug('Auth: update-password error', { code: error.code, message: error.message });
 			return json({ error: { code: 'update_failed', message: error.message } }, 400);
@@ -306,7 +343,9 @@ export class AuthHandlers {
 			return json({ error: { code: 'bad_request', message: 'Email is required' } }, 400);
 		}
 
-		const { error } = await this.client.auth.resend({ type: 'signup', email });
+		// `resend` doesn't establish a session, so the cached client is
+		// safe here. Using `newClient()` anyway for consistency.
+		const { error } = await this.newClient().auth.resend({ type: 'signup', email });
 		if (error) {
 			// Log for diagnostics but don't leak detail to the client.
 			this.logger.debug('Auth: resend error', { code: error.code, message: error.message });
@@ -336,9 +375,8 @@ export class AuthHandlers {
 			return json({ user: null });
 		}
 
-		// Validate the access token. supabase.auth.getUser() returns the
-		// authenticated user object iff the token is valid + not expired +
-		// not revoked.
+		// `getUser(jwt)` is stateless — the JWT is the argument, not read
+		// from session storage. Safe on the cached client.
 		const { data, error } = await this.client.auth.getUser(accessToken);
 		if (error || !data?.user) {
 			// Token is expired or invalid. Try to refresh if we have a
@@ -349,7 +387,10 @@ export class AuthHandlers {
 				return applyClearCookies(res);
 			}
 
-			const refreshed = await this.client.auth.refreshSession({ refresh_token: refreshToken });
+			// refreshSession writes the new session to GoTrueClient's
+			// in-memory storage. Must be a per-request client (see
+			// class-level comment).
+			const refreshed = await this.newClient().auth.refreshSession({ refresh_token: refreshToken });
 			if (refreshed.error || !refreshed.data.session) {
 				const res = json({ user: null });
 				return applyClearCookies(res);
@@ -656,7 +697,9 @@ export class AuthHandlers {
 			return Response.redirect(new URL('/login?error=invalid_type', request.url).toString(), 302);
 		}
 
-		const { data, error } = await this.client.auth.verifyOtp({
+		// verifyOtp writes the resulting session to GoTrueClient's in-memory
+		// storage. Per-request client required (see class-level comment).
+		const { data, error } = await this.newClient().auth.verifyOtp({
 			token_hash: tokenHash,
 			type: type as 'signup' | 'recovery' | 'invite' | 'email_change' | 'magiclink' | 'email',
 		});

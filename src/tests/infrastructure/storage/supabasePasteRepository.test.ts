@@ -653,4 +653,157 @@ describe('SupabasePasteRepository', () => {
 			expect(result).toBeNull();
 		});
 	});
+
+	describe('updateWithToken (atomic RPC update)', () => {
+		// Mirrors deleteWithToken tests; semantics differ only in {found,updated}
+		// shape and the extra new_content / new_title / new_language args.
+
+		it('returns {found:true, updated:true} when RPC reports success', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: [{ was_found: true, was_updated: true }], error: null },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.updateWithToken(
+				PasteId.create('test-uuid'),
+				'token-uuid',
+				{ content: 'new', title: 'T', language: 'rust' },
+			);
+			expect(result).toEqual({ found: true, updated: true });
+			expect(mockClient.rpc).toHaveBeenCalledWith('update_paste', {
+				paste_uuid: 'test-uuid',
+				owner_token: 'token-uuid',
+				new_content: 'new',
+				new_title: 'T',
+				new_language: 'rust',
+			});
+		});
+
+		it('passes null for omitted fields (partial update)', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: [{ was_found: true, was_updated: true }], error: null },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			await repository.updateWithToken(PasteId.create('id'), 'tok', { content: 'only-content' });
+
+			expect(mockClient.rpc).toHaveBeenCalledWith('update_paste', {
+				paste_uuid: 'id',
+				owner_token: 'tok',
+				new_content: 'only-content',
+				new_title: null,
+				new_language: null,
+			});
+		});
+
+		it('returns {found:false} when RPC reports paste not found', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: [{ was_found: false, was_updated: false }], error: null },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.updateWithToken(PasteId.create('nope'), 'tok', { content: 'x' });
+			expect(result).toEqual({ found: false, updated: false });
+		});
+
+		it('returns {found:true, updated:false} when token mismatched', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: [{ was_found: true, was_updated: false }], error: null },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.updateWithToken(PasteId.create('id'), 'wrong', { content: 'x' });
+			expect(result).toEqual({ found: true, updated: false });
+		});
+
+		it('returns {found:false} on invalid-UUID token (Postgres 22P02)', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: null, error: { code: '22P02', message: 'invalid input syntax for type uuid' } },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.updateWithToken(PasteId.create('id'), 'not-a-uuid', { content: 'x' });
+			expect(result).toEqual({ found: false, updated: false });
+			expect(mockLogger.error).not.toHaveBeenCalled();
+		});
+
+		it('returns {found:false} and logs on other RPC errors', async () => {
+			mockClient = makeSupabaseMock({
+				rpcResult: { data: null, error: { message: 'connection lost' } },
+			});
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.updateWithToken(PasteId.create('id'), 'tok', { content: 'x' });
+			expect(result).toEqual({ found: false, updated: false });
+			expect(mockLogger.error).toHaveBeenCalled();
+		});
+	});
+
+	describe('mapRow Zod validation', () => {
+		// The boundary check catches Supabase schema drift early.
+		// A row with the wrong shape used to silently produce a half-
+		// constructed Paste that exploded deep in the domain layer (e.g.
+		// `ExpirationPolicy.create(NaN)` when `created_at` was missing).
+
+		it('rejects a row missing required fields with RepositoryShapeError', async () => {
+			const brokenRow = {
+				id: 'test-uuid',
+				// content missing
+				created_at: '2024-01-01T00:00:00Z',
+				expires_at: '2024-01-01T01:00:00Z',
+				visibility: 'public',
+				burn_after_reading: false,
+				read_count: 0,
+				is_encrypted: false,
+				version: 0,
+			};
+			mockClient = makeSupabaseMock({ selectResult: { data: brokenRow, error: null } });
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			// findById catches the throw and returns null, but the error is logged
+			// so this verifies the validation actually fires.
+			await expect(
+				repository.findById(PasteId.create('test-uuid')),
+			).rejects.toThrow(/Paste row does not match expected shape/);
+			expect(mockLogger.error).toHaveBeenCalledWith(
+				expect.stringContaining('shape mismatch'),
+				expect.objectContaining({ issues: expect.any(Array) }),
+			);
+		});
+
+		it('rejects a row with wrong type for a field', async () => {
+			const brokenRow = makeDbRow({ read_count: 'five' as unknown as number });
+			mockClient = makeSupabaseMock({ selectResult: { data: brokenRow, error: null } });
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			await expect(repository.findById(PasteId.create('test-uuid'))).rejects.toThrow(/shape/i);
+		});
+
+		it('accepts a row with extra unknown columns (passthrough)', async () => {
+			const rowWithExtras = makeDbRow({ extra_future_column: 'should-not-fail' });
+			mockClient = makeSupabaseMock({ selectResult: { data: rowWithExtras, error: null } });
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.findById(PasteId.create('test-uuid-1234'));
+			expect(result).not.toBeNull();
+		});
+	});
 });

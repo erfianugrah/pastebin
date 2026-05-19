@@ -8,14 +8,23 @@ Storage: **Supabase Postgres** (Frankfurt, project `dewddkcmwrzbpynylyhg`). Migr
 
 ## CSP
 
-Two-layer CSP since 3.8.0:
+Single-layer header CSP set by `src/interfaces/api/middleware.ts` on every response. Uses `'unsafe-inline'` for `script-src` / `style-src` / `style-src-attr`. Astro v6's `security.csp` is **disabled** (`security: { csp: false }` in `astro/astro.config.mjs`).
 
-1. **Header**: `src/interfaces/api/middleware.ts` — strict directives, **no `'unsafe-inline'`**. Includes header-only directives (`frame-ancestors`, `base-uri`, `form-action`, etc.) that `<meta>` CSP cannot express.
-2. **Meta tag**: Astro 6's `security.csp` (configured in `astro/astro.config.mjs`) emits a per-page `<meta http-equiv="content-security-policy">` with SHA-256 hashes for every bundled and inline script/style in that page.
+History: 3.8.0 tried to layer the Worker header with `script-src 'self'` (no inline) on top of an Astro-emitted meta CSP with hashes. That broke immediately on production because per CSP3 multiple policies compose by **intersection of allowances** — the header's `script-src 'self'` (no hashes, no `'unsafe-inline'`) overrode the meta's `'sha256-…'` and blocked every legitimate inline script. The "meta wins" doc claim was wrong.
 
-Browser AND-s both: meta is the more specific (carries hashes), and `'unsafe-inline'` is implicitly disabled in any directive that has a hash. To add a new inline script: just write it in an `.astro` file — Astro hashes it automatically at build time. JSON / API responses see only the header (no inline scripts in JSON anyway).
+The design also failed for inline style attributes:
 
-`api.qrserver.com` was removed from `img-src` when QR rendering moved client-side (B2). Adding any new third-party host requires touching BOTH the Worker header (for non-HTML responses) AND Astro `security.csp.directives` (for HTML).
+- Astro hashes inline `<style>` blocks but **never** inline `style="…"` attributes.
+- Radix UI's Select primitive emits `<span style="pointer-events:none">` and a visually-hidden native `<select>` with `style="position:absolute;border:0;width:1px;…"` in its accessibility shim.
+- React renders dynamic inline styles for progress bars (PasteForm encryption progress, CodeViewer decryption progress, password-strength), tooltip positioning (`Tooltip`), and RecentPastes stagger animation.
+- Astro's `security.csp.directives` whitelist excludes `style-src-attr`, `script-src-attr`, etc. (see `ALLOWED_DIRECTIVES` in `astro/node_modules/astro/dist/core/csp/config.js`) — we can't add an override.
+- Cloudflare Bot Fight Mode injects `/cdn-cgi/challenge-platform/scripts/jsd/main.js` at edge with a per-request nonce; no build-time hash matches.
+
+Net: hash-based CSP was not compatible with this stack. XSS prevention now relies on React's auto-escaping + DOMPurify (markdown render in `CodeViewer.tsx`) — which was already doing the real work. The header CSP is policy / defense-in-depth.
+
+To add a new third-party host (CDN, API, etc.), edit the Worker header in `src/interfaces/api/middleware.ts`. JSON responses see the same header.
+
+`api.qrserver.com` was removed from `img-src` in 3.8.0 (QR rendering moved client-side via the `qrcode` package).
 
 ## Structure
 
@@ -41,10 +50,11 @@ Two separate packages with **independent `node_modules`**:
 
 - Implementation: `src/interfaces/api/rateLimit.ts` (middleware factory) + `[[ratelimits]]` blocks in `wrangler.jsonc` (one per env: top-level for dev with `namespace_id` 1001-1004; under `env.production` with namespace_id 2001-2004 — namespace_ids must be unique within the Cloudflare account and stable across deploys).
 - Buckets (all keyed on `CF-Connecting-IP` → `X-Forwarded-For[0]` → `'unknown'`, scoped per endpoint):
-  - `RL_AUTH_WRITE` 10/60s — `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}`
+  - `RL_AUTH_WRITE` 10/60s — `POST /api/auth/{signup,login,resend-confirmation,forgot-password,update-password,magic-link}`, `GET /api/auth/oauth/:provider`, `GET /auth/confirm`
   - `RL_SESSION_READ` 60/60s — `GET /api/auth/session`
-  - `RL_PASTE_CREATE` 30/60s — `POST /pastes`
+  - `RL_PASTE_CREATE` 30/60s — `POST /pastes`, `PUT /pastes/:id` (paste-update scope), `DELETE|POST /pastes/:id/delete` (paste-delete scope)
   - `RL_SEARCH` 30/60s — `GET /api/search`
+  - `GET /auth/callback` intentionally NOT rate-limited — PKCE code is single-use and bound to verifier cookie; no amplification possible.
 - Over-limit returns 429 + `Retry-After: 60` + `{ error: { code: "rate_limited", message: "..." } }`. Middleware **fails open** on binding error (logs warn) and **no-ops** when binding is undefined (logs debug) — never blocks real traffic on infrastructure issues.
 - 7 unit tests in `src/tests/interfaces/api/rateLimit.test.ts`. `__test__.clientKey` is the only exported test seam.
 
@@ -56,6 +66,7 @@ Two separate packages with **independent `node_modules`**:
 - `createClient()` always passes `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }` — Supabase-recommended for server-side contexts. The three Worker call sites (`SupabasePasteRepository`, `AuthService`, `AuthHandlers`) go through `getServiceRoleClient(url, key)` in `src/infrastructure/supabase/getSupabaseClient.ts` which memoises by `(url, key)`. The cached client is stateless given the auth flags above. PKCE-flow clients in `handleOAuthStart`/`handleOAuthCallback` still call `createClient` directly because they inject a custom storage shim that's not safe to share. Tests reset the cache via `__resetSupabaseClientCache()` in `beforeEach`.
 - `view_paste(uuid)` RPC handles atomic view + burn-after-reading + view-limit with `SELECT ... FOR UPDATE`. The Supabase repository uses this; KV repository mirrors the logic without locking (documented race for rollback safety only)
 - `delete_paste(uuid, uuid)` RPC handles atomic delete-with-token in a single round-trip (replaces the legacy findById + delete two-step). Returns `(was_found, was_deleted)` so handlers distinguish 404 / 403 / 200. Same SECURITY DEFINER pattern as `view_paste`; granted to `service_role` only.
+- `update_paste(uuid, uuid, text, text, text)` RPC handles atomic update-with-token. `SELECT … FOR UPDATE` + partial `UPDATE` with `COALESCE(new_x, x)` semantics (NULL arg = leave column unchanged). Race-free against `view_paste` burns — they serialise on the row lock. Returns `(was_found, was_updated)`. Touches only `content`, `title`, `language` — never `read_count` / `view_limit` / `burn_after_reading` / `expires_at` / `visibility` / `version` / `is_encrypted` / `delete_token` / `user_id`. Replaces the pre-3.9.0 read-modify-write `upsert` flow that could resurrect burned pastes. SECURITY DEFINER + `service_role`-only grant.
 - `search_vector` is a STORED generated tsvector column (`to_tsvector('english', title || ' ' || language)`) backed by a GIN index. Query via `.textSearch('search_vector', q, { type: 'websearch', config: 'english' })`
 - Realtime: not used. The migration `20260512102410_drop_realtime_broadcast.sql` removes the dead `broadcast_public_paste_insert` trigger and RLS policies on `realtime.messages`. The frontend has no supabase-js client and CSP (`connect-src 'self'`) blocks WebSocket to `*.supabase.co`. Recent-paste UX is polling-based (`GET /api/recent`).
 - RLS for authenticated users: 5 policies on `public.pastes` (view public, view own, create own, update own, delete own). Worker still uses `service_role` (RLS bypass); these policies activate when the frontend queries Supabase directly with a user JWT.

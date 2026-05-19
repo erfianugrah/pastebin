@@ -1,7 +1,6 @@
-import { Paste } from '../../domain/models/paste';
-import { PasteRepository } from '../../domain/repositories/pasteRepository';
 import { CreatePasteCommand, CreatePasteParams } from '../../application/commands/createPasteCommand';
 import { DeletePasteCommand, DeleteErrorCode } from '../../application/commands/deletePasteCommand';
+import { UpdatePasteCommand, UpdateErrorCode } from '../../application/commands/updatePasteCommand';
 import { GetPasteQuery } from '../../application/queries/getPasteQuery';
 import { GetRecentPastesQuery } from '../../application/queries/getRecentPastesQuery';
 import { SearchPastesQuery } from '../../application/queries/searchPastesQuery';
@@ -45,6 +44,13 @@ const DELETE_STATUS_MAP: Record<DeleteErrorCode, number> = {
 	[DeleteErrorCode.FAILED]: 400,
 };
 
+/** Map UpdateErrorCode to HTTP status codes. Mirrors DELETE_STATUS_MAP. */
+const UPDATE_STATUS_MAP: Record<UpdateErrorCode, number> = {
+	[UpdateErrorCode.NOT_FOUND]: 404,
+	[UpdateErrorCode.UNAUTHORIZED]: 403,
+	[UpdateErrorCode.FAILED]: 400,
+};
+
 /** Maximum number of recent pastes that can be requested */
 const MAX_RECENT_LIMIT = 100;
 
@@ -58,12 +64,14 @@ export class ApiHandlers {
 	constructor(
 		private readonly createPasteCommand: CreatePasteCommand,
 		private readonly deletePasteCommand: DeletePasteCommand,
+		private readonly updatePasteCommand: UpdatePasteCommand,
 		private readonly getPasteQuery: GetPasteQuery,
 		private readonly getRecentPastesQuery: GetRecentPastesQuery,
 		private readonly searchPastesQuery: SearchPastesQuery,
 		private readonly getPasteStatsQuery: GetPasteStatsQuery,
 		private readonly logger: Logger,
-		private readonly repository?: PasteRepository,
+		// authService is optional so test-injected handlers without auth
+		// still work; production wiring in src/index.ts always passes it.
 		private readonly authService?: AuthService,
 	) {}
 
@@ -186,49 +194,22 @@ export class ApiHandlers {
 		try {
 			this.logger.debug('Handling update paste request', { pasteId });
 
-			if (!this.repository) {
-				return json({ error: { code: 'internal_error', message: 'Repository not configured' } }, 500);
+			// Body shape is enforced by UpdatePasteSchema inside the command.
+			// We pass through the parsed JSON; the command's Zod parse rejects
+			// non-string content, oversized payloads, bad UUIDs, etc.
+			const body = await parseJsonBody<unknown>(request);
+
+			const result = await this.updatePasteCommand.execute(pasteId, body as never);
+
+			if (result.success) {
+				return json({ success: true, id: pasteId });
 			}
 
-			const body = await parseJsonBody<{ token: string; content: string; title?: string; language?: string }>(request);
-
-			if (!body.token) {
-				return json({ error: { code: 'unauthorized', message: 'Token required' } }, 403);
-			}
-
-			// Read-only lookup (no view count increment)
-			const paste = await this.getPasteQuery.findById(pasteId);
-			if (!paste) {
-				throw NotFoundError('Paste not found');
-			}
-
-			if (paste.getDeleteToken() !== body.token) {
-				return json({ error: { code: 'unauthorized', message: 'Invalid token' } }, 403);
-			}
-
-			// Create updated paste in-place (new Paste with same ID, updated content).
-			// Preserve userId so updating an authenticated user's paste doesn't
-			// orphan it.
-			const updatedPaste = new Paste(
-				paste.getId(),
-				body.content ?? paste.getContent(),
-				paste.getCreatedAt(),
-				paste.getExpirationPolicy(),
-				body.title ?? paste.getTitle(),
-				body.language ?? paste.getLanguage(),
-				paste.getVisibility(),
-				paste.isBurnAfterReading(),
-				paste.getReadCount(),
-				paste.getIsEncrypted(),
-				paste.getViewLimit(),
-				paste.getVersion(),
-				paste.getDeleteToken(),
-				paste.getUserId(),
+			const status = result.errorCode ? UPDATE_STATUS_MAP[result.errorCode] : 400;
+			return json(
+				{ error: { code: result.errorCode || 'unknown_error', message: result.message } },
+				status,
 			);
-
-			await this.repository.save(updatedPaste);
-
-			return json({ success: true, id: pasteId });
 		} catch (error) {
 			rethrowIfZodError(error);
 			throw error;

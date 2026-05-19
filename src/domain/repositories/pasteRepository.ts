@@ -82,6 +82,36 @@ export interface PasteRepository {
   deleteWithToken(id: PasteId, ownerToken: string): Promise<{ found: boolean; deleted: boolean }>;
 
   /**
+   * Atomic update-with-token. Mirrors `deleteWithToken`: takes a row lock,
+   * compares the stored `delete_token`, and applies a partial UPDATE only
+   * on token match. Untouched fields keep their existing value (NULL in a
+   * field means "no change", not "clear it").
+   *
+   * Race-free against concurrent `view()` burns. The row lock serialises
+   * both operations — either the burn observes the update (and burns the
+   * updated content), or the update observes the burned row absence
+   * (returns `{found:false}`).
+   *
+   * Read-count, view-limit, burn-after-reading, expiration, visibility
+   * and encryption fields are intentionally OUT of scope — those are
+   * owned by `view()` and the create path. Allowing edits via this method
+   * would re-introduce the upsert-clobbering bug.
+   *
+   * Caller maps:
+   *   - {found:false, updated:false} → 404 not_found
+   *   - {found:true,  updated:false} → 403 unauthorized
+   *   - {found:true,  updated:true}  → 200 success
+   *
+   * Backed by `update_paste(uuid, uuid, text, text, text)` in the
+   * Supabase implementation. Non-UUID owner_token → {found:false}.
+   */
+  updateWithToken(
+    id: PasteId,
+    ownerToken: string,
+    fields: { content?: string | null; title?: string | null; language?: string | null },
+  ): Promise<{ found: boolean; updated: boolean }>;
+
+  /**
    * Find recent public pastes
    * @param limit Maximum number of pastes to return
    * @returns A promise that resolves to an array of pastes

@@ -102,19 +102,6 @@ export function cacheStaticAsset(response: Response, fileExtension?: string): Re
 }
 
 /**
- * @deprecated Do NOT use for paste view JSON responses. The `view_paste`
- * Postgres function atomically increments read_count and may delete the
- * row (burn-after-reading / view-limit). A cached response would defeat
- * both. Kept as a stub so old imports fail loudly via a thrown error.
- */
-export function cachePasteView(_response: Response): never {
-  throw new Error(
-    'cachePasteView is unsafe for paste content: burn-after-reading + view-limit ' +
-    'require server-side single-shot. Use preventCaching() on JSON responses.',
-  );
-}
-
-/**
  * Adds no-cache headers for dynamic content
  */
 export function preventCaching(response: Response): Response {
@@ -128,29 +115,4 @@ export function preventCaching(response: Response): Response {
     statusText: response.statusText,
     headers,
   });
-}
-
-/**
- * Returns the default cache TTL based on the path
- * @param path The URL path
- * @returns The TTL in seconds
- */
-export function getDefaultTtl(path: string): number {
-  // Default TTL values for different content types
-  if (path.match(/\.(js|css|svg|png|jpg|jpeg|gif|webp|ico)$/)) {
-    // Static assets - long cache time
-    return 86400; // 1 day
-  } else if (path.match(/\/api\/recent/)) {
-    // Recent pastes API - short cache time
-    return 60; // 1 minute
-  } else if (path.match(/\/pastes\/[^\/]+$/)) {
-    // Individual paste views
-    return 3600; // 1 hour
-  } else if (path === '/' || path === '/recent') {
-    // Main pages
-    return 300; // 5 minutes
-  }
-  
-  // Default - no caching
-  return 0;
 }

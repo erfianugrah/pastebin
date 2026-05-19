@@ -1,9 +1,50 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import { Paste, PasteData, PasteId } from '../../domain/models/paste';
 import { PasteRepository, PasteStats, ViewResult } from '../../domain/repositories/pasteRepository';
 import { PasteFactory } from '../../application/factories/pasteFactory';
 import { Logger } from '../logging/logger';
 import { getServiceRoleClient } from '../supabase/getSupabaseClient';
+
+// Zod schema for the raw row shape Postgres delivers (snake_case columns).
+// Runs at the storage boundary so a Supabase schema drift surfaces as a
+// loud `RepositoryShapeError` here rather than 50 stack frames deeper
+// when, say, `ExpirationPolicy.create(NaN)` throws because `created_at`
+// arrived as undefined.
+//
+// `.passthrough()` keeps extra columns (e.g. `updated_at`, generated
+// `search_vector`) — we don't model them, but we don't want the validation
+// to reject the row just because Supabase added a column.
+const PasteRowSchema = z
+	.object({
+		id: z.string(),
+		content: z.string(),
+		title: z.string().nullable().optional(),
+		language: z.string().nullable().optional(),
+		created_at: z.string(),
+		expires_at: z.string(),
+		visibility: z.enum(['public', 'private']),
+		burn_after_reading: z.boolean(),
+		read_count: z.number().int().nonnegative(),
+		is_encrypted: z.boolean(),
+		view_limit: z.number().int().positive().nullable().optional(),
+		version: z.number().int().nonnegative(),
+		delete_token: z.string().nullable().optional(),
+		user_id: z.string().nullable().optional(),
+	})
+	.passthrough();
+
+type PasteRow = z.infer<typeof PasteRowSchema>;
+
+/** Thrown when a Supabase row doesn't conform to the expected shape. */
+export class RepositoryShapeError extends Error {
+	readonly code = 'repository_shape_error';
+	constructor(message: string, public readonly issues: unknown) {
+		super(message);
+		this.name = 'RepositoryShapeError';
+		Object.setPrototypeOf(this, RepositoryShapeError.prototype);
+	}
+}
 
 // Shape of the view_paste() RPC response. Postgres returns 0 or 1 row.
 interface ViewPasteRow {
@@ -164,6 +205,43 @@ export class SupabasePasteRepository implements PasteRepository {
 		return { found: row.was_found, deleted: row.was_deleted };
 	}
 
+	async updateWithToken(
+		id: PasteId,
+		ownerToken: string,
+		fields: { content?: string | null; title?: string | null; language?: string | null },
+	): Promise<{ found: boolean; updated: boolean }> {
+		this.logger.debug('Supabase: update_paste RPC', { pasteId: id.toString() });
+
+		const { data, error } = await this.client.rpc('update_paste', {
+			paste_uuid: id.toString(),
+			owner_token: ownerToken,
+			// supabase-js sends `null` over the wire as JSON null, which
+			// reaches the SQL function as Postgres NULL and is handled by the
+			// COALESCE in the RPC (means "leave column unchanged").
+			new_content: fields.content ?? null,
+			new_title: fields.title ?? null,
+			new_language: fields.language ?? null,
+		});
+
+		if (error) {
+			// 22P02 = invalid_text_representation. Caller supplied a token
+			// that wasn't a UUID; treat as not-found for the same reason as
+			// deleteWithToken (no oracle on token presence vs format).
+			if (error.code === '22P02') {
+				return { found: false, updated: false };
+			}
+			this.logger.error('Supabase: update_paste RPC failed', { pasteId: id.toString(), error });
+			return { found: false, updated: false };
+		}
+
+		const rows = (data ?? []) as Array<{ was_found: boolean; was_updated: boolean }>;
+		if (rows.length === 0) {
+			return { found: false, updated: false };
+		}
+		const row = rows[0];
+		return { found: row.was_found, updated: row.was_updated };
+	}
+
 	async searchPublic(query: string, limit: number): Promise<Paste[]> {
 		const trimmed = query.trim();
 		if (!trimmed) return [];
@@ -259,23 +337,35 @@ export class SupabasePasteRepository implements PasteRepository {
 		}
 	}
 
-	// Maps Postgres snake_case columns to PasteData camelCase fields
+	// Maps Postgres snake_case columns to PasteData camelCase fields.
+	// Runs every row through `PasteRowSchema` first so schema drift, RLS-
+	// stripped columns, or partial selects surface as a typed error here
+	// rather than producing a half-constructed Paste that explodes deep
+	// inside the domain layer.
 	private mapRow(row: Record<string, unknown>): PasteData {
+		const parsed = PasteRowSchema.safeParse(row);
+		if (!parsed.success) {
+			this.logger.error('Supabase: paste row shape mismatch', {
+				issues: parsed.error.issues,
+			});
+			throw new RepositoryShapeError('Paste row does not match expected shape', parsed.error.issues);
+		}
+		const r: PasteRow = parsed.data;
 		return {
-			id: row.id as string,
-			content: row.content as string,
-			title: row.title as string | undefined,
-			language: row.language as string | undefined,
-			createdAt: row.created_at as string,
-			expiresAt: row.expires_at as string,
-			visibility: row.visibility as 'public' | 'private',
-			burnAfterReading: row.burn_after_reading as boolean,
-			readCount: row.read_count as number,
-			isEncrypted: row.is_encrypted as boolean,
-			viewLimit: row.view_limit as number | undefined,
-			version: row.version as number,
-			deleteToken: row.delete_token as string | undefined,
-			userId: (row.user_id as string | null | undefined) ?? undefined,
+			id: r.id,
+			content: r.content,
+			title: r.title ?? undefined,
+			language: r.language ?? undefined,
+			createdAt: r.created_at,
+			expiresAt: r.expires_at,
+			visibility: r.visibility,
+			burnAfterReading: r.burn_after_reading,
+			readCount: r.read_count,
+			isEncrypted: r.is_encrypted,
+			viewLimit: r.view_limit ?? undefined,
+			version: r.version,
+			deleteToken: r.delete_token ?? undefined,
+			userId: r.user_id ?? undefined,
 		};
 	}
 }

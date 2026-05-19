@@ -940,6 +940,43 @@ describe('AuthHandlers', () => {
 			expect(updateUser).toHaveBeenCalledWith({ password: 'new-and-long-enough' });
 		});
 
+		// Regression: handleUpdatePassword used to call `this.client.auth.setSession(...)`
+		// where `this.client` was the cached service-role singleton from
+		// `getServiceRoleClient`. supabase-js `_saveSession` writes the user's
+		// session into the GoTrueClient's in-memory storage on the singleton —
+		// shared across every request landing on the same isolate. No code path
+		// reads from session storage today, but it's a latent footgun the moment
+		// anyone calls no-arg `getUser()` or `getSession()`.
+		//
+		// Fix: build a fresh per-request client. This test asserts a NEW
+		// createClient call fires inside handleUpdatePassword (so the call count
+		// = 1 constructor + 1 per request), and that the per-request client
+		// carries `persistSession:false` to bound its memoryStorage to its own
+		// lifetime.
+		it('builds a fresh per-request supabase client and does not reuse the cached one', async () => {
+			const setSession = vi.fn().mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
+			const updateUser = vi.fn().mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
+			vi.mocked(createClient).mockReturnValue(clientWith({ setSession, updateUser }) as any);
+			const handler = new AuthHandlers('https://x.supabase.co', 'sb_secret_test', mockLogger);
+			// Constructor calls getServiceRoleClient → createClient (1).
+			expect(vi.mocked(createClient).mock.calls.length).toBe(1);
+
+			await handler.handleUpdatePassword(
+				jsonRequest(
+					'https://x.test/api/auth/update-password',
+					{ password: 'longenough' },
+					{ Cookie: `${ACCESS_TOKEN_COOKIE}=a; ${REFRESH_TOKEN_COOKIE}=r` },
+				),
+			);
+
+			// Per-request createClient (2). If the test ever sees only 1 call
+			// here, someone reverted to the shared-client path — fix or risk
+			// the cross-request state leak.
+			expect(vi.mocked(createClient).mock.calls.length).toBe(2);
+			const perRequestCallArgs = vi.mocked(createClient).mock.calls[1];
+			expect(perRequestCallArgs[2]?.auth?.persistSession).toBe(false);
+		});
+
 		it('returns 400 when updateUser rejects (e.g. password policy)', async () => {
 			const setSession = vi.fn().mockResolvedValue({ data: { user: { id: 'u1' } }, error: null });
 			const updateUser = vi.fn().mockResolvedValue({

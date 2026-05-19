@@ -386,7 +386,13 @@ async function run(): Promise<void> {
 		createdIds.push(target.id);
 		wrongTokenId = target.id;
 
-		const result = await deletePaste(target.id, 'invalid-token');
+		// Use a well-formed UUID that doesn't match the paste's delete_token.
+		// A non-UUID literal like `'invalid-token'` is rejected by the
+		// `delete_paste(uuid,uuid)` RPC with Postgres code 22P02 and the
+		// repository maps that to `{found:false}` → 404 `not_found`. The
+		// "wrong token" branch (existing paste, well-formed but mismatched
+		// UUID) is the one that returns 403 `unauthorized`.
+		const result = await deletePaste(target.id, '00000000-0000-4000-8000-000000000000');
 		assert(result.status >= 400, `delete should return error status, got ${result.status}`);
 		assert(result.body.error != null, 'response should have error field');
 		assertEqual(result.body.error!.code, 'unauthorized', 'error code');

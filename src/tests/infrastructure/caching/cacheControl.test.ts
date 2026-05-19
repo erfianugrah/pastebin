@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
 	preventCaching,
 	addCacheHeaders,
-	cachePasteView,
 	cacheStaticAsset,
 } from '../../../infrastructure/caching/cacheControl';
 
@@ -33,18 +32,6 @@ describe('cacheControl', () => {
 			expect(cc).toContain('public');
 			expect(cc).toContain('max-age=60');
 			expect(cc).toContain('stale-while-revalidate=300');
-		});
-	});
-
-	describe('cachePasteView', () => {
-		// [B1] Burn-after-reading + view-limit require server-side single-shot.
-		// Caching the JSON response would let the original viewer refresh and
-		// see burned content (browser cache) and shared caches (corporate
-		// proxy, ISP) could serve burned content to subsequent users. The
-		// function is now a guardrail that fails loudly on misuse.
-		it('throws to prevent accidental caching of paste JSON', () => {
-			const base = new Response('x');
-			expect(() => cachePasteView(base)).toThrow(/burn-after-reading|preventCaching/);
 		});
 	});
 
