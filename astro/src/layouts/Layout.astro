@@ -82,7 +82,7 @@ const themeScript = `
 		<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
 		<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 		<link rel="manifest" href="/site.webmanifest" />
-		<meta name="theme-color" content="#4F46E5" />
+		<meta name="theme-color" content="#0a0a0a" />
 
 		
 		<!-- Generator Info -->
@@ -146,6 +146,9 @@ const themeScript = `
 			import 'prismjs/components/prism-markup';           // needed by JSX/TSX/HTML
 			import 'prismjs/components/prism-javascript';       // needed by JSX/TSX/TS
 			import 'prismjs/components/prism-css';              // needed by SCSS/LESS
+			// bash is used by the landing-page API snippets and is too common
+			// to leave to the autoloader (race vs synchronous highlightElement)
+			import 'prismjs/components/prism-bash';
 
 			// Plugins
 			import 'prismjs/plugins/line-numbers/prism-line-numbers';

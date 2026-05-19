@@ -9,7 +9,7 @@ interface TooltipProps {
 	className?: string;
 }
 
-export function Tooltip({ children, content, position = 'top', delay = 300, className = '' }: TooltipProps) {
+export function Tooltip({ children, content, position = 'top', delay = 200, className = '' }: TooltipProps) {
 	const [isVisible, setIsVisible] = useState(false);
 	const [coords, setCoords] = useState({ x: 0, y: 0 });
 	const tooltipRef = useRef<HTMLDivElement>(null);
@@ -19,32 +19,19 @@ export function Tooltip({ children, content, position = 'top', delay = 300, clas
 
 	// Position mapping
 	const positionStyles = {
-		top: 'translate(-50%, -100%) translateY(-8px)',
-		right: 'translate(8px, -50%)',
-		bottom: 'translate(-50%, 8px)',
-		left: 'translate(-100%, -50%) translateX(-8px)',
+		top: 'translate(-50%, -100%) translateY(-6px)',
+		right: 'translate(6px, -50%)',
+		bottom: 'translate(-50%, 6px)',
+		left: 'translate(-100%, -50%) translateX(-6px)',
 	};
 
-	// Arrow position classes
-	const arrowClasses = {
-		top: 'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 rotate-45',
-		right: 'left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 rotate-45',
-		bottom: 'top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 rotate-45',
-		left: 'right-0 top-1/2 -translate-y-1/2 translate-x-1/2 rotate-45',
-	};
-
-	// Handle showing tooltip
 	const handleShow = () => {
-		if (timerRef.current) {
-			clearTimeout(timerRef.current);
-		}
-
+		if (timerRef.current) clearTimeout(timerRef.current);
 		timerRef.current = window.setTimeout(() => {
 			if (triggerRef.current) {
 				const rect = triggerRef.current.getBoundingClientRect();
 				let x = 0;
 				let y = 0;
-
 				switch (position) {
 					case 'top':
 						x = rect.left + rect.width / 2;
@@ -63,35 +50,28 @@ export function Tooltip({ children, content, position = 'top', delay = 300, clas
 						y = rect.top + rect.height / 2;
 						break;
 				}
-
 				setCoords({ x, y });
 				setIsVisible(true);
 			}
 		}, delay);
 	};
 
-	// Handle hiding tooltip
 	const handleHide = () => {
 		if (timerRef.current) {
 			clearTimeout(timerRef.current);
 			timerRef.current = null;
 		}
-
 		setIsVisible(false);
 	};
 
-	// Clean up timer on unmount
 	useEffect(() => {
 		return () => {
-			if (timerRef.current) {
-				clearTimeout(timerRef.current);
-			}
+			if (timerRef.current) clearTimeout(timerRef.current);
 		};
 	}, []);
 
 	return (
 		<div className="relative inline-block">
-			{/* Tooltip trigger */}
 			<div
 				ref={triggerRef}
 				onMouseEnter={handleShow}
@@ -104,7 +84,6 @@ export function Tooltip({ children, content, position = 'top', delay = 300, clas
 				{children}
 			</div>
 
-			{/* Tooltip content */}
 			{isVisible && (
 				<div
 					id={tooltipId}
@@ -117,14 +96,11 @@ export function Tooltip({ children, content, position = 'top', delay = 300, clas
 						transform: positionStyles[position],
 						zIndex: 50,
 					}}
-					className={`px-3 py-2 text-sm bg-gray-900 dark:bg-gray-800 text-white rounded shadow-md max-w-xs ${className}`}
+					className={`px-2 py-1 text-xs bg-foreground text-background border border-foreground max-w-xs ${className}`}
 					onMouseEnter={handleShow}
 					onMouseLeave={handleHide}
 				>
 					{content}
-
-					{/* Tooltip arrow */}
-					<div className={`absolute w-2 h-2 bg-gray-900 dark:bg-gray-800 ${arrowClasses[position]}`} aria-hidden="true" />
 				</div>
 			)}
 		</div>

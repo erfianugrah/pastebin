@@ -1,11 +1,11 @@
 {
 	"name": "Pasteriser",
 	"short_name": "Pasteriser",
-	"description": "A modern, secure code sharing service",
+	"description": "Code-sharing service with syntax highlighting, end-to-end encryption, and full-text search.",
 	"start_url": "/",
 	"display": "standalone",
-	"background_color": "#F8FAFC",
-	"theme_color": "#4F46E5",
+	"background_color": "#0a0a0a",
+	"theme_color": "#0a0a0a",
 	"icons": [
 		{
 			"src": "/android-chrome-192x192.png",

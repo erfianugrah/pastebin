@@ -18,9 +18,9 @@ describe('DeletePaste', () => {
 
 	it('renders the confirmation screen', () => {
 		render(<DeletePaste />);
-		expect(screen.getByText('Delete Paste')).toBeInTheDocument();
-		expect(screen.getByText('Delete Permanently')).toBeInTheDocument();
-		expect(screen.getByText('Cancel')).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: /Delete paste/i })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Delete permanently' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 	});
 
 	it('displays the paste ID', () => {
@@ -39,7 +39,7 @@ describe('DeletePaste', () => {
 		window.sessionStorage.setItem('pasteriser_delete_token', 'my-secret-token');
 
 		render(<DeletePaste />);
-		fireEvent.click(screen.getByText('Delete Permanently'));
+		fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
 
 		await waitFor(() => {
 			expect(mockFetch).toHaveBeenCalledWith(
@@ -62,7 +62,7 @@ describe('DeletePaste', () => {
 		window.localStorage.setItem('paste_token_test-paste-id', 'ls-token');
 
 		render(<DeletePaste />);
-		fireEvent.click(screen.getByText('Delete Permanently'));
+		fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
 
 		await waitFor(() => {
 			expect(mockFetch).toHaveBeenCalledWith(
@@ -81,10 +81,10 @@ describe('DeletePaste', () => {
 		});
 
 		render(<DeletePaste />);
-		fireEvent.click(screen.getByText('Delete Permanently'));
+		fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
 
 		await waitFor(() => {
-			expect(screen.getByText('Paste Deleted')).toBeInTheDocument();
+			expect(screen.getByRole('heading', { name: /Paste deleted/i })).toBeInTheDocument();
 		});
 	});
 
@@ -95,7 +95,7 @@ describe('DeletePaste', () => {
 		});
 
 		render(<DeletePaste />);
-		fireEvent.click(screen.getByText('Delete Permanently'));
+		fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
 
 		await waitFor(() => {
 			expect(screen.getByText('Unauthorized')).toBeInTheDocument();
@@ -110,7 +110,7 @@ describe('DeletePaste', () => {
 		window.localStorage.setItem('paste_token_test-paste-id', 'some-token');
 
 		render(<DeletePaste />);
-		fireEvent.click(screen.getByText('Delete Permanently'));
+		fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }));
 
 		await waitFor(() => {
 			expect(window.localStorage.getItem('paste_token_test-paste-id')).toBeNull();

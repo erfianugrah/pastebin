@@ -1,8 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { AlertCircle, CheckCircle2, Mail, KeyRound, Github } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/button';
-import { Card, CardContent } from './ui/card';
 
 interface Props {
 	mode: 'login' | 'signup';
@@ -26,7 +24,6 @@ export default function AuthForm({ mode }: Props) {
 	const [loginState, setLoginState] = useState<LoginState>({ kind: 'form' });
 	const [signupState, setSignupState] = useState<SignupState>({ kind: 'form' });
 	const [resendInfo, setResendInfo] = useState<string | null>(null);
-	// Login can swap into a passwordless (magic link) form mode.
 	const [useMagicLink, setUseMagicLink] = useState(false);
 
 	async function onSubmit(e: FormEvent) {
@@ -43,7 +40,6 @@ export default function AuthForm({ mode }: Props) {
 			return;
 		}
 
-		// Magic-link path: skip password validation entirely.
 		if (mode === 'login' && useMagicLink) {
 			setSubmitting(true);
 			try {
@@ -109,35 +105,26 @@ export default function AuthForm({ mode }: Props) {
 		}
 	}
 
-	// --- Signup success state: replace the form entirely ---
+	// --- Signup success state ---
 	if (mode === 'signup' && signupState.kind === 'awaiting_confirm') {
 		const target = signupState.email;
 		return (
-			<Card>
-				<CardContent className="p-6">
-					<div className="mx-auto rounded-full w-12 h-12 bg-primary/10 flex items-center justify-center mb-4">
-						<Mail className="h-5 w-5 text-primary" />
-					</div>
-					<h2 className="text-lg font-semibold tracking-tight text-center mb-2">
-						Check your email
-					</h2>
-					<p className="text-sm text-muted-foreground text-center mb-6">
-						We sent a confirmation link to <span className="font-medium text-foreground">{target}</span>.
+			<div className="border border-primary bg-card animate-fade-in">
+				<div className="border-b border-primary px-4 py-2 bg-card-alt">
+					<h2 className="text-sm font-bold uppercase tracking-wide">✓ Check your email</h2>
+				</div>
+				<div className="px-4 py-3 space-y-3">
+					<p className="text-sm">
+						We sent a confirmation link to <span className="font-mono">{target}</span>.
 						Click the link to finish creating your account — you&apos;ll be signed in automatically.
 					</p>
 					{resendInfo && (
-						<div className="flex items-start gap-2 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm mb-3">
-							<CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
-							<span>{resendInfo}</span>
+						<div className="notice notice-success">
+							<span className="text-xs">{resendInfo}</span>
 						</div>
 					)}
-					<div className="flex flex-col gap-2">
-						<Button
-							variant="outline"
-							onClick={() => onResend(target)}
-							disabled={submitting}
-							className="w-full"
-						>
+					<div className="flex flex-wrap gap-2">
+						<Button onClick={() => onResend(target)} disabled={submitting}>
 							{submitting ? 'Sending…' : "Didn't get it? Resend"}
 						</Button>
 						<Button
@@ -146,13 +133,12 @@ export default function AuthForm({ mode }: Props) {
 								setSignupState({ kind: 'form' });
 								setResendInfo(null);
 							}}
-							className="w-full"
 						>
 							Wrong email? Try again
 						</Button>
 					</div>
-				</CardContent>
-			</Card>
+				</div>
+			</div>
 		);
 	}
 
@@ -160,17 +146,14 @@ export default function AuthForm({ mode }: Props) {
 	if (mode === 'login' && loginState.kind === 'magic_sent') {
 		const target = loginState.email;
 		return (
-			<Card>
-				<CardContent className="p-6">
-					<div className="mx-auto rounded-full w-12 h-12 bg-primary/10 flex items-center justify-center mb-4">
-						<Mail className="h-5 w-5 text-primary" />
-					</div>
-					<h2 className="text-lg font-semibold tracking-tight text-center mb-2">
-						Check your email
-					</h2>
-					<p className="text-sm text-muted-foreground text-center mb-6">
-						If an account exists for <span className="font-medium text-foreground">{target}</span>,
-						we&apos;ve sent a sign-in link. Click it to be signed in automatically.
+			<div className="border border-primary bg-card animate-fade-in">
+				<div className="border-b border-primary px-4 py-2 bg-card-alt">
+					<h2 className="text-sm font-bold uppercase tracking-wide">✓ Check your email</h2>
+				</div>
+				<div className="px-4 py-3 space-y-3">
+					<p className="text-sm">
+						If an account exists for <span className="font-mono">{target}</span>, we&apos;ve sent a
+						sign-in link. Click it to be signed in automatically.
 					</p>
 					<Button
 						variant="ghost"
@@ -178,51 +161,42 @@ export default function AuthForm({ mode }: Props) {
 							setLoginState({ kind: 'form' });
 							setUseMagicLink(false);
 						}}
-						className="w-full"
 					>
-						Back to sign-in
+						← Back to sign-in
 					</Button>
-				</CardContent>
-			</Card>
+				</div>
+			</div>
 		);
 	}
 
-	// --- Form state for both login and signup ---
+	// --- Form state ---
 	const errorState = mode === 'login' ? loginState : signupState;
 	const showResendInline =
 		mode === 'login' && errorState.kind === 'error' && (errorState as { code?: string }).code === 'email_not_confirmed';
 
 	return (
-		<Card>
-			<CardContent className="p-6">
-				<h2 className="text-lg font-semibold tracking-tight mb-1">
-					{mode === 'login' ? 'Log in' : 'Create an account'}
-				</h2>
-				<p className="text-sm text-muted-foreground mb-4">
-					{mode === 'login'
-						? useMagicLink
-							? "Enter your email and we'll send you a sign-in link."
-							: 'Sign in to see your saved pastes.'
-						: 'Sign up to keep your pastes in one place.'}
-				</p>
+		<div className="border border-border bg-card animate-fade-in">
+			<div className="border-b border-border-strong px-4 py-2 bg-card-alt">
+				<h1 className="text-sm font-bold uppercase tracking-wide">
+					{mode === 'login' ? 'Log in' : 'Create account'}
+				</h1>
+			</div>
 
+			<div className="px-4 py-3 space-y-3">
 				<a
 					href="/api/auth/oauth/github"
-					className="flex items-center justify-center gap-2 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+					className="btn flex items-center justify-center gap-2 w-full h-8 border border-input bg-card text-foreground hover:bg-muted text-xs uppercase tracking-wide font-semibold no-underline"
 				>
-					<Github className="h-4 w-4" />
 					Continue with GitHub
 				</a>
 
-				<div className="flex items-center gap-3 my-4">
-					<div className="h-px flex-1 bg-border" />
-					<span className="text-xs text-muted-foreground">or with email</span>
-					<div className="h-px flex-1 bg-border" />
+				<div className="divider-label">
+					or with email
 				</div>
 
 				<form onSubmit={onSubmit} className="space-y-3">
 					<div>
-						<label htmlFor="email" className="text-sm font-medium block mb-1.5">
+						<label htmlFor="email" className="t-form-label">
 							Email
 						</label>
 						<input
@@ -232,18 +206,18 @@ export default function AuthForm({ mode }: Props) {
 							value={email}
 							onChange={(e) => setEmail(e.target.value)}
 							required
-							className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+							className="w-full h-7 border border-input bg-card px-2 text-xs font-mono"
 						/>
 					</div>
 
 					{!(mode === 'login' && useMagicLink) && (
 						<div>
-							<div className="flex items-center justify-between mb-1.5">
-								<label htmlFor="password" className="text-sm font-medium">
+							<div className="flex items-center justify-between mb-1">
+								<label htmlFor="password" className="t-form-label !mb-0">
 									Password
 								</label>
 								{mode === 'login' && (
-									<a href="/forgot-password" className="text-xs text-muted-foreground hover:text-primary hover:underline">
+									<a href="/forgot-password" className="text-[10px] uppercase tracking-wide text-link no-underline hover:underline">
 										Forgot?
 									</a>
 								)}
@@ -256,40 +230,35 @@ export default function AuthForm({ mode }: Props) {
 								onChange={(e) => setPassword(e.target.value)}
 								required
 								minLength={6}
-								className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+								className="w-full h-7 border border-input bg-card px-2 text-xs font-mono"
 							/>
 						</div>
 					)}
 
 					{errorState.kind === 'error' && (
-						<div className="rounded-md border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
-							<div className="flex items-start gap-2">
-								<AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-								<span>{errorState.message}</span>
-							</div>
+						<div className="notice notice-destructive">
+							<span className="text-xs font-bold uppercase tracking-wide shrink-0">ERR</span>
+							<span className="text-xs flex-1">{errorState.message}</span>
 							{showResendInline && (
-								<div className="mt-2 pl-6">
-									<button
-										type="button"
-										onClick={() => onResend(email)}
-										disabled={submitting}
-										className="text-xs underline text-destructive/80 hover:text-destructive"
-									>
-										{submitting ? 'Sending…' : 'Resend confirmation email'}
-									</button>
-								</div>
+								<button
+									type="button"
+									onClick={() => onResend(email)}
+									disabled={submitting}
+									className="text-xs text-link underline ml-2"
+								>
+									{submitting ? 'Sending…' : 'Resend'}
+								</button>
 							)}
 						</div>
 					)}
 
 					{resendInfo && (
-						<div className="flex items-start gap-2 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm">
-							<CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
-							<span>{resendInfo}</span>
+						<div className="notice notice-success">
+							<span className="text-xs">{resendInfo}</span>
 						</div>
 					)}
 
-					<Button type="submit" disabled={submitting} className="w-full">
+					<Button type="submit" variant="primary" size="lg" disabled={submitting} className="w-full">
 						{submitting
 							? 'Working…'
 							: mode === 'login'
@@ -306,41 +275,27 @@ export default function AuthForm({ mode }: Props) {
 								setUseMagicLink((v) => !v);
 								setLoginState({ kind: 'form' });
 							}}
-							className="w-full flex items-center justify-center gap-1.5 text-sm text-muted-foreground hover:text-primary py-1"
+							className="w-full text-xs uppercase tracking-wide text-link hover:underline"
 						>
-							{useMagicLink ? (
-								<>
-									<KeyRound className="h-3.5 w-3.5" />
-									Use password instead
-								</>
-							) : (
-								<>
-									<Mail className="h-3.5 w-3.5" />
-									Email me a sign-in link instead
-								</>
-							)}
+							{useMagicLink ? 'Use password instead' : 'Email me a sign-in link instead'}
 						</button>
 					)}
 
-					<div className="text-center text-sm text-muted-foreground pt-2">
+					<div className="text-center text-xs text-muted-foreground pt-1">
 						{mode === 'login' ? (
 							<>
 								No account?{' '}
-								<a href="/signup" className="text-primary hover:underline">
-									Sign up
-								</a>
+								<a href="/signup" className="text-link no-underline hover:underline">Sign up</a>
 							</>
 						) : (
 							<>
 								Already have an account?{' '}
-								<a href="/login" className="text-primary hover:underline">
-									Log in
-								</a>
+								<a href="/login" className="text-link no-underline hover:underline">Log in</a>
 							</>
 						)}
 					</div>
 				</form>
-			</CardContent>
-		</Card>
+			</div>
+		</div>
 	);
 }

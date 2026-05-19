@@ -1,7 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from './ui/button';
-import { T } from '../lib/typography';
 import { loadPasteToken, removePasteToken } from '../lib/pasteTokenStorage';
 
 type DeleteState = 'confirm' | 'loading' | 'success' | 'error';
@@ -17,9 +15,6 @@ export default function DeletePaste() {
 	async function handleDelete() {
 		setState('loading');
 		try {
-			// Token resolution order:
-			//  1. sessionStorage hand-off from PasteActions (one-shot key).
-			//  2. secureStorage / legacy plaintext fallback via loadPasteToken.
 			let token: string | null = null;
 			try {
 				token = sessionStorage.getItem('pasteriser_delete_token');
@@ -50,25 +45,32 @@ export default function DeletePaste() {
 	}
 
 	if (!isValidId) {
-		return (
-			<ErrorCard message="Invalid paste ID." />
-		);
+		return <ErrorPanel message="Invalid paste ID." />;
 	}
 
 	// ── Confirm ──────────────────────────────────────────────────────
 	if (state === 'confirm') {
 		return (
-			<div className="max-w-md mx-auto text-center py-8">
-				<div className="rounded-full bg-destructive/10 p-3 inline-flex mb-4">
-					<AlertTriangle className="h-6 w-6 text-destructive" />
+			<div className="max-w-lg mx-auto border border-destructive bg-card animate-fade-in">
+				<div className="border-b border-destructive px-4 py-2 bg-card-alt">
+					<h1 className="text-sm font-bold uppercase tracking-wide text-destructive">⚠ Delete paste</h1>
 				</div>
-			<h2 className={T.emptyTitle}>Delete Paste</h2>
-			<p className={T.mutedSm}>Are you sure you want to delete this paste?</p>
-			<p className="text-xs font-mono text-muted-foreground mt-1 mb-4">{pasteId}</p>
-				<p className="text-sm text-destructive mb-6">This action cannot be undone.</p>
-				<div className="flex justify-center gap-3">
-					<Button variant="destructive" onClick={handleDelete}>Delete Permanently</Button>
-					<Button variant="outline" onClick={() => window.history.back()}>Cancel</Button>
+				<div className="px-4 py-3 space-y-3">
+					<dl className="dl-inline">
+						<dt>ID</dt>
+						<dd className="font-mono">{pasteId}</dd>
+					</dl>
+					<p className="text-sm">
+						Are you sure you want to delete this paste? <strong>This action cannot be undone.</strong>
+					</p>
+					<div className="flex gap-2">
+						<Button variant="destructive" onClick={handleDelete}>
+							Delete permanently
+						</Button>
+						<Button onClick={() => window.history.back()}>
+							Cancel
+						</Button>
+					</div>
 				</div>
 			</div>
 		);
@@ -77,9 +79,8 @@ export default function DeletePaste() {
 	// ── Loading ──────────────────────────────────────────────────────
 	if (state === 'loading') {
 		return (
-			<div className="flex flex-col items-center justify-center py-16">
-				<Loader2 className="h-6 w-6 animate-spin text-muted-foreground mb-3" />
-				<p className={T.mutedSm}>Deleting paste...</p>
+			<div className="max-w-lg mx-auto border border-border bg-card px-4 py-6 text-center animate-fade-in">
+				<p className="text-xs text-muted-foreground uppercase tracking-wide">Deleting…</p>
 			</div>
 		);
 	}
@@ -87,34 +88,37 @@ export default function DeletePaste() {
 	// ── Success ──────────────────────────────────────────────────────
 	if (state === 'success') {
 		return (
-			<div className="max-w-md mx-auto text-center py-8">
-				<div className="rounded-full bg-green-100 dark:bg-green-900/30 p-3 inline-flex mb-4">
-					<CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
+			<div className="max-w-lg mx-auto border border-success bg-card animate-fade-in">
+				<div className="border-b border-success px-4 py-2 bg-card-alt">
+					<h2 className="text-sm font-bold uppercase tracking-wide text-success">✓ Paste deleted</h2>
 				</div>
-			<h2 className={T.emptyTitle}>Paste Deleted</h2>
-			<p className={T.emptyDescription}>The paste has been permanently removed.</p>
-				<Button asChild>
-					<a href="/">Create a new paste</a>
-				</Button>
+				<div className="px-4 py-3 space-y-3">
+					<p className="text-sm">The paste has been permanently removed.</p>
+					<Button variant="primary" asChild>
+						<a href="/" className="no-underline">New paste →</a>
+					</Button>
+				</div>
 			</div>
 		);
 	}
 
-	// ── Error ────────────────────────────────────────────────────────
-	return <ErrorCard message={errorMessage} />;
+	return <ErrorPanel message={errorMessage} />;
 }
 
-function ErrorCard({ message }: { message: string }) {
+function ErrorPanel({ message }: { message: string }) {
 	return (
-		<div className="max-w-md mx-auto text-center py-8">
-			<div className="rounded-full bg-destructive/10 p-3 inline-flex mb-4">
-				<AlertCircle className="h-6 w-6 text-destructive" />
+		<div className="max-w-lg mx-auto border border-destructive bg-card animate-fade-in">
+			<div className="border-b border-destructive px-4 py-2 bg-card-alt">
+				<h2 className="text-sm font-bold uppercase tracking-wide text-destructive">× Error</h2>
 			</div>
-		<h2 className={T.emptyTitle}>Error</h2>
-		<p className={T.emptyDescription}>{message}</p>
-			<div className="flex justify-center gap-3">
-				<Button asChild><a href="/">Home</a></Button>
-				<Button variant="outline" onClick={() => window.history.back()}>Go Back</Button>
+			<div className="px-4 py-3 space-y-3">
+				<p className="text-sm">{message}</p>
+				<div className="flex gap-2">
+					<Button variant="primary" asChild>
+						<a href="/" className="no-underline">Home</a>
+					</Button>
+					<Button onClick={() => window.history.back()}>← Go back</Button>
+				</div>
 			</div>
 		</div>
 	);

@@ -1,84 +1,40 @@
-import { useState, useEffect } from 'react';
-import { Menu, X } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 import UserMenu from './UserMenu';
 
+// ─── McMaster brutalist header ───────────────────────────────────────
+// One thin row, sticky, hard 1px border bottom. Brand on the left, nav
+// + auth on the right. No icons, no scroll-aware blur. Mobile collapses
+// nav into a horizontally-scrollable row — clarity > responsive hiding.
+
 export default function Header() {
-	const [isScrolled, setIsScrolled] = useState(false);
-	const [isMenuOpen, setIsMenuOpen] = useState(false);
-
-	useEffect(() => {
-		const handleScroll = () => setIsScrolled(window.scrollY > 10);
-		window.addEventListener('scroll', handleScroll);
-		return () => window.removeEventListener('scroll', handleScroll);
-	}, []);
-
-	useEffect(() => {
-		if (!isMenuOpen) return;
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') setIsMenuOpen(false);
-		};
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [isMenuOpen]);
-
 	return (
-		<header
-			className={`sticky top-0 z-40 w-full border-b border-border transition-shadow ${
-				isScrolled ? 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-sm' : 'bg-background'
-			}`}
-		>
-			<div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
+		<header className="sticky top-0 z-40 w-full border-b border-border-strong bg-background">
+			<div className="max-w-5xl mx-auto px-4 h-9 flex items-center gap-4">
 				<a
 					href="/"
-					className="inline-flex items-center gap-2 text-lg font-semibold tracking-tight hover:text-primary transition-colors"
+					className="nav-link font-bold text-sm tracking-wide hover:bg-primary hover:text-primary-foreground px-1.5 h-9 inline-flex items-center"
 					aria-label="Pasteriser — home"
 				>
-					<img src="/favicon.svg" alt="" aria-hidden="true" width="20" height="20" className="rounded-[5px]" />
-					<span>Pasteriser</span>
+					PASTERISER
 				</a>
 
-				<div className="flex items-center gap-4">
-					<nav className="hidden md:flex items-center gap-6" aria-label="Main navigation">
-						<a href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-							New
-						</a>
-						<a href="/recent" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-							Recent
-						</a>
-					</nav>
+				<nav className="flex-1 flex items-center gap-3 overflow-x-auto" aria-label="Main navigation">
+					<a href="/" className="nav-link text-xs uppercase tracking-wide hover:underline">
+						New
+					</a>
+					<a href="/recent" className="nav-link text-xs uppercase tracking-wide hover:underline">
+						Recent
+					</a>
+					<a href="/my" className="nav-link text-xs uppercase tracking-wide hover:underline">
+						Mine
+					</a>
+				</nav>
 
+				<div className="flex items-center gap-3 shrink-0">
 					<ThemeToggle />
 					<UserMenu />
-
-					<button
-						className="md:hidden p-1.5 rounded-md hover:bg-muted transition-colors"
-						onClick={() => setIsMenuOpen(!isMenuOpen)}
-						aria-label="Toggle menu"
-						aria-expanded={isMenuOpen}
-						aria-controls="mobile-menu"
-					>
-						{isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-					</button>
 				</div>
 			</div>
-
-			{/* Mobile menu */}
-			{isMenuOpen && (
-				<div id="mobile-menu" className="md:hidden border-t border-border">
-					<nav className="max-w-4xl mx-auto px-4 py-3 flex flex-col gap-1" aria-label="Mobile navigation">
-						<a href="/" className="py-2 px-3 rounded-md text-sm hover:bg-muted transition-colors" onClick={() => setIsMenuOpen(false)}>
-							New Paste
-						</a>
-						<a href="/recent" className="py-2 px-3 rounded-md text-sm hover:bg-muted transition-colors" onClick={() => setIsMenuOpen(false)}>
-							Recent Pastes
-						</a>
-						<a href="/my" className="py-2 px-3 rounded-md text-sm hover:bg-muted transition-colors" onClick={() => setIsMenuOpen(false)}>
-							My Pastes
-						</a>
-					</nav>
-				</div>
-			)}
 		</header>
 	);
 }

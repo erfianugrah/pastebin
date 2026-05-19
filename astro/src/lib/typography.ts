@@ -1,48 +1,26 @@
-// ─── Shared Typography Constants ─────────────────────────────────────
-// Single source of truth for recurring text patterns.
+// ─── Shared typography helpers ───────────────────────────────────────
+// Source of truth for the (small) set of CSS class names that recur
+// across multiple components. Each value resolves to a `.t-*` class
+// defined in `astro/src/styles/globals.css` under the "Semantic
+// typography helpers" section.
 //
-// Each value is a CSS class name defined in `astro/src/styles/globals.css`
-// under the "Semantic typography helpers (.t-*)" section. Components still
-// import this as `T` and compose with `cn()` for contextual overrides — but
-// the actual rules live in CSS, so HTML artefacts outside the React tree
-// (preview cards in ui-overhaul/, the design-system kit, etc.) can apply
-// the same class names without Tailwind.
+// Most styling lives directly in Tailwind utility chains at the call
+// site. Only patterns repeated in 3+ places are pulled out here.
 //
-// Visual semantics are preserved 1:1 with the previous Tailwind-utility
-// values; only the implementation moved into CSS.
+// The brutalist redesign of May 2026 collapsed an 18-key helper set
+// down to 5 — the rest had no real-world users after components moved
+// to inline utility classes. Don't re-add keys speculatively; only when
+// the same multi-class pattern reappears in ≥3 components.
 
 export const T = {
-	// ── Page-level ────────────────────────────────────────────────────
-	pageTitle: 't-page-title',
-	pageSubtitle: 't-page-subtitle',
-
-	// ── Cards ─────────────────────────────────────────────────────────
-	cardTitle: 't-card-title',
-	cardDescription: 't-card-description',
-
-	// ── Form ──────────────────────────────────────────────────────────
+	// Form fields
 	formLabel: 't-form-label',
 	formError: 't-form-error',
-	formHelp: 't-form-help',
 
-	// ── Paste metadata ───────────────────────────────────────────────
-	metaRow: 't-meta-row',
+	// Paste viewer
 	pasteTitle: 't-paste-title',
 
-	// ── Section headings ─────────────────────────────────────────────
-	sectionTitle: 't-section-title',
-	sectionSubtitle: 't-section-subtitle',
-
-	// ── Notices ───────────────────────────────────────────────────────
-	noticeInfo: 't-notice-info',
-	noticeWarning: 't-notice-warning',
-	noticeSuccess: 't-notice-success',
-
-	// ── Muted helpers ─────────────────────────────────────────────────
+	// Muted body / status text
 	muted: 't-muted',
 	mutedSm: 't-muted-sm',
-
-	// ── Centered empty / status screens ──────────────────────────────
-	emptyTitle: 't-empty-title',
-	emptyDescription: 't-empty-description',
 } as const;

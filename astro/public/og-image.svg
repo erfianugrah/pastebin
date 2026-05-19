@@ -1,59 +1,24 @@
-<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background gradient -->
-  <rect width="1200" height="630" fill="url(#bg)" />
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Pasteriser brutalist OG card.
+    Yellow primary background + black hard border + wordmark + tagline.
+    Rasterised to og-image.png via `magick -background none og-image.svg og-image.png`.
+    Tokens match the UI: bg #ffcc00 (primary), fg #0a0a0a (foreground).
+  -->
+  <rect width="1200" height="630" fill="#ffcc00"/>
+  <rect x="0" y="0" width="1200" height="630" fill="none" stroke="#0a0a0a" stroke-width="40"/>
 
-  <!-- Subtle grid pattern for texture -->
-  <defs>
-    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" stroke-opacity="0.04" stroke-width="1" />
-    </pattern>
-    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#312E81" />
-      <stop offset="0.5" stop-color="#4338CA" />
-      <stop offset="1" stop-color="#2563EB" />
-    </linearGradient>
-  </defs>
-  <rect width="1200" height="630" fill="url(#grid)" />
-
-  <!-- Decorative code bracket icon (left side) -->
-  <g transform="translate(80, 165)" opacity="0.95">
-    <rect width="200" height="200" rx="40" fill="white" fill-opacity="0.1" />
-    <path d="M85 55 L50 100 L85 145" stroke="white" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
-    <path d="M115 55 L150 100 L115 145" stroke="white" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
-    <path d="M108 40 L92 160" stroke="white" stroke-width="10" stroke-linecap="round" />
-  </g>
-
-  <!-- Glow behind icon -->
-  <circle cx="180" cy="265" r="80" fill="white" fill-opacity="0.05" />
-
-  <!-- Title -->
-  <text x="330" y="250" font-size="72" font-weight="800" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" letter-spacing="-1">Pasteriser</text>
+  <!-- Wordmark (heavy mono) -->
+  <text x="600" y="270" font-family="Iosevka, 'Iosevka Term', 'JetBrains Mono', 'Fira Code', 'Courier New', monospace"
+        font-size="140" font-weight="900" fill="#0a0a0a" text-anchor="middle" letter-spacing="8">PASTERISER</text>
 
   <!-- Tagline -->
-  <text x="330" y="310" font-size="28" font-weight="400" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" fill-opacity="0.8">Secure code sharing with end-to-end encryption</text>
+  <text x="600" y="360" font-family="Iosevka, 'Iosevka Term', 'JetBrains Mono', 'Fira Code', 'Courier New', monospace"
+        font-size="32" font-weight="500" fill="#0a0a0a" text-anchor="middle" letter-spacing="2"
+        text-transform="uppercase">— code · text · markdown · encrypted —</text>
 
-  <!-- Feature pills -->
-  <g transform="translate(330, 350)">
-    <!-- E2E Encryption -->
-    <rect x="0" y="0" width="180" height="42" rx="21" fill="white" fill-opacity="0.15" />
-    <text x="90" y="27" font-size="16" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" text-anchor="middle">E2E Encryption</text>
-
-    <!-- Syntax Highlighting -->
-    <rect x="196" y="0" width="210" height="42" rx="21" fill="white" fill-opacity="0.15" />
-    <text x="301" y="27" font-size="16" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" text-anchor="middle">Syntax Highlighting</text>
-
-    <!-- Burn After Reading -->
-    <rect x="422" y="0" width="200" height="42" rx="21" fill="white" fill-opacity="0.15" />
-    <text x="522" y="27" font-size="16" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" text-anchor="middle">Burn After Reading</text>
-
-    <!-- View Limits -->
-    <rect x="638" y="0" width="150" height="42" rx="21" fill="white" fill-opacity="0.15" />
-    <text x="713" y="27" font-size="16" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" fill="white" text-anchor="middle">View Limits</text>
-  </g>
-
-  <!-- URL -->
-  <text x="330" y="460" font-size="22" font-weight="500" font-family="'SF Mono', 'Cascadia Code', 'Fira Code', monospace" fill="white" fill-opacity="0.5">paste.erfi.io</text>
-
-  <!-- Bottom decorative line -->
-  <rect x="80" y="560" width="1040" height="2" rx="1" fill="white" fill-opacity="0.1" />
+  <!-- Bottom rule + URL -->
+  <line x1="120" y1="500" x2="1080" y2="500" stroke="#0a0a0a" stroke-width="4"/>
+  <text x="600" y="555" font-family="Iosevka, 'Iosevka Term', 'JetBrains Mono', 'Fira Code', 'Courier New', monospace"
+        font-size="36" font-weight="700" fill="#0a0a0a" text-anchor="middle" letter-spacing="3">paste.erfi.io</text>
 </svg>

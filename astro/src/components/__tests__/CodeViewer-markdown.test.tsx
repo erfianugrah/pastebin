@@ -1,5 +1,5 @@
 // Integration test for CodeViewer's rendered-markdown panel.
-// Verifies that toggling Source ⇄ Preview produces the prose container with
+// Verifies that toggling Source ⇄ Rendered produces the prose container with
 // the customisations from lib/markdown.ts applied (heading slugs, table
 // wrapper, task list, kbd, fenced block with Prism classes).
 import { describe, it, expect, vi } from 'vitest';
@@ -56,8 +56,8 @@ describe('CodeViewer markdown integration', () => {
 	it('toggles to rendered preview and applies all markdown customisations', () => {
 		render(<CodeViewer paste={makePaste(baseMd)} />);
 
-		// Toggle Preview mode
-		fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+		// Toggle Rendered mode
+		fireEvent.click(screen.getByRole('button', { name: 'Rendered' }));
 
 		// Heading with slug id
 		const h1 = document.querySelector('h1#title');
@@ -97,7 +97,7 @@ describe('CodeViewer markdown integration', () => {
 
 	it('starts in source mode and shows the raw code <pre>', () => {
 		render(<CodeViewer paste={makePaste(baseMd)} />);
-		// No prose container before toggling Preview
+		// No prose container before toggling Rendered
 		expect(document.querySelector('.prose')).toBeNull();
 		// Source <pre> is the multiline code container
 		const sourcePre = document.querySelector('pre.line-numbers > code.language-markdown');
@@ -107,7 +107,7 @@ describe('CodeViewer markdown integration', () => {
 	it('strips script tags from markdown source via DOMPurify', () => {
 		const dirty = '# safe\n\n<script>alert(1)</script>\n\nbody';
 		render(<CodeViewer paste={makePaste(dirty)} />);
-		fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Rendered' }));
 		const prose = document.querySelector('.prose');
 		expect(prose?.innerHTML).not.toContain('<script>');
 		expect(prose?.textContent).toContain('body');

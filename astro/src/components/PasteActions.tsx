@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import { Plus, FileText, Trash2, Copy, Download, GitFork, QrCode, Code2, Pencil } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { toast } from './ui/toast';
 import { showConfirmModal } from './ui/modal';
@@ -8,9 +7,7 @@ import { hasPasteToken, loadPasteToken } from '../lib/pasteTokenStorage';
 
 // [B2] QR rendering is local-only. Previous version sent `window.location.href`
 // — including any `#key=…` E2EE fragment — as a query string to a third-party
-// QR generator. encodeURIComponent rewrote `#` to `%23`, so the decryption
-// key landed in an outbound request to api.qrserver.com. Rendering in the
-// browser keeps the fragment local to the user's device.
+// QR generator. Rendering in the browser keeps the fragment local.
 
 interface PasteActionsProps {
 	pasteId: string;
@@ -32,6 +29,21 @@ const LANG_EXT: Record<string, string> = {
 	docker: 'Dockerfile', hcl: 'tf', nginx: 'conf', jsx: 'jsx', tsx: 'tsx',
 };
 
+// ── Keyboard shortcut helper ────────────────────────────────────────
+// Activates a single-letter shortcut when:
+//   - the user is NOT typing in an input/textarea/contenteditable
+//   - no modifier keys (ctrl/meta/alt) are held — leaves Ctrl+R reload etc alone
+//   - shift is allowed for capital matches (some users hold it for muscle memory)
+function shouldHandleShortcut(e: KeyboardEvent): boolean {
+	if (e.ctrlKey || e.metaKey || e.altKey) return false;
+	const t = e.target as HTMLElement | null;
+	if (!t) return true;
+	const tag = t.tagName;
+	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
+	if (t.isContentEditable) return false;
+	return true;
+}
+
 export default function PasteActions({
 	pasteId,
 	pasteTitle,
@@ -45,9 +57,6 @@ export default function PasteActions({
 	const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 	const [qrError, setQrError] = useState<string | null>(null);
 
-	// Check if user has a saved token for this paste (means they created it).
-	// hasPasteToken is sync — it probes both the secureStorage prefix and
-	// the legacy plaintext key for a presence check without decrypting.
 	useEffect(() => {
 		setHasEditToken(hasPasteToken(pasteId));
 	}, [pasteId]);
@@ -63,7 +72,7 @@ export default function PasteActions({
 				const url = await QRCode.toDataURL(window.location.href, {
 					errorCorrectionLevel: 'M',
 					margin: 2,
-					width: 240,
+					width: 220,
 				});
 				if (!cancelled) setQrDataUrl(url);
 			} catch (err) {
@@ -80,7 +89,7 @@ export default function PasteActions({
 	const getContent = () => {
 		const text = isEncrypted ? getDecryptedContent() : getRawContent();
 		if (!text && isEncrypted) {
-			toast({ message: 'Still decrypting...', type: 'info', duration: 2000 });
+			toast({ message: 'Still decrypting…', type: 'info', duration: 2000 });
 		}
 		return text;
 	};
@@ -152,14 +161,13 @@ export default function PasteActions({
 
 	const handleDelete = async () => {
 		const confirmed = await showConfirmModal({
-			title: 'Delete Paste',
-			description: 'Are you sure? This action cannot be undone.',
+			title: 'Delete paste',
+			description: 'This action cannot be undone.',
 			confirmText: 'Delete',
 			cancelText: 'Cancel',
 			isDangerous: true,
 		});
 		if (confirmed) {
-			// Pass the delete token via sessionStorage so the delete page can use it
 			try {
 				const token = await loadPasteToken(pasteId);
 				if (token) sessionStorage.setItem('pasteriser_delete_token', token);
@@ -168,101 +176,225 @@ export default function PasteActions({
 		}
 	};
 
-	const rawUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/pastes/raw/${pasteId}`;
+	const handleNew = () => {
+		window.location.href = '/';
+	};
 
-	const embedSnippet = `<iframe src="${rawUrl}" style="width:100%;height:400px;border:1px solid #ccc;border-radius:4px;" sandbox="allow-same-origin"></iframe>`;
+	// ── Keyboard shortcuts ─────────────────────────────────────────
+	//
+	// Handlers close over `getDecryptedContent` (a prop) which is recreated
+	// each render by PasteViewer to read the latest `decryptedContent`
+	// state. If we bound the listener once and the handlers eagerly, the
+	// captured closure would forever call the FIRST render's
+	// `getDecryptedContent` — returning null even after auto-decrypt
+	// completed. To stay live: every render writes the current handlers
+	// (and the conditional flags they read) into a ref, and `onKey` looks
+	// them up on each keypress.
+	const liveRef = useRef({
+		hasEditToken,
+		isEncrypted,
+		handleCopy,
+		handleViewRaw,
+		handleDownload,
+		handleNew,
+		handleFork,
+		handleEdit,
+		handleDelete,
+		setShowPanel,
+	});
+	useEffect(() => {
+		liveRef.current = {
+			hasEditToken,
+			isEncrypted,
+			handleCopy,
+			handleViewRaw,
+			handleDownload,
+			handleNew,
+			handleFork,
+			handleEdit,
+			handleDelete,
+			setShowPanel,
+		};
+	});
+
+	useEffect(() => {
+		function onKey(e: KeyboardEvent) {
+			if (!shouldHandleShortcut(e)) return;
+			const key = e.key.toLowerCase();
+			const live = liveRef.current;
+			switch (key) {
+				case 'c': e.preventDefault(); live.handleCopy(); break;
+				case 'r': e.preventDefault(); live.handleViewRaw(); break;
+				case 's': e.preventDefault(); live.handleDownload(); break;
+				case 'n': e.preventDefault(); live.handleNew(); break;
+				case 'f': e.preventDefault(); live.handleFork(); break;
+				case 'q': e.preventDefault(); live.setShowPanel((p) => (p === 'qr' ? 'none' : 'qr')); break;
+				case 'e':
+					if (live.hasEditToken) { e.preventDefault(); live.handleEdit(); }
+					break;
+				case 'm':
+					if (!live.isEncrypted) { e.preventDefault(); live.setShowPanel((p) => (p === 'embed' ? 'none' : 'embed')); }
+					break;
+				case 'x':
+					if (e.shiftKey) { e.preventDefault(); live.handleDelete(); }
+					break;
+			}
+		}
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, []);
+
+	const rawUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/pastes/raw/${pasteId}`;
+	const embedSnippet = `<iframe src="${rawUrl}" style="width:100%;height:400px;border:1px solid #ccc;" sandbox="allow-same-origin"></iframe>`;
 	const scriptSnippet = `<script src="${rawUrl}" defer><\/script>`;
 
 	return (
-		<>
-			{/* ── Action buttons — icon-only on mobile, icon+label on desktop ── */}
-			<div className="mt-4 pt-4 border-t border-border flex flex-wrap items-center gap-1.5 sm:gap-2">
-				<Button variant="outline" size="sm" asChild>
-					<a href="/"><Plus className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">New</span></a>
-				</Button>
-				{hasEditToken && (
-					<Button variant="outline" size="sm" onClick={handleEdit}>
-						<Pencil className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Edit</span>
-					</Button>
-				)}
-				<Button variant="outline" size="sm" onClick={handleFork}>
-					<GitFork className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Fork</span>
-				</Button>
-				<Button variant="outline" size="sm" onClick={handleViewRaw}>
-					<FileText className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Raw</span>
-				</Button>
-				<Button variant="outline" size="sm" onClick={handleCopy}>
-					<Copy className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Copy</span>
-				</Button>
-				<Button variant="outline" size="sm" onClick={handleDownload}>
-					<Download className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Download</span>
-				</Button>
-				<Button variant="outline" size="sm" onClick={() => setShowPanel(showPanel === 'qr' ? 'none' : 'qr')}>
-					<QrCode className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">QR</span>
-				</Button>
-				{!isEncrypted && (
-					<Button variant="outline" size="sm" onClick={() => setShowPanel(showPanel === 'embed' ? 'none' : 'embed')}>
-						<Code2 className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Embed</span>
-					</Button>
-				)}
-				<div className="flex-1" />
-				<Button variant="destructive" size="sm" onClick={handleDelete}>
-					<Trash2 className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Delete</span>
-				</Button>
+		<div className="mt-3 animate-fade-in">
+			{/* ── Action bar — single row, text labels, key hints ── */}
+			<div className="border border-border bg-card">
+				<div className="border-b border-border px-3 py-1 bg-card-alt flex items-center justify-between">
+					<span className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">
+						Actions
+					</span>
+					<span className="text-[10px] uppercase tracking-wide text-muted-foreground hidden sm:inline">
+						Shortcuts: <kbd>c</kbd>opy <kbd>r</kbd>aw <kbd>s</kbd>ave <kbd>n</kbd>ew <kbd>f</kbd>ork <kbd>q</kbd>r{hasEditToken && <> <kbd>e</kbd>dit</>}{!isEncrypted && <> e<kbd>m</kbd>bed</>} <kbd>shift+x</kbd> delete
+					</span>
+				</div>
+				<div className="px-2 py-1.5 flex flex-wrap items-center gap-1">
+					<ActionButton onClick={handleCopy} hint="c">Copy</ActionButton>
+					<ActionButton onClick={handleViewRaw} hint="r">Raw</ActionButton>
+					<ActionButton onClick={handleDownload} hint="s">Download</ActionButton>
+					<ActionButton onClick={handleNew} hint="n">New</ActionButton>
+					{hasEditToken && <ActionButton onClick={handleEdit} hint="e">Edit</ActionButton>}
+					<ActionButton onClick={handleFork} hint="f">Fork</ActionButton>
+					<ActionButton onClick={() => setShowPanel(showPanel === 'qr' ? 'none' : 'qr')} hint="q" active={showPanel === 'qr'}>QR</ActionButton>
+					{!isEncrypted && (
+						<ActionButton onClick={() => setShowPanel(showPanel === 'embed' ? 'none' : 'embed')} hint="m" active={showPanel === 'embed'}>Embed</ActionButton>
+					)}
+					<span className="flex-1" />
+					<button
+						type="button"
+						onClick={handleDelete}
+						className="btn h-7 px-2 text-xs border border-destructive bg-card text-destructive hover:bg-destructive hover:text-destructive-foreground inline-flex items-center gap-1.5"
+					>
+						<span>Delete</span>
+						<kbd className="text-[10px]">⇧x</kbd>
+					</button>
+				</div>
 			</div>
 
-			{/* ── QR Code panel — rendered locally, never sent to a third party ── */}
+			{/* ── QR Code panel ───────────────────────────────────── */}
 			{showPanel === 'qr' && (
-				<div className="mt-3 flex flex-col items-center gap-2 p-4 rounded-lg border border-border bg-card animate-fade-in">
-					{qrError && <p className="text-xs text-destructive">QR error: {qrError}</p>}
-					{!qrError && qrDataUrl && (
-						<img
-							src={qrDataUrl}
-							alt="QR Code"
-							width={240}
-							height={240}
-							className="rounded bg-white p-2"
-						/>
-					)}
-					{!qrError && !qrDataUrl && (
-						<div className="h-[240px] w-[240px] rounded bg-muted animate-pulse" aria-label="Generating QR code" />
-					)}
-					<p className="text-xs text-muted-foreground">Scan to open this paste</p>
+				<div className="mt-2 border border-border bg-card animate-fade-in">
+					<div className="border-b border-border px-3 py-1 bg-card-alt flex items-center justify-between">
+						<span className="text-[10px] uppercase tracking-wide font-semibold">QR code — share URL</span>
+						<button
+							onClick={() => setShowPanel('none')}
+							className="text-xs text-muted-foreground hover:text-foreground"
+							aria-label="Close"
+						>
+							[×]
+						</button>
+					</div>
+					<div className="px-3 py-3 flex flex-col items-center gap-2">
+						{qrError && <p className="text-xs text-destructive">QR error: {qrError}</p>}
+						{!qrError && qrDataUrl && (
+							<img
+								src={qrDataUrl}
+								alt="QR Code"
+								width={220}
+								height={220}
+								className="bg-white p-2 border border-border-strong"
+							/>
+						)}
+						{!qrError && !qrDataUrl && (
+							<div className="h-[220px] w-[220px] bg-muted" aria-label="Generating QR code" />
+						)}
+						<p className="text-xs text-muted-foreground">Scan to open this paste</p>
+					</div>
 				</div>
 			)}
 
-			{/* ── Embed panel ── */}
+			{/* ── Embed panel ─────────────────────────────────────── */}
 			{showPanel === 'embed' && (
-				<div className="mt-3 p-4 rounded-lg border border-border bg-card animate-fade-in space-y-3">
-					<p className="text-sm font-medium">Embed this paste</p>
-
-					<div>
-						<label className="text-xs text-muted-foreground mb-1 block">iframe</label>
-						<div className="flex items-center gap-2">
-							<code className="flex-1 text-xs bg-muted rounded-md p-2 overflow-x-auto whitespace-nowrap block">{embedSnippet}</code>
-							<Button variant="ghost" size="sm" onClick={() => {
-								navigator.clipboard.writeText(embedSnippet);
-								toast({ message: 'Embed code copied!', type: 'success', duration: 2000 });
-							}}>
-								<Copy className="h-3.5 w-3.5" />
-							</Button>
-						</div>
+				<div className="mt-2 border border-border bg-card animate-fade-in">
+					<div className="border-b border-border px-3 py-1 bg-card-alt flex items-center justify-between">
+						<span className="text-[10px] uppercase tracking-wide font-semibold">Embed snippets</span>
+						<button
+							onClick={() => setShowPanel('none')}
+							className="text-xs text-muted-foreground hover:text-foreground"
+							aria-label="Close"
+						>
+							[×]
+						</button>
 					</div>
+					<div className="px-3 py-3 space-y-3">
+						<div>
+							<label className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 block">iframe</label>
+							<div className="flex items-stretch border border-border bg-card-alt">
+								<code className="flex-1 px-2 py-1 text-xs font-mono overflow-x-auto whitespace-nowrap">{embedSnippet}</code>
+								<button
+									className="btn px-2 border-l border-border text-xs uppercase tracking-wide hover:bg-muted"
+									onClick={() => {
+										navigator.clipboard.writeText(embedSnippet);
+										toast({ message: 'Embed copied!', type: 'success', duration: 2000 });
+									}}
+								>
+									Copy
+								</button>
+							</div>
+						</div>
 
-					<div>
-						<label className="text-xs text-muted-foreground mb-1 block">Script tag (raw content)</label>
-						<div className="flex items-center gap-2">
-							<code className="flex-1 text-xs bg-muted rounded-md p-2 overflow-x-auto whitespace-nowrap block">{scriptSnippet}</code>
-							<Button variant="ghost" size="sm" onClick={() => {
-								navigator.clipboard.writeText(scriptSnippet);
-								toast({ message: 'Script tag copied!', type: 'success', duration: 2000 });
-							}}>
-								<Copy className="h-3.5 w-3.5" />
-							</Button>
+						<div>
+							<label className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 block">Script tag (raw)</label>
+							<div className="flex items-stretch border border-border bg-card-alt">
+								<code className="flex-1 px-2 py-1 text-xs font-mono overflow-x-auto whitespace-nowrap">{scriptSnippet}</code>
+								<button
+									className="btn px-2 border-l border-border text-xs uppercase tracking-wide hover:bg-muted"
+									onClick={() => {
+										navigator.clipboard.writeText(scriptSnippet);
+										toast({ message: 'Script tag copied!', type: 'success', duration: 2000 });
+									}}
+								>
+									Copy
+								</button>
+							</div>
 						</div>
 					</div>
 				</div>
 			)}
-		</>
+		</div>
+	);
+}
+
+// ── Individual action button with key hint ──────────────────────────
+function ActionButton({
+	children,
+	hint,
+	onClick,
+	active,
+	className,
+}: {
+	children: React.ReactNode;
+	hint?: string;
+	onClick: () => void;
+	active?: boolean;
+	className?: string;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={cn(
+				'btn h-7 px-2 text-xs border inline-flex items-center gap-1.5',
+				active
+					? 'border-primary-hover bg-primary text-primary-foreground'
+					: 'border-input bg-card text-foreground hover:bg-primary hover:border-primary hover:text-primary-foreground',
+				className,
+			)}
+		>
+			<span>{children}</span>
+			{hint && <kbd className="text-[10px]">{hint}</kbd>}
+		</button>
 	);
 }

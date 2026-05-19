@@ -1,39 +1,15 @@
-<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background circle with gradient -->
-  <rect width="256" height="256" rx="60" fill="url(#paint0_linear)"/>
-  
-  <!-- Code brackets -->
-  <path d="M90 76L56 128L90 180" stroke="white" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M166 76L200 128L166 180" stroke="white" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
-  
-  <!-- Slash code -->
-  <path d="M140 64L116 192" stroke="white" stroke-width="16" stroke-linecap="round" />
-  
-  <!-- Gradient definition -->
-  <defs>
-    <linearGradient id="paint0_linear" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4F46E5" />
-      <stop offset="1" stop-color="#3B82F6" />
-    </linearGradient>
-    
-    <!-- Add a dark mode variant -->
-    <style>
-      @media (prefers-color-scheme: dark) {
-        rect {
-          fill: url(#paint0_linear);
-        }
-        path {
-          stroke: white;
-        }
-      }
-      @media (prefers-color-scheme: light) {
-        rect {
-          fill: url(#paint0_linear);
-        }
-        path {
-          stroke: white;
-        }
-      }
-    </style>
-  </defs>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Pasteriser brutalist favicon.
+    Yellow square + hard black border + blocky "P" mark drawn with
+    rectangles only (no font dependency for SVG-to-PNG rasterisation).
+    Tokens match the UI: bg #ffcc00 (primary), fg #0a0a0a (foreground).
+  -->
+  <rect width="256" height="256" fill="#ffcc00"/>
+  <rect x="0" y="0" width="256" height="256" fill="none" stroke="#0a0a0a" stroke-width="16"/>
+  <!-- P glyph: stem + top arm + right side of bowl + closing arm -->
+  <rect x="56"  y="56"  width="32"  height="144" fill="#0a0a0a"/>
+  <rect x="56"  y="56"  width="120" height="32"  fill="#0a0a0a"/>
+  <rect x="144" y="56"  width="32"  height="96"  fill="#0a0a0a"/>
+  <rect x="56"  y="120" width="120" height="32"  fill="#0a0a0a"/>
 </svg>

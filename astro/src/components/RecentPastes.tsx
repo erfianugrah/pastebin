@@ -1,6 +1,4 @@
-import { useState, useEffect } from 'react';
-import { AlertCircle, Plus, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
-import { Card, CardContent } from './ui/card';
+import { useState, useEffect, useMemo } from 'react';
 import { Button } from './ui/button';
 import { T } from '../lib/typography';
 import { cn } from '../lib/utils';
@@ -13,35 +11,27 @@ interface Paste {
 	readCount: number;
 }
 
-const PAGE_SIZE = 10;
-const POLL_INTERVAL_MS = 15_000; // refresh the list every 15s
+const PAGE_SIZE = 25;
+const POLL_INTERVAL_MS = 15_000;
+
+type SortField = 'title' | 'language' | 'reads' | 'created';
+type SortDir = 'asc' | 'desc';
 
 function formatDate(date: Date): string {
 	return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function LoadingSkeleton() {
-	return (
-		<div className="space-y-3">
-			{Array.from({ length: 5 }).map((_, i) => (
-				<Card key={i}>
-					<CardContent className="p-4">
-						<div className="flex flex-col md:flex-row justify-between gap-3">
-							<div className="space-y-2 flex-1">
-								<div className="h-5 w-48 rounded-md bg-muted animate-pulse" />
-								<div className="flex gap-3">
-									<div className="h-4 w-24 rounded-md bg-muted animate-pulse" />
-									<div className="h-4 w-16 rounded-md bg-muted animate-pulse" />
-									<div className="h-4 w-14 rounded-md bg-muted animate-pulse" />
-								</div>
-							</div>
-							<div className="h-8 w-14 rounded-md bg-muted animate-pulse" />
-						</div>
-					</CardContent>
-				</Card>
-			))}
-		</div>
-	);
+function relativeAge(date: Date): string {
+	const ms = Date.now() - date.getTime();
+	const s = Math.floor(ms / 1000);
+	if (s < 60) return `${s}s ago`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return `${m}m ago`;
+	const h = Math.floor(m / 60);
+	if (h < 24) return `${h}h ago`;
+	const d = Math.floor(h / 24);
+	if (d < 30) return `${d}d ago`;
+	return formatDate(date);
 }
 
 export default function RecentPastes() {
@@ -49,6 +39,8 @@ export default function RecentPastes() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [page, setPage] = useState(0);
+	const [sortField, setSortField] = useState<SortField>('created');
+	const [sortDir, setSortDir] = useState<SortDir>('desc');
 
 	useEffect(() => {
 		let cancelled = false;
@@ -56,7 +48,7 @@ export default function RecentPastes() {
 
 		async function load() {
 			try {
-				const response = await fetch(`/api/recent?limit=100&_=${Date.now()}`);
+				const response = await fetch(`/api/recent?limit=200&_=${Date.now()}`);
 				if (cancelled) return;
 				if (!response.ok) throw new Error('Failed to fetch recent pastes');
 				const data = (await response.json()) as { pastes?: Paste[] };
@@ -64,18 +56,12 @@ export default function RecentPastes() {
 				setError(null);
 			} catch {
 				if (cancelled) return;
-				setError('There was an error loading recent pastes. Please try again later.');
+				setError('Failed to load recent pastes.');
 			} finally {
 				if (!cancelled) setLoading(false);
 			}
 		}
 
-		// Visibility-aware polling. A user with the tab in the background
-		// previously kept hitting /api/recent four times a minute for hours
-		// — wasted Supabase round-trips and Worker invocations. Pause when
-		// the tab is hidden; resume + kick a single fresh load when it
-		// becomes visible again (covers the "left tab open overnight" case
-		// where stale data is much more annoying than a missed tick).
 		function startPolling() {
 			if (pollHandle != null) return;
 			pollHandle = setInterval(load, POLL_INTERVAL_MS);
@@ -95,9 +81,7 @@ export default function RecentPastes() {
 		}
 
 		void load();
-		if (document.visibilityState === 'visible') {
-			startPolling();
-		}
+		if (document.visibilityState === 'visible') startPolling();
 		document.addEventListener('visibilitychange', onVisibility);
 
 		return () => {
@@ -107,88 +91,147 @@ export default function RecentPastes() {
 		};
 	}, []);
 
-	if (loading) return <LoadingSkeleton />;
+	const sorted = useMemo(() => {
+		const arr = [...pastes];
+		arr.sort((a, b) => {
+			let cmp = 0;
+			switch (sortField) {
+				case 'title':
+					cmp = (a.title || '').localeCompare(b.title || '');
+					break;
+				case 'language':
+					cmp = (a.language || '').localeCompare(b.language || '');
+					break;
+				case 'reads':
+					cmp = a.readCount - b.readCount;
+					break;
+				case 'created':
+					cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+					break;
+			}
+			return sortDir === 'asc' ? cmp : -cmp;
+		});
+		return arr;
+	}, [pastes, sortField, sortDir]);
+
+	const toggleSort = (field: SortField) => {
+		if (sortField === field) {
+			setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		} else {
+			setSortField(field);
+			setSortDir(field === 'title' || field === 'language' ? 'asc' : 'desc');
+		}
+	};
+
+	if (loading) {
+		return <p className={T.mutedSm}>Loading…</p>;
+	}
 
 	if (error) {
 		return (
-			<div className="py-12 text-center">
-				<div className="mx-auto rounded-full w-14 h-14 bg-destructive/10 flex items-center justify-center mb-4">
-					<AlertCircle className="h-6 w-6 text-destructive" />
-				</div>
-				<h2 className={T.emptyTitle}>Error Loading Pastes</h2>
-				<p className={T.emptyDescription}>{error}</p>
-				<Button variant="outline" onClick={() => window.location.reload()}>Try Again</Button>
+			<div className="notice notice-destructive">
+				<span className="text-xs font-bold uppercase tracking-wide shrink-0">ERROR</span>
+				<span className="text-xs">{error}</span>
+				<button onClick={() => window.location.reload()} className="ml-auto text-xs underline">Retry</button>
 			</div>
 		);
 	}
 
 	if (pastes.length === 0) {
 		return (
-			<div className="py-12 text-center">
-				<div className="mx-auto rounded-full w-14 h-14 bg-muted flex items-center justify-center mb-4">
-					<Plus className="h-6 w-6 text-muted-foreground" />
-				</div>
-				<h2 className={T.emptyTitle}>No Public Pastes Found</h2>
-				<p className={cn(T.emptyDescription, 'mx-auto')}>
-					Create a new paste with public visibility to have it appear here.
-				</p>
-				<Button asChild><a href="/">Create New Paste</a></Button>
+			<div className="border border-border bg-card px-4 py-8 text-center">
+				<p className="text-sm mb-3">No public pastes yet.</p>
+				<Button variant="primary" asChild>
+					<a href="/" className="no-underline">Create a paste →</a>
+				</Button>
 			</div>
 		);
 	}
 
-	// Pagination
-	const totalPages = Math.ceil(pastes.length / PAGE_SIZE);
-	const paginated = pastes.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+	const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+	const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
 	return (
-		<div className="space-y-3">
-			{paginated.map((paste, i) => (
-				<Card
-					key={paste.id}
-					className="animate-fade-in-up opacity-0 overflow-hidden"
-					style={{ animationDelay: `${i * 40}ms` }}
-				>
-					<CardContent className="p-4 flex flex-col md:flex-row justify-between gap-2">
-						<div className="min-w-0">
-							<h3 className={cn(T.pasteTitle, 'text-base truncate')}>{paste.title || 'Untitled Paste'}</h3>
-							<div className={cn(T.metaRow, 'mt-1 text-xs')}>
-								<span>{formatDate(new Date(paste.createdAt))}</span>
-								{paste.language && (
-									<span className="badge bg-muted text-muted-foreground">{paste.language}</span>
-								)}
-								<span className="inline-flex items-center gap-1">
-									<Eye className="h-3 w-3" /> {paste.readCount}
-								</span>
-							</div>
-						</div>
-						<div className="flex items-start">
-							<Button size="sm" asChild>
-								<a href={`/pastes/${paste.id}`}>View</a>
-							</Button>
-						</div>
-					</CardContent>
-				</Card>
-			))}
+		<div className="animate-fade-in">
+			<div className="overflow-x-auto">
+				<table className="table-utility">
+					<thead>
+						<tr>
+							<SortHeader field="title" current={sortField} dir={sortDir} onClick={toggleSort}>Title</SortHeader>
+							<SortHeader field="language" current={sortField} dir={sortDir} onClick={toggleSort}>Lang</SortHeader>
+							<SortHeader field="reads" current={sortField} dir={sortDir} onClick={toggleSort} className="text-right">Reads</SortHeader>
+							<SortHeader field="created" current={sortField} dir={sortDir} onClick={toggleSort}>Age</SortHeader>
+							<th className="col-actions">Action</th>
+						</tr>
+					</thead>
+					<tbody>
+						{paginated.map((paste) => (
+							<tr key={paste.id}>
+								<td className="font-medium max-w-xs">
+									<a href={`/pastes/${paste.id}`} className="text-link hover:underline truncate block">
+										{paste.title || 'Untitled'}
+									</a>
+								</td>
+								<td className="text-muted-foreground text-xs">{paste.language || '—'}</td>
+								<td className="text-right font-mono">{paste.readCount}</td>
+								<td className="text-muted-foreground text-xs whitespace-nowrap">{relativeAge(new Date(paste.createdAt))}</td>
+								<td className="col-actions">
+									<a href={`/pastes/${paste.id}`} className="text-link no-underline hover:underline text-xs uppercase tracking-wide">
+										View →
+									</a>
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
 
 			{totalPages > 1 && (
-				<div className="flex items-center justify-center gap-2 pt-2">
-					<Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(page - 1)}>
-						<ChevronLeft className="h-4 w-4" />
-					</Button>
-					<span className={T.muted}>
-						{page + 1} / {totalPages}
+				<div className="flex items-center justify-between gap-2 pt-3 text-xs">
+					<span className="text-muted-foreground">
+						Page <span className="font-mono">{page + 1}</span> of <span className="font-mono">{totalPages}</span> · <span className="font-mono">{sorted.length}</span> pastes
 					</span>
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={page >= totalPages - 1}
-						onClick={() => setPage(page + 1)}
-					>
-						<ChevronRight className="h-4 w-4" />
-					</Button>
+					<div className="flex items-center gap-1">
+						<Button size="sm" disabled={page === 0} onClick={() => setPage(page - 1)}>
+							← Prev
+						</Button>
+						<Button size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(page + 1)}>
+							Next →
+						</Button>
+					</div>
 				</div>
 			)}
 		</div>
+	);
+}
+
+// ── Sortable header cell ────────────────────────────────────────────
+function SortHeader({
+	field,
+	current,
+	dir,
+	onClick,
+	children,
+	className,
+}: {
+	field: SortField;
+	current: SortField;
+	dir: SortDir;
+	onClick: (f: SortField) => void;
+	children: React.ReactNode;
+	className?: string;
+}) {
+	const isCurrent = current === field;
+	return (
+		<th
+			className={cn('sortable', isCurrent && 'sorted', className)}
+			onClick={() => onClick(field)}
+			aria-sort={isCurrent ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+		>
+			{children}
+			<span className="sort-arrow font-mono" aria-hidden="true">
+				{isCurrent ? (dir === 'asc' ? '↑' : '↓') : '·'}
+			</span>
+		</th>
 	);
 }

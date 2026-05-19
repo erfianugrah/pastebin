@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Loader2, AlertCircle } from 'lucide-react';
 import { Button } from './ui/button';
 import { T } from '../lib/typography';
 import CodeViewer from './CodeViewer';
@@ -45,7 +44,6 @@ export default function PasteViewer() {
 
 		async function fetchPaste() {
 			try {
-				// For vanity URLs, fetch via /p/:slug; for normal, /pastes/:id
 				const fetchUrl = isVanity ? `/p/${idOrSlug}` : `/pastes/${idOrSlug}`;
 				const response = await fetch(fetchUrl, {
 					headers: { Accept: 'application/json' },
@@ -74,9 +72,8 @@ export default function PasteViewer() {
 	// ── Loading ──────────────────────────────────────────────────────
 	if (state === 'loading') {
 		return (
-			<div className="flex flex-col items-center justify-center py-16 animate-fade-in">
-				<Loader2 className="h-6 w-6 animate-spin text-muted-foreground mb-3" />
-				<p className={T.mutedSm}>Loading paste...</p>
+			<div className="py-12 text-center animate-fade-in">
+				<p className={T.mutedSm}>Loading paste…</p>
 			</div>
 		);
 	}
@@ -84,24 +81,27 @@ export default function PasteViewer() {
 	// ── Error ────────────────────────────────────────────────────────
 	if (state === 'error' || !paste) {
 		return (
-			<div className="flex flex-col items-center justify-center py-16 text-center animate-fade-in">
-				<div className="rounded-full bg-destructive/10 p-3 mb-4">
-					<AlertCircle className="h-6 w-6 text-destructive" />
+			<div className="border border-destructive bg-card animate-fade-in">
+				<div className="border-b border-destructive px-4 py-2 bg-card-alt">
+					<span className="text-xs font-bold uppercase tracking-wide text-destructive">
+						× Paste not found
+					</span>
 				</div>
-				<h2 className={T.emptyTitle}>Paste Not Found</h2>
-				<p className={T.emptyDescription}>
-					This paste may have expired, been deleted, or never existed.
-				</p>
-				<Button asChild>
-					<a href="/">Create a new paste</a>
-				</Button>
+				<div className="px-4 py-3 space-y-3">
+					<p className="text-sm">
+						This paste may have expired, been deleted, or never existed.
+					</p>
+					<Button variant="primary" asChild>
+						<a href="/" className="no-underline">New paste →</a>
+					</Button>
+				</div>
 			</div>
 		);
 	}
 
 	// ── Ready ────────────────────────────────────────────────────────
 	return (
-		<div className="max-w-[900px] mx-auto animate-fade-in">
+		<div className="animate-fade-in">
 			<CodeViewer
 				paste={paste}
 				onDecrypted={setDecryptedContent}

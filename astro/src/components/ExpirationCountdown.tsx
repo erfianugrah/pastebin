@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Clock } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface ExpirationCountdownProps {
@@ -36,7 +35,7 @@ export function ExpirationCountdown({ expiresAt, className = '' }: ExpirationCou
 	}, [expiresAt]);
 
 	const format = () => {
-		if (timeLeft.expired) return 'Expired';
+		if (timeLeft.expired) return 'expired';
 		if (timeLeft.days > 0) return `${timeLeft.days}d ${timeLeft.hours}h`;
 		if (timeLeft.hours > 0) return `${timeLeft.hours}h ${timeLeft.minutes}m`;
 		if (timeLeft.minutes > 0) return `${timeLeft.minutes}m ${timeLeft.seconds}s`;
@@ -46,19 +45,18 @@ export function ExpirationCountdown({ expiresAt, className = '' }: ExpirationCou
 	return (
 		<span
 			className={cn(
-				'inline-flex items-center gap-1',
+				'font-mono',
 				timeLeft.expired
-					? 'text-red-600 dark:text-red-400 font-bold'
+					? 'text-destructive font-bold'
 					: isNearExpiry
-						? 'text-red-600 dark:text-red-400'
+						? 'text-destructive'
 						: timeLeft.days > 1
-							? 'text-muted-foreground'
-							: 'text-amber-600 dark:text-amber-400',
+							? 'text-foreground'
+							: 'text-warning',
 				className,
 			)}
 		>
-			<Clock className="h-3.5 w-3.5" />
-			{timeLeft.expired ? 'Expired' : `Expires in ${format()}`}
+			{format()}
 		</span>
 	);
 }

@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
-import { AlertCircle, Eye, Trash2, Lock, Globe, LogIn, Plus } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { T } from '../lib/typography';
 import { cn } from '../lib/utils';
+import { showConfirmModal } from './ui/modal';
+import { toast } from './ui/toast';
 
 interface MyPaste {
 	id: string;
@@ -16,13 +16,25 @@ interface MyPaste {
 	expires_at: string;
 }
 
-function formatDate(date: Date): string {
+const FETCH_OPTS: RequestInit = { credentials: 'same-origin' };
+const PAGE_SIZE = 50;
+
+type SortField = 'title' | 'visibility' | 'language' | 'reads' | 'created' | 'expires';
+type SortDir = 'asc' | 'desc';
+
+function relativeAge(date: Date, future = false): string {
+	const ms = future ? date.getTime() - Date.now() : Date.now() - date.getTime();
+	if (ms < 0) return future ? 'expired' : 'just now';
+	const s = Math.floor(ms / 1000);
+	if (s < 60) return future ? `in ${s}s` : `${s}s ago`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return future ? `in ${m}m` : `${m}m ago`;
+	const h = Math.floor(m / 60);
+	if (h < 24) return future ? `in ${h}h` : `${h}h ago`;
+	const d = Math.floor(h / 24);
+	if (d < 30) return future ? `in ${d}d` : `${d}d ago`;
 	return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
-
-const FETCH_OPTS: RequestInit = { credentials: 'same-origin' };
-
-const PAGE_SIZE = 50;
 
 export default function MyPastes() {
 	const { user, loading: authLoading } = useAuth();
@@ -31,6 +43,8 @@ export default function MyPastes() {
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [nextCursor, setNextCursor] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [sortField, setSortField] = useState<SortField>('created');
+	const [sortDir, setSortDir] = useState<SortDir>('desc');
 
 	useEffect(() => {
 		if (authLoading) return;
@@ -87,10 +101,15 @@ export default function MyPastes() {
 	}
 
 	async function handleDelete(id: string) {
-		if (!confirm('Delete this paste? This cannot be undone.')) return;
+		const confirmed = await showConfirmModal({
+			title: 'Delete paste',
+			description: 'This action cannot be undone.',
+			confirmText: 'Delete',
+			cancelText: 'Cancel',
+			isDangerous: true,
+		});
+		if (!confirmed) return;
 
-		// Use the existing /pastes/:id/delete endpoint. Worker reads the
-		// session cookie and authorizes the delete via user_id match.
 		const res = await fetch(`/pastes/${id}/delete`, {
 			method: 'DELETE',
 			...FETCH_OPTS,
@@ -98,37 +117,61 @@ export default function MyPastes() {
 
 		if (!res.ok) {
 			const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-			alert(`Delete failed: ${body.error?.message ?? `HTTP ${res.status}`}`);
+			toast({ message: `Delete failed: ${body.error?.message ?? `HTTP ${res.status}`}`, type: 'error' });
 			return;
 		}
 		setPastes((prev) => prev.filter((p) => p.id !== id));
+		toast({ message: 'Deleted.', type: 'success' });
 	}
 
+	const sorted = useMemo(() => {
+		const arr = [...pastes];
+		arr.sort((a, b) => {
+			let cmp = 0;
+			switch (sortField) {
+				case 'title':
+					cmp = (a.title || '').localeCompare(b.title || '');
+					break;
+				case 'visibility':
+					cmp = a.visibility.localeCompare(b.visibility);
+					break;
+				case 'language':
+					cmp = (a.language || '').localeCompare(b.language || '');
+					break;
+				case 'reads':
+					cmp = a.read_count - b.read_count;
+					break;
+				case 'created':
+					cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+					break;
+				case 'expires':
+					cmp = new Date(a.expires_at).getTime() - new Date(b.expires_at).getTime();
+					break;
+			}
+			return sortDir === 'asc' ? cmp : -cmp;
+		});
+		return arr;
+	}, [pastes, sortField, sortDir]);
+
+	const toggleSort = (field: SortField) => {
+		if (sortField === field) {
+			setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		} else {
+			setSortField(field);
+			setSortDir(field === 'title' || field === 'visibility' || field === 'language' ? 'asc' : 'desc');
+		}
+	};
+
 	if (authLoading || loading) {
-		return (
-			<div className="space-y-3">
-				{Array.from({ length: 3 }).map((_, i) => (
-					<Card key={i}>
-						<CardContent className="p-4">
-							<div className="h-5 w-48 rounded-md bg-muted animate-pulse mb-2" />
-							<div className="h-4 w-32 rounded-md bg-muted animate-pulse" />
-						</CardContent>
-					</Card>
-				))}
-			</div>
-		);
+		return <p className={T.mutedSm}>Loading…</p>;
 	}
 
 	if (!user) {
 		return (
-			<div className="py-12 text-center">
-				<div className="mx-auto rounded-full w-14 h-14 bg-muted flex items-center justify-center mb-4">
-					<LogIn className="h-6 w-6 text-muted-foreground" />
-				</div>
-				<h2 className={T.emptyTitle}>Sign in required</h2>
-				<p className={cn(T.emptyDescription, 'mx-auto')}>Log in to see your saved pastes.</p>
-				<Button asChild>
-					<a href="/login">Log in</a>
+			<div className="border border-border bg-card px-4 py-8 text-center">
+				<p className="text-sm mb-3">Sign in to see your saved pastes.</p>
+				<Button variant="primary" asChild>
+					<a href="/login" className="no-underline">Log in →</a>
 				</Button>
 			</div>
 		);
@@ -136,87 +179,115 @@ export default function MyPastes() {
 
 	if (error) {
 		return (
-			<div className="py-12 text-center">
-				<div className="mx-auto rounded-full w-14 h-14 bg-destructive/10 flex items-center justify-center mb-4">
-					<AlertCircle className="h-6 w-6 text-destructive" />
-				</div>
-				<h2 className={T.emptyTitle}>Error</h2>
-				<p className={T.emptyDescription}>{error}</p>
+			<div className="notice notice-destructive">
+				<span className="text-xs font-bold uppercase tracking-wide shrink-0">ERROR</span>
+				<span className="text-xs">{error}</span>
 			</div>
 		);
 	}
 
 	if (pastes.length === 0) {
 		return (
-			<div className="py-12 text-center">
-				<h2 className={T.emptyTitle}>No pastes yet</h2>
-				<p className={cn(T.emptyDescription, 'mx-auto')}>
-					Pastes you create while signed in will appear here.
-				</p>
-				<Button asChild>
-					<a href="/">Create your first paste</a>
+			<div className="border border-border bg-card px-4 py-8 text-center">
+				<p className="text-sm mb-3">No pastes yet. Pastes you create while signed in appear here.</p>
+				<Button variant="primary" asChild>
+					<a href="/" className="no-underline">Create your first paste →</a>
 				</Button>
 			</div>
 		);
 	}
 
 	return (
-		<div className="space-y-3">
+		<div className="animate-fade-in space-y-3">
 			<div className="flex items-center justify-between gap-3">
-				<p className="text-sm text-muted-foreground">
-					{pastes.length} paste{pastes.length === 1 ? '' : 's'}
+				<p className="text-xs text-muted-foreground uppercase tracking-wide">
+					<span className="font-mono">{pastes.length}</span> paste{pastes.length === 1 ? '' : 's'}
 				</p>
-				<Button asChild size="sm" variant="outline">
-					<a href="/">
-						<Plus className="h-4 w-4" />
-						New paste
-					</a>
+				<Button variant="primary" asChild>
+					<a href="/" className="no-underline">+ New paste</a>
 				</Button>
 			</div>
-			{pastes.map((p) => (
-				<Card key={p.id}>
-					<CardContent className="p-4 flex flex-col md:flex-row justify-between gap-2">
-						<div className="min-w-0">
-							<h3 className={cn(T.pasteTitle, 'text-base truncate flex items-center gap-2')}>
-								{p.visibility === 'public' ? (
-									<Globe className="h-4 w-4 text-muted-foreground" />
-								) : (
-									<Lock className="h-4 w-4 text-muted-foreground" />
-								)}
-								{p.title || 'Untitled Paste'}
-							</h3>
-							<div className={cn(T.metaRow, 'mt-1 text-xs')}>
-								<span>{formatDate(new Date(p.created_at))}</span>
-								{p.language && <span className="badge bg-muted text-muted-foreground">{p.language}</span>}
-								<span className="inline-flex items-center gap-1">
-									<Eye className="h-3 w-3" /> {p.read_count}
-								</span>
-							</div>
-						</div>
-						<div className="flex items-start gap-2">
-							<Button size="sm" variant="outline" asChild>
-								<a href={`/pastes/${p.id}`}>View</a>
-							</Button>
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() => handleDelete(p.id)}
-								aria-label="Delete paste"
-								title="Delete"
-							>
-								<Trash2 className="h-4 w-4" />
-							</Button>
-						</div>
-					</CardContent>
-				</Card>
-			))}
+
+			<div className="overflow-x-auto">
+				<table className="table-utility">
+					<thead>
+						<tr>
+							<SortHeader field="title" current={sortField} dir={sortDir} onClick={toggleSort}>Title</SortHeader>
+							<SortHeader field="visibility" current={sortField} dir={sortDir} onClick={toggleSort}>Vis</SortHeader>
+							<SortHeader field="language" current={sortField} dir={sortDir} onClick={toggleSort}>Lang</SortHeader>
+							<SortHeader field="reads" current={sortField} dir={sortDir} onClick={toggleSort} className="text-right">Reads</SortHeader>
+							<SortHeader field="created" current={sortField} dir={sortDir} onClick={toggleSort}>Age</SortHeader>
+							<SortHeader field="expires" current={sortField} dir={sortDir} onClick={toggleSort}>Expires</SortHeader>
+							<th className="col-actions">Actions</th>
+						</tr>
+					</thead>
+					<tbody>
+						{sorted.map((p) => (
+							<tr key={p.id}>
+								<td className="font-medium max-w-xs">
+									<a href={`/pastes/${p.id}`} className="text-link hover:underline truncate block">
+										{p.title || 'Untitled'}
+									</a>
+								</td>
+								<td className="text-xs">
+									<span className={cn('badge', p.visibility === 'private' && 'badge-warning')}>
+										{p.visibility === 'private' ? 'priv' : 'pub'}
+									</span>
+								</td>
+								<td className="text-muted-foreground text-xs">{p.language || '—'}</td>
+								<td className="text-right font-mono">{p.read_count}</td>
+								<td className="text-muted-foreground text-xs whitespace-nowrap">{relativeAge(new Date(p.created_at))}</td>
+								<td className="text-muted-foreground text-xs whitespace-nowrap">{relativeAge(new Date(p.expires_at), true)}</td>
+								<td className="col-actions text-xs uppercase tracking-wide whitespace-nowrap">
+									<a href={`/pastes/${p.id}`} className="text-link no-underline hover:underline mr-2">View</a>
+									<button onClick={() => handleDelete(p.id)} className="text-destructive hover:underline" aria-label="Delete">
+										Del
+									</button>
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+
 			{nextCursor && (
-				<div className="pt-2 flex justify-center">
-					<Button size="sm" variant="outline" onClick={loadMore} disabled={loadingMore}>
+				<div className="flex justify-center">
+					<Button onClick={loadMore} disabled={loadingMore}>
 						{loadingMore ? 'Loading…' : 'Load more'}
 					</Button>
 				</div>
 			)}
 		</div>
+	);
+}
+
+// ── Sortable header cell ────────────────────────────────────────────
+function SortHeader({
+	field,
+	current,
+	dir,
+	onClick,
+	children,
+	className,
+}: {
+	field: SortField;
+	current: SortField;
+	dir: SortDir;
+	onClick: (f: SortField) => void;
+	children: React.ReactNode;
+	className?: string;
+}) {
+	const isCurrent = current === field;
+	return (
+		<th
+			className={cn('sortable', isCurrent && 'sorted', className)}
+			onClick={() => onClick(field)}
+			aria-sort={isCurrent ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+		>
+			{children}
+			<span className="sort-arrow font-mono" aria-hidden="true">
+				{isCurrent ? (dir === 'asc' ? '↑' : '↓') : '·'}
+			</span>
+		</th>
 	);
 }

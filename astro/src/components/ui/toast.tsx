@@ -16,9 +16,15 @@ const ICONS = {
 };
 
 const TYPE_CLASSES = {
-	success: 'bg-green-100 border-green-600 text-green-950 dark:bg-green-900/50 dark:border-green-600 dark:text-green-100',
-	error: 'bg-red-100 border-red-600 text-red-950 dark:bg-red-900/50 dark:border-red-600 dark:text-red-100',
-	info: 'bg-blue-100 border-blue-600 text-blue-950 dark:bg-blue-900/50 dark:border-blue-600 dark:text-blue-100',
+	success: 'bg-card border-success text-foreground',
+	error: 'bg-card border-destructive text-foreground',
+	info: 'bg-card border-info text-foreground',
+};
+
+const ICON_CLASSES = {
+	success: 'text-success',
+	error: 'text-destructive',
+	info: 'text-info',
 };
 
 export function Toast({ message, type = 'success', duration = 5000, onClose }: ToastProps) {
@@ -49,7 +55,7 @@ export function Toast({ message, type = 'success', duration = 5000, onClose }: T
 	return (
 		<div
 			className={cn(
-				'px-4 py-3 rounded-lg border shadow-lg max-w-sm transition-all backdrop-blur-sm',
+				'px-3 py-2 border max-w-sm animate-fade-in',
 				TYPE_CLASSES[type],
 			)}
 			role={type === 'error' ? 'alert' : 'status'}
@@ -60,14 +66,14 @@ export function Toast({ message, type = 'success', duration = 5000, onClose }: T
 			onBlur={() => setIsPaused(false)}
 		>
 			<div className="flex items-center gap-2">
-				<Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-				<span className="text-sm flex-1">{message}</span>
+				<Icon className={cn('h-3.5 w-3.5 shrink-0', ICON_CLASSES[type])} aria-hidden="true" />
+				<span className="text-xs flex-1">{message}</span>
 				<button
 					onClick={() => { setIsVisible(false); onClose?.(); }}
-					className="shrink-0 rounded p-0.5 hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+					className="shrink-0 p-0.5 hover:bg-muted"
 					aria-label="Dismiss"
 				>
-					<X className="h-3.5 w-3.5" />
+					<X className="h-3 w-3" />
 				</button>
 			</div>
 		</div>

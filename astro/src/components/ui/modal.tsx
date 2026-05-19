@@ -39,7 +39,6 @@ export function Modal({
 	useEffect(() => {
 		if (!isOpen) return;
 
-		// Save currently focused element to restore later
 		previouslyFocusedRef.current = document.activeElement as HTMLElement;
 
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -48,7 +47,6 @@ export function Modal({
 				return;
 			}
 
-			// Focus trap: Tab and Shift+Tab cycle within modal
 			if (e.key === 'Tab' && modalRef.current) {
 				const focusable = modalRef.current.querySelectorAll<HTMLElement>(
 					'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
@@ -72,7 +70,6 @@ export function Modal({
 
 		document.addEventListener('keydown', handleKeyDown);
 
-		// Focus the first focusable element in the modal
 		requestAnimationFrame(() => {
 			if (modalRef.current) {
 				const firstFocusable = modalRef.current.querySelector<HTMLElement>(
@@ -84,12 +81,10 @@ export function Modal({
 
 		return () => {
 			document.removeEventListener('keydown', handleKeyDown);
-			// Restore focus to the previously focused element
 			previouslyFocusedRef.current?.focus();
 		};
 	}, [isOpen, onClose]);
 
-	// Prevent scrolling when modal is open
 	useEffect(() => {
 		if (isOpen) {
 			document.body.style.overflow = 'hidden';
@@ -107,7 +102,7 @@ export function Modal({
 	const descId = description ? 'modal-desc-' + uniqueId : undefined;
 
 	const modal = (
-		<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/25 backdrop-blur-sm">
+		<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
 			<div className="fixed inset-0 z-0" onClick={onClose} aria-hidden="true" />
 			<div
 				ref={modalRef}
@@ -115,40 +110,43 @@ export function Modal({
 				aria-modal="true"
 				aria-labelledby={titleId}
 				aria-describedby={descId}
-				className="relative z-10 w-full max-w-md overflow-hidden rounded-lg bg-background shadow-lg border border-border animate-in fade-in zoom-in-95"
+				className="relative z-10 w-full max-w-md bg-background border border-border animate-fade-in"
 			>
-				<div className="p-6">
-					<h3 id={titleId} className="text-lg font-semibold">
+				<div className="border-b border-border px-4 py-2.5">
+					<h3 id={titleId} className="text-sm font-bold uppercase tracking-wide">
 						{title}
 					</h3>
+				</div>
+
+				<div className="px-4 py-3">
 					{description && (
-						<p id={descId} className="mt-2 text-sm text-muted-foreground">
+						<p id={descId} className="text-sm text-foreground">
 							{description}
 						</p>
 					)}
-					{children && <div className="mt-4">{children}</div>}
+					{children && <div className={description ? 'mt-3' : ''}>{children}</div>}
+				</div>
 
-					<div className="mt-6 flex justify-end gap-3">
+				<div className="border-t border-border px-4 py-2.5 flex justify-end gap-2">
+					<button
+						onClick={onClose}
+						className="btn h-7 px-2.5 text-xs border border-input bg-card text-foreground hover:bg-muted"
+					>
+						{cancelText}
+					</button>
+					{onConfirm && (
 						<button
-							onClick={onClose}
-							className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm border border-border hover:bg-secondary/80 transition-colors"
+							onClick={onConfirm}
+							className={cn(
+								'btn h-7 px-2.5 text-xs border',
+								isDangerous
+									? 'border-destructive bg-card text-destructive hover:bg-destructive hover:text-destructive-foreground'
+									: 'border-primary-hover bg-primary text-primary-foreground hover:bg-primary-hover',
+							)}
 						>
-							{cancelText}
+							{confirmText}
 						</button>
-						{onConfirm && (
-							<button
-								onClick={onConfirm}
-								className={cn(
-									'px-4 py-2 rounded-md text-sm',
-									isDangerous
-										? 'bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20'
-										: 'bg-primary text-primary-foreground hover:bg-primary/90',
-								)}
-							>
-								{confirmText}
-							</button>
-						)}
-					</div>
+					)}
 				</div>
 			</div>
 		</div>

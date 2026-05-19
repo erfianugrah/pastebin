@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { Lock, Unlock, Flame, Eye, KeyRound } from 'lucide-react';
 import { decryptData } from '../lib/crypto';
 import { toast } from './ui/toast';
 import { Button } from './ui/button';
@@ -11,6 +10,7 @@ import { ErrorCategory } from '../lib/errorTypes';
 import { cn } from '../lib/utils';
 import { T } from '../lib/typography';
 import { renderMarkdown } from '../lib/markdown';
+import { detectImage, formatBytes } from '../lib/codeViewerHelpers';
 
 // Import Prism core (autoloader configured lazily to avoid SSG crash)
 import Prism from 'prismjs';
@@ -70,7 +70,41 @@ function Badge({ className, children }: { className?: string; children: React.Re
 	return <span className={cn('badge', className)}>{children}</span>;
 }
 
+// ── View-mode toggle button ──────────────────────────────────────────
+// Used in the toolbar above the code block. Active state = yellow.
+function ModeButton({
+	active,
+	onClick,
+	children,
+}: {
+	active: boolean;
+	onClick: () => void;
+	children: React.ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={cn(
+				'px-3 py-1 text-[10px] uppercase tracking-wide font-semibold border-r border-border',
+				active
+					? 'bg-primary text-primary-foreground'
+					: 'text-muted-foreground hover:text-foreground hover:bg-muted',
+			)}
+		>
+			{children}
+		</button>
+	);
+}
+
 type FileEntry = { name: string; content: string; language?: string };
+
+// View mode toggled via the view-mode toolbar. 'source' is the default.
+// 'rendered' only available for markdown. 'image' only when content
+// resolves to a data URI / web URL pointing at an image.
+type ViewMode = 'source' | 'rendered' | 'image';
+
+const WRAP_STORAGE_KEY = 'pasteriser_wrap';
 
 // renderMarkdown lives in ../lib/markdown.ts — marked v18 + DOMPurify v3 with
 // custom renderers (Prism-compatible fenced blocks, heading slugs, task lists,
@@ -85,7 +119,11 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 	const [decryptionProgress, setDecryptionProgress] = useState<number | null>(null);
 	const [passwordInput, setPasswordInput] = useState('');
 	const [showPasswordForm, setShowPasswordForm] = useState(false);
-	const [showRendered, setShowRendered] = useState(false);
+	const [viewMode, setViewMode] = useState<ViewMode>('source');
+	const [wrap, setWrap] = useState<boolean>(() => {
+		if (typeof window === 'undefined') return false;
+		try { return localStorage.getItem(WRAP_STORAGE_KEY) === '1'; } catch { return false; }
+	});
 	const [activeFileIdx, setActiveFileIdx] = useState(0);
 	const codeRef = useRef<HTMLElement>(null);
 	const proseRef = useRef<HTMLDivElement>(null);
@@ -95,6 +133,11 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 	// Multi-file detection: language === '_multi' and content is JSON array
 	const isMultiFile = paste.language === '_multi';
 	const [parsedFiles, setParsedFiles] = useState<FileEntry[]>([]);
+
+	// Persist wrap preference
+	useEffect(() => {
+		try { localStorage.setItem(WRAP_STORAGE_KEY, wrap ? '1' : '0'); } catch { /* ignore */ }
+	}, [wrap]);
 
 	// Parse multi-file content when available
 	useEffect(() => {
@@ -128,11 +171,11 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 
 	// Re-highlight fenced code blocks inside rendered markdown after each render.
 	useEffect(() => {
-		if (!showRendered || !proseRef.current) return;
+		if (viewMode !== 'rendered' || !proseRef.current) return;
 		proseRef.current.querySelectorAll<HTMLElement>('pre > code[class*="language-"]').forEach((el) => {
 			Prism.highlightElement(el);
 		});
-	}, [showRendered, content, activeFileIdx, decrypted]);
+	}, [viewMode, content, activeFileIdx, decrypted]);
 
 	// ── Auto-decryption on mount ─────────────────────────────────────
 	useEffect(() => {
@@ -282,58 +325,81 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 
 	// ── Render ────────────────────────────────────────────────────────
 
+	const contentBytes = new TextEncoder().encode(content).length;
+
 	return (
-		<div className="w-full">
-			{/* ── Metadata ───────────────────────────────────────── */}
-			<div className="mb-4 pb-4 border-b border-border">
-				<h2 className={cn(T.pasteTitle, 'mb-2')}>{paste.title || 'Untitled Paste'}</h2>
+		<div className="w-full animate-fade-in">
+			{/* ── Title + definition-list metadata ──────────────────── */}
+			<div className="mb-3 pb-3 border-b border-border-strong">
+				<h1 className={cn(T.pasteTitle, 'mb-2')}>{paste.title || 'Untitled paste'}</h1>
 
-				<div className={T.metaRow}>
-					<span>{formatDate(paste.createdAt)}</span>
-					<span className="text-border">|</span>
-					<ExpirationCountdown expiresAt={paste.expiresAt} />
-
+				<dl className="dl-inline">
+					<dt>ID</dt><dd className="font-mono">{paste.id.slice(0, 8)}…</dd>
+					<span className="sep">·</span>
+					<dt>Created</dt><dd>{formatDate(paste.createdAt)}</dd>
+					<span className="sep">·</span>
+					<dt>Expires</dt><dd><ExpirationCountdown expiresAt={paste.expiresAt} /></dd>
 					{paste.language && (
-						<Badge className="bg-muted text-muted-foreground">{paste.language}</Badge>
+						<>
+							<span className="sep">·</span>
+							<dt>Lang</dt><dd>{paste.language}</dd>
+						</>
 					)}
-
+					{!paste.isEncrypted && (
+						<>
+							<span className="sep">·</span>
+							<dt>Size</dt><dd className="font-mono">{formatBytes(contentBytes)}</dd>
+						</>
+					)}
+					{paste.visibility === 'private' && (
+						<>
+							<span className="sep">·</span>
+							<dt>Vis</dt><dd>private</dd>
+						</>
+					)}
 					{paste.isEncrypted && (
-						<Badge className={decrypted
-							? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
-							: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
-						}>
-							{decrypted ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-							{decrypted ? 'Decrypted' : 'Encrypted'}
-						</Badge>
+						<>
+							<span className="sep">·</span>
+							<dt>E2EE</dt>
+							<dd className={decrypted ? 'text-success' : 'text-warning'}>
+								{decrypted ? 'decrypted' : 'encrypted'}
+							</dd>
+						</>
 					)}
-
 					{paste.burnAfterReading && (
-						<Badge className="bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">
-							<Flame className="h-3 w-3" /> Self-destruct
-						</Badge>
+						<>
+							<span className="sep">·</span>
+							<dt>Burn</dt><dd className="text-destructive">yes</dd>
+						</>
 					)}
-
 					{paste.hasViewLimit && (
-						<Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-							<Eye className="h-3 w-3" />
-							{paste.remainingViews === 1 ? 'Final view' : `${paste.remainingViews} views left`}
-						</Badge>
+						<>
+							<span className="sep">·</span>
+							<dt>Views</dt>
+							<dd className="text-warning font-mono">
+								{paste.remainingViews}/{paste.viewLimit}
+							</dd>
+						</>
 					)}
-				</div>
+				</dl>
 			</div>
 
-			{/* ── Single warning bar (burn OR view limit, not both boxes) */}
+			{/* ── Single warning bar (burn OR view limit) ──────────── */}
 			{(paste.burnAfterReading || (paste.hasViewLimit && paste.remainingViews && paste.remainingViews <= 3)) && (
 				<div className={cn(
-					'flex items-center gap-2 rounded-lg p-3 mb-4 text-sm',
+					'notice mb-3',
 					paste.remainingViews === 1 || paste.burnAfterReading
-						? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
-						: 'bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+						? 'notice-destructive'
+						: 'notice-warning',
 				)}>
-					{paste.burnAfterReading
-						? <><Flame className="h-4 w-4 shrink-0" /> This paste will be deleted after you leave this page.</>
-						: <><Eye className="h-4 w-4 shrink-0" /> {paste.remainingViews} view{paste.remainingViews !== 1 ? 's' : ''} remaining before deletion.</>
-					}
+					<span className="font-bold uppercase tracking-wide text-xs shrink-0">
+						{paste.burnAfterReading ? 'BURN' : `${paste.remainingViews} LEFT`}
+					</span>
+					<span className="text-xs">
+						{paste.burnAfterReading
+							? 'This paste will be deleted after you leave this page.'
+							: `${paste.remainingViews} view${paste.remainingViews !== 1 ? 's' : ''} remaining before deletion.`}
+					</span>
 				</div>
 			)}
 
@@ -349,128 +415,182 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 
 			{/* ── Decryption progress ─────────────────────────────── */}
 			{isDecrypting && (
-				<div className="flex flex-col items-center justify-center py-12">
+				<div className="border border-border bg-card px-4 py-6 mb-3">
 					{decryptionProgress !== null ? (
-						<div className="w-full max-w-xs">
-							<div className="flex justify-between text-xs text-muted-foreground mb-1">
-								<span>Decrypting...</span>
-								<span>{decryptionProgress}%</span>
+						<div className="w-full max-w-xs mx-auto">
+							<div className="flex justify-between text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+								<span>Decrypting…</span>
+								<span className="font-mono">{decryptionProgress}%</span>
 							</div>
-							<div className="w-full bg-muted rounded-full h-1.5" role="progressbar" aria-valuenow={decryptionProgress} aria-valuemin={0} aria-valuemax={100}>
-								<div className="bg-primary h-1.5 rounded-full transition-all duration-200" style={{ width: `${decryptionProgress}%` }} />
+							<div className="w-full bg-muted h-1" role="progressbar" aria-valuenow={decryptionProgress} aria-valuemin={0} aria-valuemax={100}>
+								<div className="bg-primary h-1" style={{ width: `${decryptionProgress}%` }} />
 							</div>
 						</div>
 					) : (
-						<div className="animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent" role="status" aria-label="Decrypting" />
+						<p className="text-center text-xs text-muted-foreground">Decrypting…</p>
 					)}
 				</div>
 			)}
 
-			{/* ── Locked state (replaces blurred base64) ──────────── */}
+			{/* ── Locked state (no key supplied) ──────────────────── */}
 			{paste.isEncrypted && !decrypted && !isDecrypting && !showPasswordForm && (
-				<div className="flex flex-col items-center justify-center py-16 text-center">
-					<div className="rounded-full bg-muted p-4 mb-4">
-						<Lock className="h-8 w-8 text-muted-foreground" />
+				<div className="border border-warning bg-card mb-3">
+					<div className="border-b border-warning px-3 py-1.5 bg-card-alt">
+						<span className="text-xs font-bold uppercase tracking-wide text-warning">
+							⚠ Encrypted — key required
+						</span>
 					</div>
-					<h3 className={T.emptyTitle}>Encrypted Content</h3>
-					<p className={T.emptyDescription}>
-						This paste requires a decryption key or password. Make sure the URL includes the key after&nbsp;#.
-					</p>
-					<div className="flex gap-3">
-						<Button size="sm" onClick={() => setShowPasswordForm(true)}>
-							<KeyRound className="h-4 w-4 mr-1.5" /> Enter Password
-						</Button>
-						<Button size="sm" variant="outline" asChild>
-							<a href="/">Back to Home</a>
-						</Button>
+					<div className="px-3 py-3 space-y-3">
+						<p className="text-sm">
+							This paste requires a decryption key or password. Confirm the URL includes the key after{' '}
+							<code className="font-mono">#</code>, or enter a password below.
+						</p>
+						<div className="flex gap-2">
+							<Button variant="primary" size="sm" onClick={() => setShowPasswordForm(true)}>
+								Enter password
+							</Button>
+							<Button size="sm" asChild>
+								<a href="/" className="no-underline">Home</a>
+							</Button>
+						</div>
 					</div>
 				</div>
 			)}
 
 			{/* ── Code content (only when viewable) ───────────────── */}
-			{(!paste.isEncrypted || decrypted) && !isDecrypting && (
-				<div>
-					{/* Multi-file tabs */}
-					{isMultiFile && parsedFiles.length > 0 && (
-						<div className="flex items-center gap-1 mb-2 overflow-x-auto border-b border-border">
-							{parsedFiles.map((f, i) => (
-								<button
-									key={i}
-									type="button"
-									onClick={() => setActiveFileIdx(i)}
-									className={cn(
-										'px-3 py-1.5 text-xs rounded-t-md transition-colors whitespace-nowrap border border-b-0',
-										activeFileIdx === i
-											? 'bg-card border-border text-foreground -mb-px'
-											: 'bg-transparent border-transparent text-muted-foreground hover:text-foreground',
-									)}
-								>
-									{f.name || `file ${i + 1}`}
-								</button>
-							))}
-						</div>
-					)}
+			{(!paste.isEncrypted || decrypted) && !isDecrypting && (() => {
+				// Active content for whichever file/single-paste is showing
+				const activeContent = isMultiFile ? (activeFile?.content || '') : content;
+				const activeLanguage = isMultiFile ? (activeFile?.language || 'plaintext') : (paste.language || 'plaintext');
+				const activeIsMarkdown = activeLanguage === 'markdown';
+				const imageSrc = !activeIsMarkdown ? detectImage(activeContent) : null;
 
-					{/* Markdown toggle */}
-					{(isMarkdown || (isMultiFile && activeFile?.language === 'markdown')) && (
-						<div className="flex gap-1 mb-2">
-							<button
-								type="button"
-								onClick={() => setShowRendered(false)}
-								className={cn('px-3 py-1 text-xs rounded-md transition-colors', !showRendered ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}
-							>
-								Code
-							</button>
-							<button
-								type="button"
-								onClick={() => setShowRendered(true)}
-								className={cn('px-3 py-1 text-xs rounded-md transition-colors', showRendered ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground')}
-							>
-								Preview
-							</button>
-						</div>
-					)}
+				// Effective view mode — collapse to 'source' when the user picked
+				// a mode that isn't available for this content (e.g. they had
+				// 'rendered' set, then switched files to a non-markdown one).
+				const effectiveMode: ViewMode =
+					(viewMode === 'rendered' && !activeIsMarkdown) ||
+					(viewMode === 'image' && !imageSrc)
+						? 'source'
+						: viewMode;
 
-					{/* Rendered markdown */}
-					{showRendered && (isMarkdown || activeFile?.language === 'markdown') ? (
-						<div
-							ref={proseRef}
-							className="prose max-w-none p-4 rounded-lg border border-border bg-card overflow-auto max-h-[600px]"
-							dangerouslySetInnerHTML={{ __html: renderMarkdown(isMultiFile ? (activeFile?.content || '') : content) }}
-						/>
-					) : (
-						<pre className="p-4 rounded-lg border border-border overflow-x-auto overflow-y-auto font-mono text-sm max-h-[600px] bg-card line-numbers">
-							<code ref={codeRef} className={`language-${isMultiFile ? (activeFile?.language || 'plaintext') : (paste.language || 'plaintext')}`}>
-								{isMultiFile ? (activeFile?.content || '') : content}
-							</code>
-						</pre>
-					)}
-				</div>
-			)}
+				return (
+					<div>
+						{/* Multi-file tabs */}
+						{isMultiFile && parsedFiles.length > 0 && (
+							<div className="flex items-stretch gap-px overflow-x-auto bg-border">
+								{parsedFiles.map((f, i) => (
+									<button
+										key={i}
+										type="button"
+										onClick={() => setActiveFileIdx(i)}
+										className={cn(
+											'px-3 py-1 text-xs whitespace-nowrap font-mono',
+											activeFileIdx === i
+												? 'bg-card text-foreground'
+												: 'bg-card-alt text-muted-foreground hover:text-foreground',
+										)}
+									>
+										{f.name || `file ${i + 1}`}
+									</button>
+								))}
+							</div>
+						)}
+
+						{/* ── View-mode toolbar ─────────────────────────────────
+						    Always shows Source. Adds Rendered when content is
+						    markdown, Image when content is one image. Wrap toggle
+						    on the right (source view only). */}
+						<div className="flex items-stretch border border-border bg-card-alt overflow-x-auto">
+							<ModeButton active={effectiveMode === 'source'} onClick={() => setViewMode('source')}>
+								Source
+							</ModeButton>
+							{activeIsMarkdown && (
+								<ModeButton active={effectiveMode === 'rendered'} onClick={() => setViewMode('rendered')}>
+									Rendered
+								</ModeButton>
+							)}
+							{imageSrc && (
+								<ModeButton active={effectiveMode === 'image'} onClick={() => setViewMode('image')}>
+									Image
+								</ModeButton>
+							)}
+							<span className="flex-1" />
+							{effectiveMode === 'source' && (
+								<label className="flex items-center gap-1.5 px-2 text-[10px] uppercase tracking-wide font-semibold border-l border-border cursor-pointer hover:bg-muted">
+									<input
+										type="checkbox"
+										checked={wrap}
+										onChange={(e) => setWrap(e.target.checked)}
+										className="form-checkbox h-3 w-3 border border-border-strong bg-card checked:bg-primary checked:border-primary-hover"
+									/>
+									Wrap
+								</label>
+							)}
+						</div>
+
+						{/* ── Image view ──────────────────────────────────── */}
+						{effectiveMode === 'image' && imageSrc && (
+							<div className="border border-border border-t-0 bg-card p-3 flex items-center justify-center overflow-auto max-h-[640px]">
+								<img
+									src={imageSrc}
+									alt="Paste preview"
+									className="max-w-full max-h-[600px] object-contain"
+								/>
+							</div>
+						)}
+
+						{/* ── Markdown rendered ───────────────────────────── */}
+						{effectiveMode === 'rendered' && activeIsMarkdown && (
+							<div
+								ref={proseRef}
+								className="prose max-w-none p-4 border border-border border-t-0 bg-card overflow-auto max-h-[640px]"
+								dangerouslySetInnerHTML={{ __html: renderMarkdown(activeContent) }}
+							/>
+						)}
+
+						{/* ── Source code (default) ───────────────────────── */}
+						{effectiveMode === 'source' && (
+							<pre
+								className={cn(
+									'p-3 border border-border border-t-0 overflow-x-auto overflow-y-auto font-mono text-sm max-h-[640px] bg-card line-numbers',
+									wrap && '!whitespace-pre-wrap break-all',
+								)}
+							>
+								<code ref={codeRef} className={`language-${activeLanguage}`}>
+									{activeContent}
+								</code>
+							</pre>
+						)}
+					</div>
+				);
+			})()}
 
 			{/* ── Password form ───────────────────────────────────── */}
 			{paste.isEncrypted && !decrypted && showPasswordForm && !isDecrypting && (
-				<div className="max-w-sm mx-auto mt-4 p-6 rounded-lg border border-border bg-card">
-					<div className="flex items-center gap-2 mb-4">
-						<Lock className="h-5 w-5 text-muted-foreground" />
-						<h3 className="font-semibold">Password Required</h3>
+				<div className="max-w-md mx-auto mt-3 border border-border bg-card">
+					<div className="border-b border-border px-3 py-1.5 bg-card-alt">
+						<span className="text-xs font-bold uppercase tracking-wide">Password required</span>
 					</div>
-					<p className={cn(T.mutedSm, 'mb-4')}>Decryption happens locally in your browser.</p>
-
-					<form onSubmit={handlePasswordSubmit} className="space-y-3">
+					<form onSubmit={handlePasswordSubmit} className="px-3 py-3 space-y-2">
+						<p className={cn(T.muted)}>Decryption happens locally in your browser.</p>
 						<input
 							type="password"
 							value={passwordInput}
 							onChange={(e) => setPasswordInput(e.target.value)}
-							className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							className="w-full h-7 border border-input bg-card px-2 text-xs font-mono"
 							placeholder="Enter password"
 							autoComplete="current-password"
 							autoFocus
 							required
 						/>
 						<div className="flex gap-2">
-							<Button type="submit" size="sm" disabled={!passwordInput.trim()} className="flex-1">Decrypt</Button>
-							<Button type="button" size="sm" variant="ghost" onClick={() => setShowPasswordForm(false)}>Cancel</Button>
+							<Button type="submit" variant="primary" disabled={!passwordInput.trim()}>
+								Decrypt
+							</Button>
+							<Button type="button" variant="ghost" onClick={() => setShowPasswordForm(false)}>
+								Cancel
+							</Button>
 						</div>
 					</form>
 				</div>

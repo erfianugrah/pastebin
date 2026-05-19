@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Check, ChevronsUpDown, Search } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 // ── Language data ────────────────────────────────────────────────────
@@ -193,35 +192,35 @@ export function LanguageCombobox({ value, onChange }: LanguageComboboxProps) {
 				aria-haspopup="listbox"
 				onClick={() => setOpen(!open)}
 				className={cn(
-					'flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm shadow-inner ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring',
+					'flex h-7 w-full items-center justify-between border border-input bg-card px-2 text-xs',
 					!value && 'text-muted-foreground',
 				)}
 			>
 				<span className="truncate">{getLanguageLabel(value)}</span>
-				<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+				<span aria-hidden="true" className="ml-2 select-none text-muted-foreground">▾</span>
 			</button>
 
 			{/* Dropdown */}
 			{open && (
-				<div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-lg animate-in fade-in-0 zoom-in-95">
+				<div className="absolute z-50 mt-px w-full border border-border bg-popover text-popover-foreground animate-fade-in">
 					{/* Search input */}
-					<div className="flex items-center border-b px-3 py-2">
-						<Search className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+					<div className="flex items-center border-b border-border px-2 py-1">
+						<span aria-hidden="true" className="mr-1.5 select-none text-muted-foreground text-xs">⌕</span>
 						<input
 							ref={inputRef}
 							type="text"
 							value={search}
 							onChange={(e) => setSearch(e.target.value)}
 							onKeyDown={handleKeyDown}
-							placeholder="Search languages..."
-							className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+							placeholder="Search…"
+							className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
 						/>
 					</div>
 
 					{/* Items */}
-					<div ref={listRef} role="listbox" className="max-h-60 overflow-y-auto p-1">
+					<div ref={listRef} role="listbox" className="max-h-60 overflow-y-auto">
 						{flatList.length === 0 ? (
-							<div className="py-6 text-center text-sm text-muted-foreground">No language found.</div>
+							<div className="py-4 text-center text-xs text-muted-foreground">No language found.</div>
 						) : (
 							<>
 								{showPlainText && (
@@ -234,7 +233,7 @@ export function LanguageCombobox({ value, onChange }: LanguageComboboxProps) {
 								)}
 								{filtered.map((group) => (
 									<div key={group.label}>
-										<div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+										<div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-t border-border bg-card-alt">
 											{group.label}
 										</div>
 										{group.items.map((item) => {
@@ -281,12 +280,12 @@ function ComboboxItem({
 			data-item
 			onClick={onSelect}
 			className={cn(
-				'relative flex w-full items-center rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none transition-colors',
-				highlighted ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+				'relative flex w-full items-center px-2 py-1 pr-6 text-xs outline-none text-left',
+				highlighted ? 'bg-primary text-primary-foreground' : 'hover:bg-muted',
 			)}
 		>
 			{label}
-			{selected && <Check className="absolute right-2 h-4 w-4" />}
+			{selected && <span aria-hidden="true" className="absolute right-2">✓</span>}
 		</button>
 	);
 }

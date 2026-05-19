@@ -1,5 +1,8 @@
 // Enhanced service worker for Pasteriser with better error handling
-const CACHE_NAME = 'pasteriser-v1';
+// Bump the cache key on every breaking visual change so existing clients
+// don't serve stale CSS/JS bundles after a redeploy. The SW's `activate`
+// handler nukes any cache whose name doesn't match this constant.
+const CACHE_NAME = 'pasteriser-v2-brutalist';
 
 // Files to cache - only include stable files that don't change often
 const CACHE_FILES = [
