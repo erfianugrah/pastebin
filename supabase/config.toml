@@ -182,6 +182,10 @@ minimum_password_length = 6
 # Passwords that do not meet the following requirements will be rejected as weak. Supported values
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
+# Leaked-password protection (HaveIBeenPwned) is ENABLED on this project but is a
+# Pro-plan, API-managed setting with no config.toml field. Set via Management API:
+#   PATCH /v1/projects/<ref>/config/auth  {"password_hibp_enabled": true}
+# `supabase config push` does NOT manage it, so it won't be reverted.
 
 # Configure passkey sign-ins.
 # [auth.passkey]
@@ -323,10 +327,11 @@ auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 # Control how many MFA factors can be enrolled at once per user.
 max_enrolled_factors = 10
 
-# Control MFA via App Authenticator (TOTP)
+# Control MFA via App Authenticator (TOTP). Enabled 2026-06 to satisfy the
+# auth_insufficient_mfa_options advisor (TOTP is free; phone MFA is the paid add-on).
 [auth.mfa.totp]
-enroll_enabled = false
-verify_enabled = false
+enroll_enabled = true
+verify_enabled = true
 
 # Configure MFA via Phone Messaging
 [auth.mfa.phone]
