@@ -19,6 +19,76 @@ Threat model, deployment configuration, and operational guidance for Pasteriser.
 | Abuse / DoS via auth flood | Unbounded signup, login, email-sending | Cloudflare Workers Rate Limiting bindings on auth-write (10/min), session-read (60/min), paste-create (30/min), search (30/min) per IP |
 | Slug squatting via TOCTOU race | Concurrent creates with same vanity slug | Postgres unique constraint on `slugs.slug`; race-loser surfaced as HTTP 409 `slug_taken` via `SlugTakenError` typed-error translation |
 
+## Encryption layers & the trust boundary
+
+There are three places data can be encrypted, and they protect against
+*different* adversaries. The distinction is **who holds the key** and
+**where decryption happens**:
+
+| Layer | Key held by | Decryption runs | Stops outsider / stolen disk / DB dump? | Stops the host (Cloudflare / Supabase)? |
+|-------|-------------|-----------------|------------------------------------------|------------------------------------------|
+| **At-rest disk encryption** | Supabase (platform-managed) | on Supabase, transparently per query | ✅ | ❌ — the DB decrypts to serve every query |
+| **TLS in transit** | terminated by the platform | in flight | ✅ (network snoop) | ❌ |
+| **E2EE (Pasteriser, opt-in)** | the **user** (URL fragment / password) | in the **browser** | ✅ | ✅ — server only ever holds ciphertext |
+
+Supabase's at-rest encryption is automatic and on by default, but its key
+is Supabase's — it defends against a stolen disk or a leaked backup, **not**
+against the operator or anyone with SQL access (the running database
+decrypts transparently). The only layer that removes the host from the
+trust boundary is **E2EE**, because the key never reaches the server.
+
+### Why Pasteriser does NOT use Supabase Vault or column encryption
+
+- **Vault** stores secrets that *the database* consumes (API keys, FDW
+  passwords). It does not protect user content, and its key is
+  Supabase-managed — so it would not hide paste content from the host.
+  Pasteriser's only server-side secrets (`SUPABASE_SECRET_KEY`, etc.) live
+  in **Cloudflare Workers secrets**, not in Postgres, so there is nothing
+  for Vault to do here.
+- **In-DB column encryption** (the deprecated pgsodium TCE pattern: key in
+  Vault + `pgcrypto` in a trigger) keeps both the key *and* the decryption
+  on Supabase, so it gives no protection against the host — only against
+  logical dumps and over-privileged roles. For paste content, E2EE already
+  does the real work; for everything else, at-rest disk encryption covers
+  the dump/backup threat.
+
+Net: encrypting in the database would be effort spent in the wrong place.
+Content secrecy is handled client-side (E2EE); the rest is intentionally
+readable by the operator and protected at rest by the platform.
+
+### RLS is a tested backstop, not the runtime gate
+
+The Worker uses the `service_role` key, which **bypasses RLS**. So the
+actual runtime authorization is the app-level `user_id` filter (derived
+from the verified JWT) plus the token-gated `delete_paste` / `update_paste`
+RPCs. The 5 RLS policies are a **defense-in-depth backstop** — verified
+end-to-end by `npm run test:rls` (9 scenarios / 14 assertions) — that would
+scope a breach if the `service_role` key leaked or a future direct-query
+path were added. They are not on the production hot path today.
+
+### If Pasteriser ever stored regulated data (PHI / PCI)
+
+This design is right *because* paste content is either E2EE or
+intentionally public. It would **not** transfer to regulated data, and the
+fix would not be "encrypt the column" or "use Vault". It would be:
+
+- A **BAA** with every vendor in the data path (Supabase **and** Cloudflare,
+  since the Worker terminates requests), plus the relevant compliance add-on.
+- **Load-bearing** access control (RLS / authz genuinely enforced and
+  tested), not a `service_role` backstop.
+- **Audit logging** (`pgaudit`) with **per-user attribution** — which is
+  engineering, not a config flag: the DB only sees the shared Postgres role,
+  and Postgres has no `SELECT` trigger, so read-attribution requires
+  app-level audit rows or log correlation.
+- **PHI-out-of-logs hygiene** — redact-by-default logging (the query-string
+  redaction in `src/index.ts` is the seed of this), `pgaudit.log_rows` /
+  `log_parameter` left off, and no identifiers in URLs.
+
+E2EE would actively be the *wrong* tool for that case — it breaks the
+server-side processing/search/sharing such systems require. The trust
+philosophy inverts: instead of hiding data from the host, you legally bind
+and audit the host.
+
 ## Configuration
 
 ### Required Wrangler secret
