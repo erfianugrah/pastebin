@@ -6,7 +6,7 @@ Threat model, deployment configuration, and operational guidance for Pasteriser.
 
 | Asset | Defended against | Defense |
 |-------|------------------|---------|
-| Plaintext paste content | Server compromise, log exposure | Optional client-side E2EE (XSalsa20-Poly1305 via NaCl `secretbox`, PBKDF2 600k iter for password mode, key in URL fragment for key mode) |
+| Plaintext paste content | Server compromise, log exposure | Optional client-side E2EE (XSalsa20-Poly1305 via NaCl `secretbox`, PBKDF2-SHA-256 300k iter for password mode, key in URL fragment for key mode) |
 | Encryption keys / passwords | Server-side leakage | Never sent to server — key in URL fragment, password used client-side for PBKDF2 only |
 | Paste authorship | Unauthorized creation as another user | JWT validated by Worker; `user_id` set from verified token, never from request body |
 | Owned-paste access | Cross-user reads / writes / deletes | 5 RLS policies on `public.pastes` for `authenticated` role: SELECT public, SELECT/INSERT/UPDATE/DELETE own |
