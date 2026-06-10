@@ -1,0 +1,76 @@
+name: Deploy (production)
+
+# Manual deploy to paste.erfi.io, gated on the full CI suite and verified
+# against live production afterwards. Triggered with the "Run workflow"
+# button (workflow_dispatch) to keep deploys a deliberate action — flip the
+# commented `push:` trigger on if you want continuous deployment from main.
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+
+# Never let two prod deploys run concurrently.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Pre-deploy gate: reuse the secret-free CI workflow (typecheck, lint,
+  # unit/UI tests, build). A red gate blocks the deploy job entirely.
+  gate:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            astro/package-lock.json
+
+      - name: Install Worker deps (root)
+        run: npm ci
+
+      - name: Install frontend deps (astro/)
+        working-directory: astro
+        run: npm ci
+
+      # deploy:prod = build:ui (astro → astro/dist) + wrangler deploy --env production.
+      # The Worker's SUPABASE_* secrets already live in Cloudflare (set via
+      # `wrangler secret put`), so only the deploy credential is needed here.
+      - name: Deploy to production
+        run: npm run deploy:prod
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Live verification scripts read ./.env (verify-rls.ts has no
+      # process.env fallback), so materialize it from secrets. .env is
+      # gitignored and the runner is ephemeral.
+      - name: Materialize .env for live verification
+        run: |
+          cat > .env <<'EOF'
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY=${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_PUBLISHABLE_KEY=${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          EOF
+
+      # Post-deploy gate: smoke (live API on paste.erfi.io) + RLS end-to-end
+      # (creates 2 throwaway Supabase users, asserts ownership, cleans up).
+      # A failure here turns the run red — rollback with
+      # `wrangler rollback --env production <version-id>`.
+      - name: Smoke test (live API)
+        run: npm run test:smoke
+
+      - name: RLS end-to-end (live Supabase)
+        run: npm run test:rls

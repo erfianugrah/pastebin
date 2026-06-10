@@ -1,0 +1,52 @@
+name: CI
+
+# Fast, secret-free gate: typecheck + lint + unit tests + UI tests + build.
+# Runs on every push to main and every PR. Also exposed as a reusable
+# workflow (workflow_call) so deploy.yml can require it before shipping.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Project is npm-based: root + astro/ each have their own
+      # package-lock.json and all npm scripts shell out to npm.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            astro/package-lock.json
+
+      - name: Install Worker deps (root)
+        run: npm ci
+
+      - name: Install frontend deps (astro/)
+        working-directory: astro
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit, root tsconfig)
+        run: npm run check
+
+      - name: Lint (eslint src/**/*.ts)
+        run: npm run lint
+
+      - name: Migration GRANT guardrail
+        run: npm run check:migrations
+
+      - name: Unit tests (vitest — src/tests/** + astro/src/lib/**)
+        run: npm test
+
+      - name: UI component tests (jsdom)
+        run: npm run test:ui
+
+      - name: Build frontend (astro → astro/dist)
+        run: npm run build:ui
