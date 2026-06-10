@@ -225,9 +225,15 @@ Three places to touch, two of them human-only:
    Then `supabase config push --yes`.
 
 3. **App side (Worker code)**
-   - `handleOAuthStart` already supports `provider=github` via a
-     whitelist. To add Google: add `'google'` to the `validProviders`
-     set in `src/interfaces/api/authHandlers.ts:handleOAuthStart`.
+   - `handleOAuthStart`'s `validProviders` set already whitelists both
+     `'github'` and `'google'`, so no code change is needed for Google —
+     steps 1 (provider OAuth app) and 2 (`config.toml` `[auth.external.google]`)
+     are the only remaining work. Only GitHub is actually *enabled* in
+     `config.toml` today; Google is whitelisted in code but not configured
+     in Supabase, so `/api/auth/oauth/google` currently bounces back to
+     `/login?error=...` until you add the provider block. To support a
+     provider beyond these two (e.g. GitLab), add its id to the
+     `validProviders` set in `src/interfaces/api/authHandlers.ts`.
    - Frontend: add "Continue with Google" button on `AuthForm.tsx`
      calling `/api/auth/oauth/google`.
 

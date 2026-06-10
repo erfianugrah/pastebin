@@ -38,7 +38,7 @@ Two separate packages with **independent `node_modules`**:
 - **Worker entry**: `src/index.ts` — Hono app, all routing, serves Astro static assets via `ASSETS` binding
 - **Worker config**: `wrangler.jsonc` — `run_worker_first: true`, assets from `./astro/dist`
 - **DDD layers** in `src/`: `domain/` → `application/` → `infrastructure/` → `interfaces/`
-- **Storage abstraction**: `PasteRepository` interface (10 methods: `save`, `findById`, `view`, `delete`, `deleteWithToken`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`). One implementation: `SupabasePasteRepository`. KV bindings + `DualWriteRepository` removed in Phase 5.
+- **Storage abstraction**: `PasteRepository` interface (11 methods: `save`, `findById`, `view`, `delete`, `deleteWithToken`, `updateWithToken`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`). One implementation: `SupabasePasteRepository`. KV bindings + `DualWriteRepository` removed in Phase 5.
 - **Env bindings** (`src/types.ts`):
   - `ASSETS: Fetcher` — Astro static assets
   - `SUPABASE_URL: string` — project URL (Wrangler secret, never in source)
@@ -60,7 +60,7 @@ Two separate packages with **independent `node_modules`**:
 
 ## Supabase migrations
 
-- All schema in `supabase/migrations/` — 17 files, applied to `dewddkcmwrzbpynylyhg`
+- All schema in `supabase/migrations/` — 19 files, applied to `dewddkcmwrzbpynylyhg`
 - Tables: `pastes`, `slugs` (see `SUPABASE-MIGRATION.md` for full schema and Phase 3.5 audit fixes)
 - `set_updated_at` trigger has a `WHEN (OLD.x IS DISTINCT FROM NEW.x)` clause — required because `upsert()` sends all columns and `UPDATE OF col` fires on column presence, not value change
 - `createClient()` always passes `{ auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false } }` — Supabase-recommended for server-side contexts. The three Worker call sites (`SupabasePasteRepository`, `AuthService`, `AuthHandlers`) go through `getServiceRoleClient(url, key)` in `src/infrastructure/supabase/getSupabaseClient.ts` which memoises by `(url, key)`. The cached client is stateless given the auth flags above. PKCE-flow clients in `handleOAuthStart`/`handleOAuthCallback` still call `createClient` directly because they inject a custom storage shim that's not safe to share. Tests reset the cache via `__resetSupabaseClientCache()` in `beforeEach`.

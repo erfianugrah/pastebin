@@ -119,7 +119,7 @@ CREATE TABLE pastes (
     id               UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
     user_id          UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
     content          TEXT        NOT NULL,
-    title            TEXT        NOT NULL,
+    title            TEXT,       -- NOT NULL originally; dropped in 20260511180117_title_nullable.sql
     language         TEXT,
     created_at       TIMESTAMPTZ DEFAULT now(),          -- nullable: Postgres always sets this via DEFAULT
     expires_at       TIMESTAMPTZ NOT NULL,
@@ -175,7 +175,7 @@ CREATE INDEX idx_user_pastes ON pastes (user_id)
 
 ### RLS (migrations: `add_rls_policies.sql`, `add_rls_policies_phase1.sql`)
 
-**Important:** In Phases 1-3, the Worker uses the `service_role` key, which bypasses RLS entirely. These policies are defense-in-depth -- they matter if the `anon` key is ever used directly.
+**Important:** The Worker uses the `service_role` key, which bypasses RLS entirely, so these policies never gate the production traffic path. They are a **tested** defense-in-depth backstop (verified end-to-end by `npm run test:rls`) — they take effect the instant anything queries Supabase with the `anon`/`authenticated` key + a user JWT instead of `service_role`.
 
 ```sql
 -- Enable RLS on both tables
@@ -269,20 +269,26 @@ Verified live (post-migration): `SELECT jobname, schedule FROM cron.job;` return
 
 ```sql
 -- Atomic view count increment + burn-after-reading + view-limit enforcement
--- Solves the KV eventual consistency problem
-CREATE OR REPLACE FUNCTION view_paste(paste_uuid uuid)
+-- Solves the KV eventual consistency problem.
+-- Canonical deployed form (migration 20260511130427_add_view_paste_rpc.sql):
+-- SECURITY DEFINER + SET search_path = '' (so every name is public.-qualified),
+-- and EXECUTE locked down to service_role (anon/authenticated revoked by the
+-- 20260608155754 hardening migration).
+CREATE OR REPLACE FUNCTION public.view_paste(paste_uuid uuid)
 RETURNS TABLE (
   paste_data jsonb,
   was_burned boolean,
   was_view_limited boolean
 )
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
 AS $$
 DECLARE
-  p pastes%ROWTYPE;
+  p public.pastes%ROWTYPE;
 BEGIN
   -- Lock the row to prevent concurrent read-count races
-  SELECT * INTO p FROM pastes WHERE id = paste_uuid FOR UPDATE;
+  SELECT * INTO p FROM public.pastes WHERE id = paste_uuid FOR UPDATE;
 
   IF NOT FOUND THEN
     RETURN;
@@ -290,23 +296,23 @@ BEGIN
 
   -- Check expiry
   IF p.expires_at < now() THEN
-    DELETE FROM pastes WHERE id = paste_uuid;
+    DELETE FROM public.pastes WHERE id = paste_uuid;
     RETURN;
   END IF;
 
   -- Check view limit already reached
   IF p.view_limit IS NOT NULL AND p.read_count >= p.view_limit THEN
-    DELETE FROM pastes WHERE id = paste_uuid;
+    DELETE FROM public.pastes WHERE id = paste_uuid;
     RETURN;
   END IF;
 
   -- Increment read count
-  UPDATE pastes SET read_count = read_count + 1 WHERE id = paste_uuid
+  UPDATE public.pastes SET read_count = read_count + 1 WHERE id = paste_uuid
     RETURNING * INTO p;
 
-  -- Burn after reading
-  IF p.burn_after_reading AND p.read_count > 0 THEN
-    DELETE FROM pastes WHERE id = paste_uuid;
+  -- Burn after reading (lock guarantees we're the only caller in this branch)
+  IF p.burn_after_reading THEN
+    DELETE FROM public.pastes WHERE id = paste_uuid;
     paste_data := to_jsonb(p);
     was_burned := true;
     was_view_limited := false;
@@ -316,7 +322,7 @@ BEGIN
 
   -- View limit reached after this view
   IF p.view_limit IS NOT NULL AND p.read_count >= p.view_limit THEN
-    DELETE FROM pastes WHERE id = paste_uuid;
+    DELETE FROM public.pastes WHERE id = paste_uuid;
     paste_data := to_jsonb(p);
     was_burned := false;
     was_view_limited := true;
@@ -330,6 +336,9 @@ BEGIN
   RETURN NEXT;
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.view_paste(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.view_paste(uuid) TO service_role;
 ```
 
 This function solves the concurrency problem documented in `getPasteQuery.ts` -- KV's eventual consistency means burn-after-reading can be served to multiple viewers. Postgres `FOR UPDATE` row lock prevents this.
@@ -781,13 +790,21 @@ All policies use `(SELECT auth.uid())` not bare `auth.uid()` — Postgres
 runs it once per statement via initPlan instead of once per row.
 Supabase RLS benchmarks: 94-99% improvement at scale.
 
-The Worker continues using `service_role` (RLS bypass). These policies
-activate when:
+The Worker continues using `service_role` (RLS bypass), so these policies
+are **not on the production hot path** — runtime authorization is the
+app-level `user_id` filter in `handleMyPastes` (the `/my` page goes
+through the Worker `/api/my` endpoint, NOT browser→Supabase) plus the
+token-gated delete/update RPCs. The policies are a **tested** backstop
+(`npm run test:rls` exercises all of them end-to-end with a real user JWT
++ the publishable key — 9 scenarios / 14 assertions). They become the
+active gate the moment anything queries Supabase with a user JWT instead
+of `service_role`:
 
-- Frontend queries Supabase directly with a user JWT (`/my` page,
-  Phase 4.4c)
-- Future endpoints might run under authenticated context
-- Defense in depth if a Worker bug ever exposes the wrong rows
+- A future direct-query path (none today; CSP `connect-src 'self'`
+  currently forbids browser→Supabase)
+- Future endpoints running under authenticated context
+- Defense in depth if the `service_role` key leaks or a Worker bug ever
+  selects without the `user_id` filter
 
 #### 4.4b: Worker JWT verification + user_id passthrough ✓ COMPLETE
 
@@ -846,7 +863,8 @@ activate when:
 **Live verification (`npm run test:rls`):**
 
 `scripts/verify-rls.ts` creates two Supabase Auth users via the admin
-API, signs them in, and verifies 13 RLS scenarios:
+API, signs them in (with the publishable key, mimicking a browser), and
+verifies 9 RLS scenarios (14 assertions):
 
 1. Worker accepts JWT and persists user_id on the paste row
 2. Anonymous paste creation (no JWT) still works (user_id = NULL)
@@ -859,8 +877,8 @@ API, signs them in, and verifies 13 RLS scenarios:
 9. INSERT with mismatched user_id is rejected by RLS WITH CHECK
    with `new row violates row-level security policy for table "pastes"`
 
-All 13 pass against production. Cleanup deletes test users + their
-pastes; no residue in the live DB.
+All 14 assertions pass against production. Cleanup deletes test users +
+their pastes; no residue in the live DB.
 
 #### 4.4c: Frontend login + /my page ✓ COMPLETE
 
@@ -1177,41 +1195,57 @@ Migration `20260511150017_add_paste_stats.sql` adds the function;
 exposed via `GET /api/stats` (edge-cached 5min + SWR 15min). Empty-state
 verified after the Phase 5 wipe: `totalPublic: 0`, all arrays/objects empty.
 
-Postgres function `paste_stats()` returns a jsonb summary with five aggregates:
+Postgres function `paste_stats()` returns a jsonb summary with five aggregates
+(`totalPublic`, `byLanguage`, `byHour`, `encryption`, `generatedAt`). Every
+sub-select filters `expires_at > now()` so counts stay accurate between the
+5-minute pg_cron cleanups, and each aggregate is `coalesce`d to an empty
+`[]`/`{}` so a zero-paste DB still returns a well-formed object:
 
 ```sql
 CREATE OR REPLACE FUNCTION public.paste_stats()
 RETURNS jsonb
-LANGUAGE sql STABLE
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
 AS $$
   SELECT jsonb_build_object(
-    'totalPublic', (SELECT count(*) FROM pastes WHERE visibility = 'public'),
-    'byLanguage', (
-      SELECT jsonb_agg(jsonb_build_object('language', language, 'count', c))
+    'totalPublic', (
+      SELECT count(*)::int FROM public.pastes
+      WHERE visibility = 'public' AND expires_at > now()
+    ),
+    'byLanguage', coalesce((
+      SELECT jsonb_agg(jsonb_build_object('language', language, 'count', c) ORDER BY c DESC)
       FROM (
-        SELECT coalesce(language, 'unknown') AS language, count(*) AS c
-        FROM pastes WHERE visibility = 'public'
+        SELECT coalesce(language, 'unknown') AS language, count(*)::int AS c
+        FROM public.pastes WHERE visibility = 'public' AND expires_at > now()
         GROUP BY language ORDER BY c DESC LIMIT 20
       ) t
-    ),
-    'byHour', (
+    ), '[]'::jsonb),
+    'byHour', coalesce((
       SELECT jsonb_agg(jsonb_build_object('hour', hour, 'count', c) ORDER BY hour DESC)
       FROM (
-        SELECT date_trunc('hour', created_at) AS hour, count(*) AS c
-        FROM pastes WHERE visibility = 'public'
+        SELECT date_trunc('hour', created_at) AS hour, count(*)::int AS c
+        FROM public.pastes WHERE visibility = 'public' AND expires_at > now()
           AND created_at > now() - interval '48 hours'
         GROUP BY hour
       ) t
-    ),
-    'encryption', (
-      SELECT jsonb_object_agg(version, c)
+    ), '[]'::jsonb),
+    'encryption', coalesce((
+      SELECT jsonb_object_agg(version::text, c)
       FROM (
-        SELECT version, count(*) AS c FROM pastes
-        WHERE visibility = 'public' GROUP BY version
+        SELECT version, count(*)::int AS c FROM public.pastes
+        WHERE visibility = 'public' AND expires_at > now() GROUP BY version
       ) t
-    )
+    ), '{}'::jsonb),
+    'generatedAt', to_jsonb(now())
   );
 $$;
+
+-- service_role is all the Worker needs; anon/authenticated EXECUTE was revoked
+-- by the 20260608155754 hardening migration (BFF — nothing calls it directly).
+REVOKE EXECUTE ON FUNCTION public.paste_stats() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.paste_stats() TO service_role;
 ```
 
 `LANGUAGE sql STABLE` not `plpgsql` — pure aggregates, no control
@@ -1665,7 +1699,7 @@ This table tracks cumulative impact across all phases (0 through 5):
 | Layer | Final state | Trajectory |
 |-------|-------------|------------|
 | **Domain model** (`paste.ts`) | `Paste` + `PasteId` + `ExpirationPolicy` value objects. Added `userId?: string` field in Phase 4.4 for `auth.users(id)` linkage. | Untouched in Phases 0-4.3; one field added in 4.4. |
-| **Repository interface** | 9 methods: `save`, `findById`, `view`, `delete`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`. | Was 6 in Phase 0; +1 (`view`) in 4.1, +1 (`searchPublic`) in 4.2, +1 (`getPublicStats`) in 4.5. |
+| **Repository interface** | 11 methods: `save`, `findById`, `view`, `delete`, `deleteWithToken`, `updateWithToken`, `findRecentPublic`, `searchPublic`, `getPublicStats`, `resolveSlug`, `saveSlug`. | Was 6 in Phase 0; +1 (`view`) in 4.1, +1 (`searchPublic`) in 4.2, +1 (`getPublicStats`) in 4.5, +1 (`deleteWithToken`) in 3.8.0, +1 (`updateWithToken`) in 3.9.0. |
 | **Application commands/queries** | `CreatePasteCommand.execute(params, opts: { userId? })`, `GetPasteQuery`, `GetRecentPastesQuery`, `SearchPastesQuery`, `GetPasteStatsQuery`, `DeletePasteCommand`. | `GetPasteQuery.execute()` collapsed to a 3-line wrapper in 4.1 since orchestration moved to the repo. |
 | **Factory** (`pasteFactory.ts`) | Round-trips `userId`. | Phase 4.4. |
 | **Infrastructure/storage** | `SupabasePasteRepository` only. `KVPasteRepository` + `DualWriteRepository` deleted in Phase 5. | Was KV + Supabase + DualWrite in Phases 1-4; consolidated in Phase 5. |
@@ -1677,7 +1711,7 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **astro/.env** | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`. | Phases 4.3-4.4. |
 | **Unit tests** | 172 passing (+ 22 Astro). | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm`) → 150 after 3.5.0 (+1 duplicate-email, +2 delete-paste regression) → 172 after 3.6.0 (+22 across recovery, magic-link, OAuth handlers). |
 | **Live test scripts** | `test:smoke` (52 cases now), `test:race`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. Smoke +17 auth cases in 3.6.0. `test:realtime` removed in 3.7.0 alongside the Realtime trigger. |
-| **Migrations** | 18 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3, dropped in 3.7.0) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix) + drop-realtime (3.7.0) + batch-cron (3.7.0) + `delete_paste()` RPC (3.8.0) + `update_paste()` RPC (3.9.0). |
+| **Migrations** | 19 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3, dropped in 3.7.0) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix) + drop-realtime (3.7.0) + batch-cron (3.7.0) + `delete_paste()` RPC (3.8.0) + `update_paste()` RPC (3.9.0) + SECURITY DEFINER grant hardening (`20260608155754`). |
 | **Config IaC** | `supabase/config.toml` + `supabase/templates/*.html`. Push via `supabase config push`. Secrets via `env(VAR)` from `.env`. | New in 3.6.0. Reading live state still needs the Management API (no `config pull`). |
 
 ---
@@ -1695,11 +1729,13 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Auth: magic link** | `signInWithOtp({ shouldCreateUser: false })` — re-entry path; not new signups | 4.4e (3.6.0) |
 | **Auth: OAuth (GitHub)** | Manual PKCE in Worker via capture-storage; supabase-js `signInWithOAuth` + `exchangeCodeForSession` server-side | 4.4e (3.6.0) |
 | **Identity linking** | Default GoTrue auto-linking on verified-email match — same `user_id`, two rows in `auth.identities` (`provider=email` + `provider=github`). `security_manual_linking_enabled` left off. | 4.4e (3.6.0) |
+| **MFA: TOTP (app authenticator)** | `[auth.mfa.totp] enroll_enabled = verify_enabled = true` in `config.toml` (enabled 2026-06 to satisfy the `auth_insufficient_mfa_options` advisor; free, unlike phone MFA). | 2026-06 |
+| **Leaked-password protection (HIBP)** | HaveIBeenPwned check enabled via Management API (`password_hibp_enabled: true`); not a `config.toml`-managed field. Rejects signups/password-changes using known-breached passwords. | 2026-06 |
 | **Custom SMTP** | Resend (`smtp.resend.com:465`, sender `noreply@erfi.io`, `rate_limit_email_sent` 30/hr) | 3.5.0 |
 | **Custom email templates** | 5 templates (confirmation/recovery/magic_link/invite/email_change) — hardcoded `type=` per template; 2 notification templates (linked/unlinked) | 3.4.0 + 3.6.0 |
 | **Realtime** | Trigger + RLS shipped in 4.3, **reverted in 3.7.0** (migration `20260512102410_drop_realtime_broadcast.sql`). Frontend never subscribed; CSP blocked WebSocket. Quota burn for zero consumers. | 4.3 → reverted 3.7.0 |
 | **pg_cron** | Both jobs batched at `LIMIT 1000` (3.7.0). `cleanup-expired-pastes` every 5min, `cleanup-expired-slugs` every 15min (was daily 03:00 pre-batch). | 0; rewritten in 3.7.0 |
-| **PL/pgSQL functions** | `view_paste()` (FOR UPDATE row lock for burn-after-reading), `paste_stats()` (jsonb aggregation). All `SECURITY DEFINER` + `SET search_path = ''`. `broadcast_public_paste_insert()` was here in 4.3, dropped in 3.7.0. | 4.1, 4.5 |
+| **PL/pgSQL functions** | `view_paste()` (FOR UPDATE row lock for burn-after-reading), `delete_paste(uuid, uuid)` (atomic delete-with-token, 3.8.0), `update_paste(uuid, uuid, text, text, text)` (atomic update-with-token, 3.9.0), `paste_stats()` (jsonb aggregation). All `SECURITY DEFINER` + `SET search_path = ''`, EXECUTE granted to `service_role` only (anon/authenticated revoked in `20260608155754`). `broadcast_public_paste_insert()` was here in 4.3, dropped in 3.7.0. | 4.1, 4.5, 3.8.0, 3.9.0 |
 | **Workers Rate Limiting binding** | `RL_AUTH_WRITE` 10/60s, `RL_SESSION_READ` 60/60s, `RL_PASTE_CREATE` 30/60s, `RL_SEARCH` 30/60s. Counters propagate across the edge; middleware fails open on binding error. | 3.7.0 |
 | **Supabase client caching** | Three `createClient(...)` call sites consolidated through `getServiceRoleClient(url, key)` memoiser. The cached client is stateless given `persistSession: false` + `autoRefreshToken: false`. PKCE-flow clients in `handleOAuthStart`/`handleOAuthCallback` still allocate per-request (custom storage shim). | 3.7.0 |
 | **Aggregations** | `paste_stats()` SQL function returning jsonb `{totalPublic, byLanguage, byHour, encryption, generatedAt}`. Edge-cached + SWR via Worker. | 4.5 |
@@ -1715,7 +1751,7 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Storage** | Paste content fits in Postgres `text` column (25 MiB acceptable per row). No binary blobs. |
 | **Edge Functions** | Cloudflare Worker is the compute layer. Adding a Supabase Edge Function would mean two compute environments to deploy. |
 | **Anonymous sign-ins** | App design treats anonymous use as session-less + delete-token-gated, not as throwaway auth.users rows. `external_anonymous_users_enabled = false`. |
-| **MFA (TOTP/WebAuthn/phone)** | Single-user prep project. No multi-factor surface yet. Config has it disabled. |
+| **MFA: WebAuthn / phone** | WebAuthn and phone MFA stay disabled (phone is a paid add-on; no need yet). TOTP MFA, by contrast, was **enabled** 2026-06 — see the Used table. |
 | **Manual identity linking (`linkIdentity()`)** | Auto-linking on verified-email match covers Pasteriser's case (same email across email/password + GitHub). Manual flow is for cross-email merging, which isn't a user journey here. `security_manual_linking_enabled = false`. |
 | **pg_graphql** | Worker speaks REST/RPC to supabase-js. No GraphQL clients to feed. |
 | **pgvector** | No semantic search workload. FTS via tsvector + GIN is enough for "find a paste by title/language." |

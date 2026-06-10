@@ -26,7 +26,7 @@ Live at [paste.erfi.io](https://paste.erfi.io).
 - **Auth & ownership** (optional)
   - Supabase Auth (email + password, server-side email confirmation, password recovery, magic-link, GitHub OAuth)
   - Pastes optionally linked to a user via `user_id`
-  - `/my` page lists user's pastes (browser → Supabase direct, filtered by RLS)
+  - `/my` page lists user's pastes via the Worker `/api/my` endpoint (`service_role` + `user_id` filter on the verified JWT; the browser never queries Supabase directly)
   - Anonymous use unchanged — `user_id = NULL`, `deleteToken` flow
 
 - **Discovery**
@@ -106,28 +106,28 @@ This project follows Domain-Driven Design principles with a clean architecture a
 
 ```mermaid
 graph TD
-    User[User] --> UI[Interface]
-    UI --> App[Application]
-    App --> Domain[Domain]
-    App --> Infra[Infrastructure]
-    
-    subgraph "Interface"
+    User[User] --> Interface
+    Interface --> Application
+    Application --> Domain
+    Application --> Infrastructure
+
+    subgraph Interface["Interface Layer"]
       Web[Web UI]
       API[API]
     end
-    
-    subgraph "Application"
+
+    subgraph Application["Application Layer"]
       Cmd[Commands]
       Qry[Queries]
     end
-    
-    subgraph "Domain"
+
+    subgraph Domain["Domain Layer"]
       Model[Models]
       Svc[Services]
       Repo[Repositories]
     end
-    
-    subgraph "Infrastructure"
+
+    subgraph Infrastructure["Infrastructure Layer"]
       DB[Supabase Postgres]
       Log[Logging]
       Cfg[Config]
@@ -208,12 +208,14 @@ classDiagram
         -number? viewLimit
         -number version
         -string? deleteToken
+        -string? userId
         +getId() PasteId
         +getContent() string
         +hasExpired() boolean
         +incrementReadCount() Paste
         +getSecurityType() string
         +getDeleteToken() string?
+        +getUserId() string?
         +toJSON(includeSecrets) object
     }
     
@@ -325,7 +327,7 @@ flowchart TB
     PWA --> OfflineSupport
     
     class Workers,WebCrypto,ProgressReporting emphasis
-    classDef emphasis fill:#f9f,stroke:#333,stroke-width:2px
+    classDef emphasis fill:#f9c2e8,stroke:#be185d,stroke-width:2px,color:#111827
 ```
 
 ## Performance Optimizations
@@ -349,7 +351,7 @@ flowchart LR
     ChunkedLoad --> UX
     
     class WorkerOffload,AsyncCrypto emphasis
-    classDef emphasis fill:#f9f,stroke:#333,stroke-width:2px
+    classDef emphasis fill:#f9c2e8,stroke:#be185d,stroke-width:2px,color:#111827
 ```
 
 1. **Astro Partial Hydration**: Only hydrate interactive components
@@ -508,9 +510,9 @@ When signed in:
 
 Anonymous use is unchanged: pastes created without a JWT get `user_id = NULL` and are managed via the `deleteToken` returned at creation.
 
-5 RLS policies cover the authenticated role: SELECT public, SELECT own, INSERT own (WITH CHECK enforces self-assignment), UPDATE own (USING + WITH CHECK), DELETE own. The Worker uses `service_role` and bypasses RLS; the policies activate when the frontend queries Supabase directly.
+5 RLS policies cover the authenticated role: SELECT public, SELECT own, INSERT own (WITH CHECK enforces self-assignment), UPDATE own (USING + WITH CHECK), DELETE own. **These are not on the production hot path** — the Worker uses `service_role` (which bypasses RLS), so the actual runtime authorization is the app-level `user_id` filter on the verified JWT plus the token-gated `delete_paste`/`update_paste` RPCs. RLS is a **tested defense-in-depth backstop**: it would scope a breach if the `service_role` key ever leaked or a future direct-query path were added. The policies activate the moment anything queries Supabase with a user JWT instead of `service_role`.
 
-Run `npm run test:rls` for end-to-end verification (creates 2 real test users, runs 13 RLS scenarios, cleans up).
+The backstop is not hypothetical — `npm run test:rls` verifies it end-to-end against the live project (creates 2 real test users, signs them in with the publishable key, runs 9 scenarios / 14 assertions covering own-vs-cross-user SELECT/DELETE and `WITH CHECK` user_id spoofing, then cleans up). It is currently a **manual pre-deploy script, not a CI gate** (the repo has no CI workflows yet).
 
 #### Delete a Paste
 
@@ -659,9 +661,9 @@ npm run deploy
 - `npm run deploy` - Deploy to Cloudflare Workers
 
 ### Testing & Quality Assurance
-- `npm run test` - Run unit tests (vitest) — Worker + Astro lib tests, 287 cases
+- `npm run test` - Run unit tests (vitest) — Worker + Astro lib tests, 311 cases
 - `npm run check:migrations` - Verify every `CREATE TABLE public.*` migration includes an explicit `GRANT … TO service_role` (Supabase Oct-30-2026 cutover guardrail)
-- `npm run test:ui` - Run Astro component tests (jsdom) — 25 cases
+- `npm run test:ui` - Run Astro component tests (jsdom) — 57 cases
 - `npm run test:e2e` - Run Playwright e2e against **production** (`paste.erfi.io`)
 - `npm run test:e2e:local` - Run Playwright e2e against a locally-spawned Astro dev server (`http://127.0.0.1:4321`)
 - `npm run test:watch` - Run unit tests in watch mode
@@ -877,7 +879,7 @@ For more detailed security information, configuration guides, and security check
 
 **Domain**: https://paste.erfi.io
 **Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
-**Migrations**: 18 applied — see `supabase/migrations/`
+**Migrations**: 19 applied — see `supabase/migrations/`
 
 ### Storage Backend
 
@@ -892,7 +894,7 @@ Migrated from Cloudflare KV to **Supabase Postgres** in May 2026. KV was removed
 | Atomic update | `update_paste(uuid, uuid, text, text, text)` RPC | Partial update under `FOR UPDATE` lock; race-free against `view_paste` burns. Only `content` / `title` / `language` updatable. |
 | Search | `search_vector` (GIN-indexed tsvector) | `websearch_to_tsquery` via `/api/search` |
 | Stats | `paste_stats()` RPC | jsonb summary via `/api/stats`; cached 5min + SWR 15min |
-| User accounts | Supabase Auth + JWT verification | Worker validates `Authorization: Bearer <jwt>`; `/my` page uses RLS |
+| User accounts | Supabase Auth + JWT verification | Worker validates the JWT (cookie or `Authorization: Bearer`); `/my` page goes through the Worker `/api/my` (`service_role` + `user_id` filter), not browser→Supabase. RLS is a tested backstop, not the runtime gate — see Auth & ownership |
 | Expiration | pg_cron jobs | Both jobs batched at `LIMIT 1000`. Pastes every 5min, slugs every 15min |
 
 See [`SUPABASE-MIGRATION.md`](./SUPABASE-MIGRATION.md) for the full migration journey: Phase 0-3 (KV→Supabase cutover), 3.5 (audit fixes), 4.1-4.5 (feature work), 5 (KV removal).
