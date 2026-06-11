@@ -1,5 +1,18 @@
 import { test, expect } from '@playwright/test';
 
+// Track every paste created during a test so cleanup runs even when an
+// assertion fails mid-test. Otherwise a failing test orphans a public paste
+// in the recent feed until its TTL expires (which is exactly what happened
+// with the two previously-stale specs).
+const createdPastes: Array<{ id: string; deleteToken: string }> = [];
+
+test.afterEach(async ({ request }) => {
+	while (createdPastes.length) {
+		const p = createdPastes.pop()!;
+		await request.delete(`/pastes/${p.id}/delete`, { data: { token: p.deleteToken } }).catch(() => {});
+	}
+});
+
 test.describe('Paste Lifecycle', () => {
 	test('create a paste, view it, then delete it', async ({ page, request }) => {
 		// Use API to create — faster and more reliable than UI
@@ -7,6 +20,7 @@ test.describe('Paste Lifecycle', () => {
 			data: { content: 'Hello from Playwright test', title: 'E2E Test Paste', expiration: 3600 },
 		});
 		const { id, deleteToken } = await res.json();
+		createdPastes.push({ id, deleteToken });
 
 		// View the paste
 		await page.goto(`/pastes/${id}`);
@@ -102,16 +116,12 @@ test.describe('Vanity URLs', () => {
 		});
 		expect(res.ok()).toBeTruthy();
 		const body = await res.json();
+		createdPastes.push({ id: body.id, deleteToken: body.deleteToken });
 		expect(body.url).toContain(`/p/${slug}`);
 
 		// Access via vanity URL
 		await page.goto(`/p/${slug}`);
 		await expect(page.locator('text=vanity test')).toBeVisible({ timeout: 10000 });
-
-		// Clean up: delete via API
-		await request.delete(`/pastes/${body.id}/delete`, {
-			data: { token: body.deleteToken },
-		});
 	});
 });
 
@@ -122,15 +132,11 @@ test.describe('API Endpoints', () => {
 		});
 		expect(res.status()).toBe(201);
 		const body = await res.json();
+		createdPastes.push({ id: body.id, deleteToken: body.deleteToken });
 		expect(body).toHaveProperty('id');
 		expect(body).toHaveProperty('url');
 		expect(body).toHaveProperty('deleteToken');
 		expect(body).toHaveProperty('expiresAt');
-
-		// Clean up
-		await request.delete(`/pastes/${body.id}/delete`, {
-			data: { token: body.deleteToken },
-		});
 	});
 
 	test('PUT /pastes/:id requires the correct token', async ({ request }) => {
@@ -138,6 +144,7 @@ test.describe('API Endpoints', () => {
 			data: { content: 'original', expiration: 3600 },
 		});
 		const { id, deleteToken } = await create.json();
+		createdPastes.push({ id, deleteToken });
 
 		// No token at all -> 400: `token` is a required UUID in UpdatePasteSchema,
 		// so a missing token is a Zod `bad_request`, not an auth failure.
@@ -164,11 +171,6 @@ test.describe('API Endpoints', () => {
 		});
 		const body = await read.json();
 		expect(body.content).toBe('updated');
-
-		// Clean up
-		await request.delete(`/pastes/${id}/delete`, {
-			data: { token: deleteToken },
-		});
 	});
 
 	test('security headers are present', async ({ request }) => {
