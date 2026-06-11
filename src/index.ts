@@ -195,7 +195,7 @@ app.post('/pastes', rateLimit('RL_PASTE_CREATE', 'paste-create'), async (c) => {
 // add user-scoped or auth-derived data to this endpoint, switch to
 // `preventCaching` (or `private` + `Vary: Cookie`) FIRST or the cache
 // becomes a leak vector.
-app.get('/api/recent', async (c) => {
+app.get('/api/recent', rateLimit('RL_RECENT', 'recent'), async (c) => {
 	return addCacheHeaders(await c.get('handlers').handleGetRecentPastes(c.req.raw), {
 		maxAge: 60,
 		staleWhileRevalidate: 300,

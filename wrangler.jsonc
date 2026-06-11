@@ -16,6 +16,7 @@
  *   - RL_SESSION_READ GET /api/auth/session  (stolen-JWT oracle protection)
  *   - RL_PASTE_CREATE POST /pastes
  *   - RL_SEARCH       GET  /api/search
+ *   - RL_RECENT       GET  /api/recent  (public-feed scrape resistance)
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -41,6 +42,7 @@
 		{ "name": "RL_SESSION_READ", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
 		{ "name": "RL_PASTE_CREATE", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } },
 		{ "name": "RL_SEARCH",       "namespace_id": "1004", "simple": { "limit": 30, "period": 60 } },
+		{ "name": "RL_RECENT",       "namespace_id": "1005", "simple": { "limit": 60, "period": 60 } },
 	],
 	"routes": [
 		{
@@ -62,6 +64,7 @@
 				{ "name": "RL_SESSION_READ", "namespace_id": "2002", "simple": { "limit": 60, "period": 60 } },
 				{ "name": "RL_PASTE_CREATE", "namespace_id": "2003", "simple": { "limit": 30, "period": 60 } },
 				{ "name": "RL_SEARCH",       "namespace_id": "2004", "simple": { "limit": 30, "period": 60 } },
+				{ "name": "RL_RECENT",       "namespace_id": "2005", "simple": { "limit": 60, "period": 60 } },
 			],
 		},
 	},

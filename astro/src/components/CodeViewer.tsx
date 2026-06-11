@@ -56,6 +56,8 @@ interface CodeViewerProps {
 	sessionInfo?: SessionInfo;
 	/** Called when content has been successfully decrypted. */
 	onDecrypted?: (content: string) => void;
+	/** Called when the title has been decrypted (version >= 3). undefined if none/failed. */
+	onTitleDecrypted?: (title: string | undefined) => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -112,8 +114,9 @@ const WRAP_STORAGE_KEY = 'pasteriser_wrap';
 
 // ── Component ────────────────────────────────────────────────────────
 
-export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeViewerProps) {
+export default function CodeViewer({ paste, sessionInfo, onDecrypted, onTitleDecrypted }: CodeViewerProps) {
 	const [content, setContent] = useState<string>(paste.content);
+	const [decryptedTitle, setDecryptedTitle] = useState<string | null>(null);
 	const [isDecrypting, setIsDecrypting] = useState(false);
 	const [decrypted, setDecrypted] = useState(false);
 	const [decryptionProgress, setDecryptionProgress] = useState<number | null>(null);
@@ -275,6 +278,18 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 			setContent(decryptedContent);
 			setDecrypted(true);
 			notifyDecrypted(decryptedContent);
+
+			// version 3 also encrypts the title under the same key/password.
+			// Decrypt it best-effort; a failure just leaves the lock placeholder.
+			if (Number(paste.version) >= 3 && paste.title) {
+				try {
+					const t = await decryptData(paste.title, keyOrPassword, isPassword);
+					setDecryptedTitle(t);
+					onTitleDecrypted?.(t);
+				} catch {
+					onTitleDecrypted?.(undefined);
+				}
+			}
 			toast({ message: 'Decrypted successfully', type: 'success' });
 		} catch (error) {
 			handleError(error, { location: 'CodeViewer.performDecryption', pasteId: paste.id });
@@ -331,7 +346,13 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted }: CodeView
 		<div className="w-full animate-fade-in">
 			{/* ── Title + definition-list metadata ──────────────────── */}
 			<div className="mb-3 pb-3 border-b border-border-strong">
-				<h1 className={cn(T.pasteTitle, 'mb-2')}>{paste.title || 'Untitled paste'}</h1>
+				<h1 className={cn(T.pasteTitle, 'mb-2')}>
+					{decryptedTitle
+						? decryptedTitle
+						: Number(paste.version) >= 3 && paste.title
+							? '🔒 Encrypted paste'
+							: paste.title || 'Untitled paste'}
+				</h1>
 
 				<dl className="dl-inline">
 					<dt>ID</dt><dd className="font-mono">{paste.id.slice(0, 8)}…</dd>

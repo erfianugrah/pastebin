@@ -6,7 +6,8 @@ Threat model, deployment configuration, and operational guidance for Pasteriser.
 
 | Asset | Defended against | Defense |
 |-------|------------------|---------|
-| Plaintext paste content | Server compromise, log exposure | Optional client-side E2EE (XSalsa20-Poly1305 via NaCl `secretbox`, PBKDF2-SHA-256 300k iter for password mode, key in URL fragment for key mode) |
+| Plaintext paste content | Server compromise, log exposure | Client-side E2EE **on by default** for new pastes (XSalsa20-Poly1305 via NaCl `secretbox`, PBKDF2-SHA-256 300k iter for password mode, key in URL fragment for key mode). Opt out per paste via Encryption → "None". |
+| Paste **title** metadata | Server / DB read, public-listing leak | version-3 pastes encrypt the title under the same key as the content (own nonce). Encrypted pastes are excluded from the public `search_vector` and their title/language are withheld from `/api/recent` + `/api/search` responses (lock placeholder in the UI). |
 | Encryption keys / passwords | Server-side leakage | Never sent to server — key in URL fragment, password used client-side for PBKDF2 only |
 | Paste authorship | Unauthorized creation as another user | JWT validated by Worker; `user_id` set from verified token, never from request body |
 | Owned-paste access | Cross-user reads / writes / deletes | 5 RLS policies on `public.pastes` for `authenticated` role: SELECT public, SELECT/INSERT/UPDATE/DELETE own |
@@ -16,7 +17,7 @@ Threat model, deployment configuration, and operational guidance for Pasteriser.
 | Cross-site exploits | XSS via paste content | `textContent` only for user data; no `innerHTML`; programmatic DOM creation; strict CSP without `unsafe-eval` |
 | Open redirect | `next` param escaping the origin | `/auth/confirm` resolves `next` via `new URL(next, request.url)` and asserts `candidate.origin === request.origin`. Closes the WHATWG-backslash bypass (`/\evil.com` would otherwise become `https://evil.com/`) |
 | Cross-origin abuse | CORS-credentials with `*` origin | Explicit allowlist in production |
-| Abuse / DoS via auth flood | Unbounded signup, login, email-sending | Cloudflare Workers Rate Limiting bindings on auth-write (10/min), session-read (60/min), paste-create (30/min), search (30/min) per IP |
+| Abuse / DoS via auth flood | Unbounded signup, login, email-sending | Cloudflare Workers Rate Limiting bindings on auth-write (10/min), session-read (60/min), paste-create (30/min), search (30/min), recent-feed (60/min) per IP |
 | Slug squatting via TOCTOU race | Concurrent creates with same vanity slug | Postgres unique constraint on `slugs.slug`; race-loser surfaced as HTTP 409 `slug_taken` via `SlugTakenError` typed-error translation |
 
 ## Encryption layers & the trust boundary
@@ -244,6 +245,9 @@ See `SUPABASE-MIGRATION.md` "Phase 4.7" for the full mitigation roadmap with cit
 - **Password mode** — PBKDF2-SHA-256 with 300,000 iterations + 16-byte salt for key derivation. Password never leaves the browser.
 - **Key mode** — 256-bit random key in the URL fragment (`#key=...`). Fragment is never sent in HTTP requests.
 - **Storage** — paste content stored as `[salt? nonce ciphertext+MAC]` base64. Server cannot derive the plaintext under any path.
+- **Encryption versions** — `0` = plaintext; `2` = legacy E2EE (content only, plaintext title); `3` = E2EE content **and** title (the default for new encrypted pastes). The title is an independent `secretbox` blob under the same key/salt. `CodeViewer` decrypts it best-effort after the content; a failure leaves a "🔒 Encrypted paste" placeholder. version-3 pastes show a neutral `document.title` until decrypted so the ciphertext title never lands in the tab title or history.
+- **Default-on** — new pastes default to key-mode E2EE. Editing an existing paste does **not** force-encrypt (the update path leaves `version`/`is_encrypted` untouched, so re-encrypting a plaintext paste would store ciphertext the viewer never decrypts).
+- **Metadata minimisation** — the public `search_vector` generated column resolves to `''` for any `is_encrypted` row, so neither title nor language of an encrypted paste is world-searchable; the recent/search DTOs withhold them too.
 - **QR rendering** — rendered locally in the browser via the `qrcode` npm package. Previously sent `window.location.href` (including the `#key=…` fragment) to `api.qrserver.com`; that's gone since 3.8.0.
 
 ## Security checklist

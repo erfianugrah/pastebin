@@ -57,9 +57,14 @@ export default function PasteForm() {
 
 	// Form state
 	const [content, setContent] = useState('');
-	const [isE2EEncrypted, setIsE2EEncrypted] = useState(false);
+	// Privacy-by-default: new pastes are E2E-encrypted with a random key in the
+	// URL fragment unless the user explicitly switches Encryption to "None".
+	// Edit mode overrides this to 'none' (see the edit-load effect) because the
+	// PUT/update path does not touch version/is_encrypted, so re-encrypting an
+	// existing plaintext paste would store ciphertext the viewer never decrypts.
+	const [isE2EEncrypted, setIsE2EEncrypted] = useState(true);
 	const [passwordValue, setPasswordValue] = useState('');
-	const [securityMethod, setSecurityMethod] = useState<'none' | 'password' | 'key'>('none');
+	const [securityMethod, setSecurityMethod] = useState<'none' | 'password' | 'key'>('key');
 	const [encryptionProgress, setEncryptionProgress] = useState<number | null>(null);
 	const [language, setLanguage] = useState('');
 	const [autoDetect, setAutoDetect] = useState(true);
@@ -82,6 +87,11 @@ export default function PasteForm() {
 			const edit = sessionStorage.getItem('pasteriser_edit');
 			if (edit) {
 				sessionStorage.removeItem('pasteriser_edit');
+				// Editing an existing paste: do not force-encrypt. The update path
+				// leaves version/is_encrypted untouched, so default-on would corrupt
+				// a plaintext paste. The user can still opt back into encryption.
+				setIsE2EEncrypted(false);
+				setSecurityMethod('none');
 				const data = JSON.parse(edit) as { pasteId: string; content?: string; title?: string; language?: string; token?: string };
 				if (data.content) setContent(data.content);
 				if (data.title) {
@@ -169,10 +179,15 @@ export default function PasteForm() {
 			const viewLimit = viewLimitEnabled ? parseInt(formData.get('viewLimit') as string, 10) : undefined;
 
 			let encryptedContent = rawContent;
+			let encryptedTitle: string | undefined;
 			let encryptionKey: string | undefined;
 			const needsEncryption = e2eEncryption || (vis === 'private' && isE2EEncrypted) || !!password;
 
 			// ── Encrypt ──────────────────────────────────────────────────
+			// version 3 = content AND title encrypted (title is metadata that
+			// would otherwise leak via the DB / public listing). The title is
+			// encrypted under the same key/salt as the content, as an independent
+			// blob (own nonce). Empty titles are left as-is.
 			if (needsEncryption) {
 				try {
 					setEncryptionProgress(0);
@@ -183,11 +198,13 @@ export default function PasteForm() {
 						encryptedContent = await encryptData(rawContent, derivedKey, true, salt, (p) => {
 							setEncryptionProgress(30 + Math.floor(p.percent * 0.7));
 						});
+						if (title) encryptedTitle = await encryptData(title, derivedKey, true, salt);
 					} else {
 						encryptionKey = generateEncryptionKey();
 						encryptedContent = await encryptData(rawContent, encryptionKey, false, undefined, (p) => {
 							setEncryptionProgress(p.percent);
 						});
+						if (title) encryptedTitle = await encryptData(title, encryptionKey, false);
 					}
 					setEncryptionProgress(100);
 				} catch (error) {
@@ -210,9 +227,9 @@ export default function PasteForm() {
 				credentials: 'same-origin',
 				headers,
 				body: isEdit
-					? JSON.stringify({ token: editMode.token, content: encryptedContent, title, language: lang })
+					? JSON.stringify({ token: editMode.token, content: encryptedContent, title: encryptedTitle ?? title, language: lang })
 					: JSON.stringify({
-						title,
+						title: encryptedTitle ?? title,
 						content: encryptedContent,
 						language: lang,
 						expiration: exp,
@@ -220,7 +237,7 @@ export default function PasteForm() {
 						burnAfterReading,
 						isEncrypted: needsEncryption,
 						viewLimit,
-						version: needsEncryption ? 2 : 0,
+						version: needsEncryption ? 3 : 0,
 						...(slug.trim() ? { slug: slug.trim().toLowerCase() } : {}),
 					}),
 			}).catch((fetchError) => {

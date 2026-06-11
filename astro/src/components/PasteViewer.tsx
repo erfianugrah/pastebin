@@ -28,6 +28,7 @@ export default function PasteViewer() {
 	const [state, setState] = useState<ViewState>('loading');
 	const [paste, setPaste] = useState<PasteData | null>(null);
 	const [decryptedContent, setDecryptedContent] = useState<string | null>(null);
+	const [decryptedTitle, setDecryptedTitle] = useState<string | undefined>(undefined);
 
 	// Support both /pastes/:id and /p/:slug URLs
 	const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
@@ -58,7 +59,12 @@ export default function PasteViewer() {
 				setPaste(data);
 				setState('ready');
 
-				if (data.title) {
+				// For version-3 pastes data.title is ciphertext — don't leak it into
+				// the document title. Show a neutral placeholder until CodeViewer
+				// decrypts it (see onTitleDecrypted below).
+				if (Number(data.version) >= 3 && data.title) {
+					document.title = 'Encrypted paste - Pasteriser';
+				} else if (data.title) {
 					document.title = `${data.title} - Pasteriser`;
 				}
 			} catch {
@@ -105,10 +111,14 @@ export default function PasteViewer() {
 			<CodeViewer
 				paste={paste}
 				onDecrypted={setDecryptedContent}
+				onTitleDecrypted={(t) => {
+					setDecryptedTitle(t);
+					if (t) document.title = `${t} - Pasteriser`;
+				}}
 			/>
 			<PasteActions
 				pasteId={paste.id}
-				pasteTitle={paste.title}
+				pasteTitle={decryptedTitle ?? (Number(paste.version) >= 3 ? undefined : paste.title)}
 				pasteLanguage={paste.language}
 				isEncrypted={!!paste.isEncrypted}
 				getDecryptedContent={() => decryptedContent}

@@ -3,11 +3,12 @@ import { Logger } from '../../infrastructure/logging/logger';
 
 interface SearchResultDTO {
 	id: string;
-	title: string;
+	title: string | null;
 	language: string | null;
 	createdAt: string;
 	expiresAt: string;
 	readCount: number;
+	isEncrypted: boolean;
 }
 
 /**
@@ -25,13 +26,20 @@ export class SearchPastesQuery {
 
 		const pastes = await this.pasteRepository.searchPublic(query, limit);
 
-		return pastes.map((p) => ({
-			id: p.getId().toString(),
-			title: p.getTitle() || 'Untitled Paste',
-			language: p.getLanguage() || null,
-			createdAt: p.getCreatedAt().toISOString(),
-			expiresAt: p.getExpiresAt().toISOString(),
-			readCount: p.getReadCount(),
-		}));
+		// Encrypted pastes shouldn't appear in search at all (the search_vector
+		// generated column excludes them), but withhold their metadata defensively
+		// in case a row is matched via another path.
+		return pastes.map((p) => {
+			const isEncrypted = p.getIsEncrypted();
+			return {
+				id: p.getId().toString(),
+				title: isEncrypted ? null : p.getTitle() || 'Untitled Paste',
+				language: isEncrypted ? null : p.getLanguage() || null,
+				createdAt: p.getCreatedAt().toISOString(),
+				expiresAt: p.getExpiresAt().toISOString(),
+				readCount: p.getReadCount(),
+				isEncrypted,
+			};
+		});
 	}
 }

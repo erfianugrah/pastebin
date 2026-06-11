@@ -24,6 +24,8 @@ export interface Env {
 	RL_PASTE_CREATE?: RateLimit;
 	/** GET /api/search — bounded GIN-index probing. 30/60s. */
 	RL_SEARCH?: RateLimit;
+	/** GET /api/recent — public-feed scrape resistance. 60/60s (frontend polls ~4/min). */
+	RL_RECENT?: RateLimit;
 }
 
 // Custom fetch response extending the Response interface

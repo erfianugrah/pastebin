@@ -1,5 +1,45 @@
 # Changelog
 
+## [3.10.0] - 2026-06-11
+
+Privacy-by-default release. Title-metadata encryption (version 3),
+encryption on by default for new pastes, encrypted pastes excluded from
+the public search index + listing, and a rate limit on the recent feed.
+312 unit tests (was 287). 20 migrations. CSP hardening (nonce/SRI) and
+the Argon2id + length-padding crypto-v3 upgrade were explicitly deferred
+to focused follow-ups (the worker crypto path isn't exercised by the
+vitest suite, so KDF changes need manual browser verification before
+merge).
+
+### Privacy / security
+
+- **Title encryption (version 3).** New encrypted pastes encrypt the
+  title client-side under the same key/salt as the content, as an
+  independent `secretbox` blob. `CodeViewer` decrypts it best-effort
+  after the content and renders a "🔒 Encrypted paste" placeholder until
+  then; `PasteViewer` shows a neutral `document.title` so the ciphertext
+  title never lands in the tab title / history. version semantics:
+  `0` plaintext, `2` legacy E2EE (plaintext title), `3` E2EE content +
+  title. version 3 is `>= 2` everywhere so all existing E2E code paths
+  (`isE2EEncrypted`, `getSecurityType`, the handler return branch)
+  continue to treat it as encrypted.
+- **Encryption on by default.** `PasteForm` defaults to key-mode E2EE for
+  new pastes; opt out per paste via Encryption → "None". Edit mode forces
+  it back off because the update path leaves `version`/`is_encrypted`
+  untouched — re-encrypting a plaintext paste would store ciphertext the
+  viewer never decrypts.
+- **Encrypted-paste metadata withheld from public surfaces.** Migration
+  `20260611120000_search_vector_exclude_encrypted` redefines the
+  `search_vector` generated column to resolve to `''` for any
+  `is_encrypted` row (also retroactively removing legacy version-2
+  plaintext titles from the index). `GetRecentPastesQuery` /
+  `SearchPastesQuery` DTOs send `title: null` + `language: null` and add
+  `isEncrypted` for encrypted pastes; `RecentPastes` renders the lock
+  placeholder.
+- **Recent-feed scrape resistance.** New `RL_RECENT` binding (60/60s per
+  IP) on `GET /api/recent` — previously unprotected, and the frontend
+  cache-busts every poll so scrapers hit the Worker directly.
+
 ## [3.9.0] - 2026-05-19
 
 Verified code-review fixes. CSP rewrite + atomic update RPC + missing

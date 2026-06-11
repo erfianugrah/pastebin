@@ -5,10 +5,11 @@ import { cn } from '../lib/utils';
 
 interface Paste {
 	id: string;
-	title?: string;
-	language?: string;
+	title?: string | null;
+	language?: string | null;
 	createdAt: string;
 	readCount: number;
+	isEncrypted?: boolean;
 }
 
 const PAGE_SIZE = 25;
@@ -169,10 +170,10 @@ export default function RecentPastes() {
 							<tr key={paste.id}>
 								<td className="font-medium max-w-xs">
 									<a href={`/pastes/${paste.id}`} className="text-link hover:underline truncate block">
-										{paste.title || 'Untitled'}
+										{paste.isEncrypted ? '🔒 Encrypted paste' : paste.title || 'Untitled'}
 									</a>
 								</td>
-								<td className="text-muted-foreground text-xs">{paste.language || '—'}</td>
+								<td className="text-muted-foreground text-xs">{paste.isEncrypted ? '—' : paste.language || '—'}</td>
 								<td className="text-right font-mono">{paste.readCount}</td>
 								<td className="text-muted-foreground text-xs whitespace-nowrap">{relativeAge(new Date(paste.createdAt))}</td>
 								<td className="col-actions">

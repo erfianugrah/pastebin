@@ -65,7 +65,30 @@ describe('GetRecentPastesQuery', () => {
 			createdAt: '2024-01-01T12:00:00.000Z',
 			expiresAt: expect.any(String),
 			readCount: 5,
+			isEncrypted: false,
 		});
+	});
+
+	it('withholds title + language for encrypted pastes (no metadata leak)', async () => {
+		const encrypted = new Paste(
+			PasteId.create('enc'),
+			'ciphertext',
+			new Date('2024-01-01T12:00:00Z'),
+			ExpirationPolicy.create(86400),
+			'ciphertext-title', // would be E2E ciphertext in production
+			'python',
+			'public',
+			false,
+			0,
+			true, // isEncrypted
+			undefined,
+			3, // version 3 = title also encrypted
+		);
+		vi.mocked(mockRepository.findRecentPublic).mockResolvedValue([encrypted]);
+
+		const result = await query.execute(10);
+
+		expect(result[0]).toMatchObject({ id: 'enc', title: null, language: null, isEncrypted: true });
 	});
 
 	it('should use "Untitled Paste" for pastes without titles', async () => {
