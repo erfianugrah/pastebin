@@ -8,11 +8,15 @@ import {
 	encodeBase64,
 	decodeBase64,
 	incrementalBase64Decode,
-	PBKDF2_ITERATIONS,
 	SALT_LENGTH,
 	KEY_LENGTH,
 	LARGE_FILE_THRESHOLD,
 	CHUNK_SIZE,
+	CRYPTO_VERSION_ARGON2_PADDED,
+	deriveKeyArgon2id,
+	deriveKeyForVersion,
+	padMessage,
+	unpadMessage,
 } from './crypto-shared';
 
 /**
@@ -22,36 +26,15 @@ import {
 async function deriveKeyFromPassword(
 	password: string,
 	saltBase64?: string,
-	isLargeFile: boolean = false,
+	_isLargeFile: boolean = false,
 ): Promise<{ key: string; salt: string }> {
 	try {
 		// Generate salt if not provided
 		const salt = saltBase64 ? decodeBase64(saltBase64) : crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
 
-		// Convert password to a format usable by Web Crypto API
-		const passwordEncoder = new TextEncoder();
-		const passwordBuffer = passwordEncoder.encode(password);
-
-		// Import the password as a key
-		const passwordKey = await crypto.subtle.importKey('raw', passwordBuffer, { name: 'PBKDF2' }, false, ['deriveKey', 'deriveBits']);
-
-		// Use adaptive iteration count based on file size for performance
-		const iterations = PBKDF2_ITERATIONS;
-
-		// Use PBKDF2 to derive a key
-		const derivedBits = await crypto.subtle.deriveBits(
-			{
-				name: 'PBKDF2',
-				salt: salt as unknown as BufferSource,
-				iterations: iterations,
-				hash: 'SHA-256',
-			},
-			passwordKey,
-			KEY_LENGTH * 8, // Key length in bits (32 bytes * 8)
-		);
-
-		// Convert the derived bits to a Uint8Array for TweetNaCl
-		const derivedKey = new Uint8Array(derivedBits);
+		// New encryption is always version 4 → Argon2id. Legacy PBKDF2 lives on
+		// the decrypt path via deriveKeyForVersion(), keyed on paste version.
+		const derivedKey = await deriveKeyArgon2id(password, salt);
 
 		return {
 			key: encodeBase64(derivedKey),
@@ -74,8 +57,8 @@ async function encryptData(data: string, keyBase64: string, isPasswordDerived = 
 			throw new Error(`Invalid key length: ${key.length}, expected: ${KEY_LENGTH}`);
 		}
 
-		// Convert content to Uint8Array
-		const messageUint8 = new TextEncoder().encode(data);
+		// Convert content to Uint8Array, then length-pad (version 4 format).
+		const messageUint8 = padMessage(new TextEncoder().encode(data));
 
 		// Create nonce (unique value for each encryption)
 		const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
@@ -128,6 +111,7 @@ async function decryptData(
 	isPasswordProtected = false,
 	reportProgress = false,
 	requestId = '',
+	version = 0,
 ): Promise<string> {
 	try {
 		const isLargeFile = encryptedBase64.length > LARGE_FILE_THRESHOLD;
@@ -270,9 +254,9 @@ async function decryptData(
 				}, 300);
 			}
 
-			// Derive key from password using the extracted salt
-			const { key: derivedKeyBase64 } = await deriveKeyFromPassword(keyBase64, encodeBase64(salt), isLargeFile);
-			key = decodeBase64(derivedKeyBase64);
+			// Derive key from password using the extracted salt. KDF (Argon2id for
+			// v4, PBKDF2 for legacy v<=3) is selected by the paste version.
+			key = await deriveKeyForVersion(keyBase64, salt, version);
 
 			// Report password derivation complete
 			if (reportProgress) {
@@ -341,11 +325,14 @@ async function decryptData(
 		}
 
 		// Decrypt the data
-		const decryptedData = nacl.secretbox.open(ciphertext, nonce, key);
+		const opened = nacl.secretbox.open(ciphertext, nonce, key);
 
-		if (!decryptedData) {
+		if (!opened) {
 			throw new Error('Decryption failed - invalid key or corrupted data');
 		}
+
+		// version 4+ messages are length-padded; strip back to original bytes.
+		const decryptedData = version >= CRYPTO_VERSION_ARGON2_PADDED ? unpadMessage(opened) : opened;
 
 		// Report decryption complete, starting text conversion
 		if (reportProgress) {
@@ -704,7 +691,7 @@ self.onmessage = async (event: MessageEvent) => {
 
 			case 'decrypt':
 				// Perform optimized chunked decryption with progress reporting
-				result = await decryptData(params.encrypted, params.key, params.isPasswordProtected, reportProgress, requestId);
+				result = await decryptData(params.encrypted, params.key, params.isPasswordProtected, reportProgress, requestId, params.version ?? 0);
 				break;
 
 			default:

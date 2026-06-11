@@ -37,6 +37,7 @@
  */
 
 import { encryptData, decryptData, generateEncryptionKey } from './crypto';
+import { CRYPTO_VERSION_ARGON2_PADDED } from './crypto-shared';
 
 const STORAGE_PREFIX = '__secure_pasteriser_';
 const MASTER_KEY_NAME = `${STORAGE_PREFIX}mk`;
@@ -106,7 +107,10 @@ export async function secureRetrieve(key: string): Promise<string | null> {
     }
     
     const masterKey = await getMasterKey();
-    const decryptedValue = await decryptData(encryptedValue, masterKey);
+    // encryptData always writes the version-4 (length-padded) format, so
+    // decrypt as v4 to strip the padding. Pre-upgrade unpadded cache entries
+    // fail here and are evicted by the catch below — harmless for a cache.
+    const decryptedValue = await decryptData(encryptedValue, masterKey, false, CRYPTO_VERSION_ARGON2_PADDED);
     
     return decryptedValue;
   } catch (error) {

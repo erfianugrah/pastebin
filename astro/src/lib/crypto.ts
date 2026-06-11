@@ -9,11 +9,15 @@ import {
 	encodeBase64,
 	decodeBase64,
 	incrementalBase64Decode,
-	PBKDF2_ITERATIONS,
 	SALT_LENGTH,
 	KEY_LENGTH,
 	LARGE_FILE_THRESHOLD,
 	CHUNK_SIZE,
+	CRYPTO_VERSION_ARGON2_PADDED,
+	deriveKeyArgon2id,
+	deriveKeyForVersion,
+	padMessage,
+	unpadMessage,
 } from './crypto-shared';
 
 // Only log in development environments
@@ -257,7 +261,7 @@ async function fallbackToMainThread<T>(operation: WorkerOperation, params: any):
 		case 'encrypt':
 			return (await encryptDataMain(params.data, params.key, params.isPasswordDerived, params.salt)) as T;
 		case 'decrypt':
-			return (await decryptDataMain(params.encrypted, params.key, params.isPasswordProtected, params.onProgress)) as T;
+			return (await decryptDataMain(params.encrypted, params.key, params.isPasswordProtected, params.version ?? 0, params.onProgress)) as T;
 		default:
 			throw new Error(`Unknown operation: ${operation}`);
 	}
@@ -280,36 +284,16 @@ export function generateEncryptionKey(): string {
 async function deriveKeyFromPasswordMain(
 	password: string,
 	saltBase64?: string,
-	isLargeFile: boolean = false,
+	_isLargeFile: boolean = false,
 ): Promise<{ key: string; salt: string }> {
 	try {
 		// Generate salt if not provided
 		const salt = saltBase64 ? decodeBase64(saltBase64) : crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
 
-		// Convert password to a format usable by Web Crypto API
-		const passwordEncoder = new TextEncoder();
-		const passwordBuffer = passwordEncoder.encode(password);
-
-		// Import the password as a key
-		const passwordKey = await crypto.subtle.importKey('raw', passwordBuffer, { name: 'PBKDF2' }, false, ['deriveKey', 'deriveBits']);
-
-		// Use adaptive iteration count based on file size for performance
-		const iterations = PBKDF2_ITERATIONS;
-
-		// Use PBKDF2 to derive a key
-		const derivedBits = await crypto.subtle.deriveBits(
-			{
-				name: 'PBKDF2',
-				salt: salt as unknown as BufferSource,
-				iterations: iterations,
-				hash: 'SHA-256',
-			},
-			passwordKey,
-			KEY_LENGTH * 8, // Key length in bits (32 bytes * 8)
-		);
-
-		// Convert the derived bits to a Uint8Array for TweetNaCl
-		const derivedKey = new Uint8Array(derivedBits);
+		// New encryption is always version 4 → Argon2id (memory-hard). Legacy
+		// PBKDF2 derivation still happens on the DECRYPT path via
+		// deriveKeyForVersion(), selected by the paste's stored version.
+		const derivedKey = await deriveKeyArgon2id(password, salt);
 
 		return {
 			key: encodeBase64(derivedKey),
@@ -345,8 +329,9 @@ async function encryptDataMain(data: string, keyBase64: string, isPasswordDerive
 			throw new Error(`Invalid key length: ${key.length}, expected: ${KEY_LENGTH}`);
 		}
 
-		// Convert content to Uint8Array
-		const messageUint8 = new TextEncoder().encode(data);
+		// Convert content to Uint8Array, then length-pad (version 4 format) so
+		// the stored ciphertext length only reveals the padding bucket.
+		const messageUint8 = padMessage(new TextEncoder().encode(data));
 
 		// Create nonce (unique value for each encryption)
 		const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
@@ -387,6 +372,7 @@ async function decryptDataMain(
 	encryptedBase64: string,
 	keyBase64: string,
 	isPasswordProtected = false,
+	version = 0,
 	progressCallback?: (progress: { percent: number }) => void,
 ): Promise<string> {
 	// Only log sensitive crypto operations in development
@@ -429,10 +415,9 @@ async function decryptDataMain(
 			nonce = encryptedMessage.slice(SALT_LENGTH, SALT_LENGTH + nacl.secretbox.nonceLength);
 			ciphertext = encryptedMessage.slice(SALT_LENGTH + nacl.secretbox.nonceLength);
 
-			// Derive key from password using the extracted salt
-			// Use adaptive iteration count for large files
-			const { key: derivedKeyBase64 } = await deriveKeyFromPasswordMain(keyBase64, encodeBase64(salt), isLargeFile);
-			key = decodeBase64(derivedKeyBase64);
+			// Derive key from password using the extracted salt. The KDF (Argon2id
+			// for v4, PBKDF2 for legacy v<=3) is selected by the paste version.
+			key = await deriveKeyForVersion(keyBase64, salt, version);
 
 			// Report progress after key derivation
 			if (progressCallback && isLargeFile) {
@@ -457,12 +442,16 @@ async function decryptDataMain(
 		}
 
 		// Decrypt the data
-		const decryptedData = nacl.secretbox.open(ciphertext, nonce, key);
+		const opened = nacl.secretbox.open(ciphertext, nonce, key);
 
-		if (!decryptedData) {
+		if (!opened) {
 			if (isDev) console.error('Decryption failed - invalid key or corrupted data');
 			throw new Error('Decryption failed - invalid key or corrupted data');
 		}
+
+		// version 4+ messages are length-padded; strip the padding back to the
+		// original plaintext bytes. Legacy v<=3 messages are stored as-is.
+		const decryptedData = version >= CRYPTO_VERSION_ARGON2_PADDED ? unpadMessage(opened) : opened;
 
 		// Only log in development
 		if (isDev) {
@@ -639,11 +628,12 @@ export async function decryptData(
 	encryptedBase64: string,
 	keyBase64: string,
 	isPasswordProtected = false,
+	version = 0,
 	progressCallback?: (progress: { percent: number }) => void,
 ): Promise<string> {
 	// Skip worker for server-side rendering or very small data
 	if (typeof window === 'undefined' || encryptedBase64.length < LARGE_FILE_THRESHOLD / 10) {
-		return decryptDataMain(encryptedBase64, keyBase64, isPasswordProtected, progressCallback);
+		return decryptDataMain(encryptedBase64, keyBase64, isPasswordProtected, version, progressCallback);
 	}
 
 	// Use the worker for client-side rendering with sufficient data size
@@ -673,11 +663,12 @@ export async function decryptData(
 				encrypted: encryptedBase64,
 				key: keyBase64,
 				isPasswordProtected,
+				version,
 			},
 			onProgress,
 		);
 	} catch (error) {
 		if (isDev) console.error('Worker-based decryption failed, using main thread:', error);
-		return decryptDataMain(encryptedBase64, keyBase64, isPasswordProtected, progressCallback);
+		return decryptDataMain(encryptedBase64, keyBase64, isPasswordProtected, version, progressCallback);
 	}
 }

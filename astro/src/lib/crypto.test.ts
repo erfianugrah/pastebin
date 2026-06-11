@@ -1,369 +1,229 @@
 /**
- * Tests for the crypto functions
+ * Tests for the crypto functions.
+ *
+ * Format/version notes (see crypto-shared.ts):
+ *   - encryptData() always writes the version-4 format: length-padded
+ *     plaintext, Argon2id for password mode.
+ *   - decryptData(..., version) selects the KDF + whether to strip padding.
+ *     version >= 4 -> Argon2id + unpad; version <= 3 -> PBKDF2 + no unpad
+ *     (legacy, kept forever so old pastes keep decrypting).
+ *
+ * Argon2id runs for real here (hash-wasm, works in node) — it does NOT use
+ * crypto.subtle, so the subtle mock below only affects the legacy-PBKDF2
+ * backward-compat path.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import nacl from 'tweetnacl';
-import { 
-  generateEncryptionKey, 
-  encryptData, 
-  decryptData, 
-  deriveKeyFromPassword 
-} from './crypto';
+import { generateEncryptionKey, encryptData, decryptData, deriveKeyFromPassword } from './crypto';
+import { encodeBase64, deriveKeyPBKDF2, SALT_LENGTH, PAD_BLOCK, CRYPTO_VERSION_ARGON2_PADDED } from './crypto-shared';
 
-// Mock Web Worker environment for testing
+const V4 = CRYPTO_VERSION_ARGON2_PADDED;
+
+// Mock Web Worker that immediately errors, forcing the main-thread fallback
+// (the worker path itself is not exercisable under vitest).
 class MockWorker {
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  
-  constructor() {
-    // Immediately fail when used in tests to force fallback paths
-    setTimeout(() => {
-      if (this.onerror) {
-        this.onerror(new ErrorEvent('error', { 
-          message: 'Mock Worker Error',
-          error: new Error('Mock Worker Error')
-        }));
-      }
-    }, 0);
-  }
-  
-  postMessage() {}
-  onerror: ((event: ErrorEvent) => void) | null = null;
+	onmessage: ((event: MessageEvent) => void) | null = null;
+	onerror: ((event: ErrorEvent) => void) | null = null;
+	constructor() {
+		setTimeout(() => {
+			this.onerror?.(new ErrorEvent('error', { message: 'Mock Worker Error', error: new Error('Mock Worker Error') }));
+		}, 0);
+	}
+	postMessage() {}
 }
 
 describe('Crypto utilities', () => {
-  // Save the original window
-  const originalWindow = global.window;
-  
-  beforeEach(() => {
-    // Mock window for testing
-    global.window = {
-      ...originalWindow,
-      Worker: MockWorker as any
-    } as any;
-    
-    // Mock crypto.subtle for tests
-    Object.defineProperty(global, 'crypto', {
-      value: {
-        getRandomValues: (array: Uint8Array) => {
-          // Fill with deterministic values for testing
-          for (let i = 0; i < array.length; i++) {
-            array[i] = i % 256;
-          }
-          return array;
-        },
-        subtle: {
-          importKey: vi.fn().mockResolvedValue('mockKey'),
-          deriveBits: vi.fn().mockImplementation((params, key, length) => {
-            // Create a more realistic mock that returns different values
-            // based on the input salt and password
-            const mockParams = params as { salt: Uint8Array };
-            const salt = mockParams.salt;
-            const saltSum = salt.reduce((acc, val) => acc + val, 0);
-            
-            // Create a derived key based on the salt sum
-            const derivedKey = new Uint8Array(32);
-            for (let i = 0; i < derivedKey.length; i++) {
-              derivedKey[i] = (saltSum + i) % 256;
-            }
-            
-            return Promise.resolve(derivedKey.buffer);
-          })
-        }
-      },
-      configurable: true
-    });
-    
-    // Silence console logs during tests
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-  });
-  
-  afterEach(() => {
-    // Restore original window
-    global.window = originalWindow;
-    
-    // Restore console
-    vi.restoreAllMocks();
-  });
-  
-  describe('generateEncryptionKey', () => {
-    it('should generate a random key of the correct length', () => {
-      const key = generateEncryptionKey();
-      
-      // Check that we get a string
-      expect(typeof key).toBe('string');
-      
-      // The base64 encoded key should be approximately 44 characters
-      // (32 bytes encoded in base64)
-      expect(key.length).toBeGreaterThanOrEqual(42);
-      expect(key.length).toBeLessThanOrEqual(46);
-    });
-    
-    it('should generate unique keys each time', () => {
-      const key1 = generateEncryptionKey();
-      const key2 = generateEncryptionKey();
-      
-      expect(key1).not.toEqual(key2);
-    });
-  });
-  
-  describe('encryptData and decryptData', () => {
-    it('should encrypt and decrypt data with a key correctly', async () => {
-      const originalData = 'This is a test message to be encrypted';
-      const key = generateEncryptionKey();
-      
-      // Encrypt the data
-      const encrypted = await encryptData(originalData, key);
-      
-      // Make sure we got a string back
-      expect(typeof encrypted).toBe('string');
-      
-      // The encrypted data should be longer than the original
-      expect(encrypted.length).toBeGreaterThan(originalData.length);
-      
-      // Decrypt the data
-      const decrypted = await decryptData(encrypted, key);
-      
-      // Verify that we got our original data back
-      expect(decrypted).toBe(originalData);
-    });
-    
-    it('should encrypt and decrypt data with a password correctly', async () => {
-      const originalData = 'This is a test message to be encrypted with a password';
-      const password = 'test-password-123';
-      
-      // Derive a key from the password
-      const { key, salt } = await deriveKeyFromPassword(password);
-      
-      // Encrypt the data with the derived key
-      const encrypted = await encryptData(originalData, key, true, salt);
-      
-      // Decrypt the data with the password
-      const decrypted = await decryptData(encrypted, password, true);
-      
-      // Verify that we got our original data back
-      expect(decrypted).toBe(originalData);
-    });
-    
-    it('should fail to decrypt with the wrong key', async () => {
-      const originalData = 'This is a test message to be encrypted';
-      const correctKey = generateEncryptionKey();
-      const wrongKey = generateEncryptionKey();
-      
-      // Encrypt with the correct key
-      const encrypted = await encryptData(originalData, correctKey);
-      
-      // Attempt to decrypt with the wrong key
-      await expect(decryptData(encrypted, wrongKey)).rejects.toThrow();
-    });
-    
-    it('should fail to decrypt password-protected data with the wrong password', async () => {
-      // Simplify this test to directly test our decryption logic without complex mocking
-      
-      // Create a test spy for decryptDataMain instead of altering nacl
-      const decryptModulePath = './crypto';
-      vi.doMock(decryptModulePath, async () => {
-        const originalModule = await vi.importActual(decryptModulePath);
-        return {
-          ...originalModule,
-          // Override decryptData to throw with wrong password
-          decryptData: vi.fn().mockImplementation(async (encrypted, password, isPasswordProtected) => {
-            if (isPasswordProtected && password === 'wrong-password-456') {
-              throw new Error('Decryption failed - invalid key or corrupted data');
-            }
-            return 'decrypted content';
-          }),
-        };
-      });
-      
-      // Import the mocked module
-      const { decryptData: mockedDecrypt } = await import('./crypto');
-      
-      // Simple test with the mocked function
-      await expect(mockedDecrypt('encrypted-content', 'wrong-password-456', true))
-        .rejects.toThrow('Decryption failed');
-      
-      // Clear the mock to prevent affecting other tests
-      vi.resetModules();
-      vi.doUnmock(decryptModulePath);
-    });
-    
-    it('should encrypt and decrypt large data efficiently', async () => {
-      // Create a large string (>10KB)
-      const largeData = 'A'.repeat(20000);
-      const key = generateEncryptionKey();
-      
-      // Encrypt the large data
-      const encrypted = await encryptData(largeData, key);
-      
-      // Decrypt the large data
-      const decrypted = await decryptData(encrypted, key);
-      
-      // Verify we got the original data back
-      expect(decrypted).toBe(largeData);
-    });
-  });
-  
-  describe('deriveKeyFromPassword', () => {
-    it('should derive identical keys from the same password and salt', async () => {
-      const password = 'my-secure-password';
-      
-      // Generate a key with a random salt
-      const { key: key1, salt } = await deriveKeyFromPassword(password);
-      
-      // Generate another key with the same password and salt
-      const { key: key2 } = await deriveKeyFromPassword(password, salt);
-      
-      // The keys should be identical
-      expect(key1).toBe(key2);
-    });
-    
-    it('should derive different keys from the same password with different salts', async () => {
-      // For this test we need to ensure different salts produce different keys
-      const password = 'my-secure-password';
-      
-      // Mock crypto.subtle to generate different keys based on salt
-      const originalSubtle = crypto.subtle;
-      let iteration = 0;
-      
-      try {
-        // Override crypto.subtle.deriveBits to produce different results
-        Object.defineProperty(crypto, 'subtle', {
-          value: {
-            importKey: vi.fn().mockResolvedValue('mockKey'),
-            deriveBits: vi.fn().mockImplementation(() => {
-              // Generate a unique key for each call
-              iteration++;
-              const mockDerivedKey = new Uint8Array(32);
-              for (let i = 0; i < mockDerivedKey.length; i++) {
-                mockDerivedKey[i] = (iteration * 10 + i) % 256;
-              }
-              return Promise.resolve(mockDerivedKey.buffer);
-            })
-          },
-          configurable: true
-        });
-        
-        // Generate a key with the first mock
-        const { key: key1 } = await deriveKeyFromPassword(password);
-        
-        // Generate another key with the second mock
-        const { key: key2 } = await deriveKeyFromPassword(password);
-        
-        // The keys should be different
-        expect(key1).not.toBe(key2);
-      } finally {
-        // Restore original subtle
-        Object.defineProperty(crypto, 'subtle', {
-          value: originalSubtle,
-          configurable: true
-        });
-      }
-    });
-    
-    it('should derive different keys from different passwords with the same salt', async () => {
-      // For this test we need to ensure different passwords produce different keys
-      const password1 = 'password-one';
-      const password2 = 'password-two';
-      
-      // Generate a valid salt to test with
-      const validSalt = new Uint8Array(16);
-      crypto.getRandomValues(validSalt);
-      const saltBase64 = btoa(String.fromCharCode.apply(null, Array.from(validSalt)));
-      
-      // Mock crypto.subtle to generate different keys based on password
-      const originalSubtle = crypto.subtle;
-      let passwordCounter = 0;
-      
-      try {
-        // Override crypto.subtle with a simpler implementation
-        Object.defineProperty(crypto, 'subtle', {
-          value: {
-            importKey: vi.fn().mockResolvedValue('mockKey'),
-            deriveBits: vi.fn().mockImplementation(() => {
-              // Increment counter to produce different keys for different calls
-              passwordCounter++;
-              
-              // Generate a key based on the counter
-              const mockDerivedKey = new Uint8Array(32);
-              for (let i = 0; i < mockDerivedKey.length; i++) {
-                mockDerivedKey[i] = (passwordCounter * 10 + i) % 256;
-              }
-              
-              return Promise.resolve(mockDerivedKey.buffer);
-            })
-          },
-          configurable: true
-        });
-        
-        // Generate a key from the first password
-        const { key: key1 } = await deriveKeyFromPassword(password1, saltBase64);
-        
-        // Generate a key from the second password with the same salt
-        const { key: key2 } = await deriveKeyFromPassword(password2, saltBase64);
-        
-        // The keys should be different
-        expect(key1).not.toBe(key2);
-      } finally {
-        // Restore original subtle
-        Object.defineProperty(crypto, 'subtle', {
-          value: originalSubtle,
-          configurable: true
-        });
-      }
-    });
-    
-    it('should handle worker failures gracefully', async () => {
-      const password = 'test-password';
-      
-      // Worker should fail and fall back to main thread
-      const result = await deriveKeyFromPassword(password);
-      
-      // Verify we got a valid result despite worker failure
-      expect(result).toHaveProperty('key');
-      expect(result).toHaveProperty('salt');
-      expect(typeof result.key).toBe('string');
-      expect(typeof result.salt).toBe('string');
-    });
-  });
-  
-  describe('Server-side rendering compatibility', () => {
-    beforeEach(() => {
-      // Remove window to simulate SSR
-      global.window = undefined as any;
-    });
-    
-    it('should work in SSR environment for key derivation', async () => {
-      const password = 'ssr-test-password';
-      
-      // Should not throw even though window is undefined
-      const result = await deriveKeyFromPassword(password);
-      
-      expect(result).toHaveProperty('key');
-      expect(result).toHaveProperty('salt');
-    });
-    
-    it('should work in SSR environment for encryption', async () => {
-      const data = 'SSR encryption test';
-      const key = generateEncryptionKey();
-      
-      // Should not throw even though window is undefined
-      const encrypted = await encryptData(data, key);
-      
-      expect(typeof encrypted).toBe('string');
-    });
-    
-    it('should work in SSR environment for decryption', async () => {
-      // First encrypt in SSR
-      const data = 'SSR decryption test';
-      const key = generateEncryptionKey();
-      const encrypted = await encryptData(data, key);
-      
-      // Then decrypt in SSR
-      const decrypted = await decryptData(encrypted, key);
-      
-      expect(decrypted).toBe(data);
-    });
-  });
+	const originalWindow = global.window;
+
+	beforeEach(() => {
+		global.window = { ...originalWindow, Worker: MockWorker as any } as any;
+
+		// Deterministic getRandomValues + a fake-but-deterministic PBKDF2
+		// (used only by the legacy backward-compat path).
+		Object.defineProperty(global, 'crypto', {
+			value: {
+				getRandomValues: (array: Uint8Array) => {
+					for (let i = 0; i < array.length; i++) array[i] = i % 256;
+					return array;
+				},
+				subtle: {
+					importKey: vi.fn().mockResolvedValue('mockKey'),
+					deriveBits: vi.fn().mockImplementation((params: { salt: Uint8Array }) => {
+						const saltSum = params.salt.reduce((acc, val) => acc + val, 0);
+						const derivedKey = new Uint8Array(32);
+						for (let i = 0; i < derivedKey.length; i++) derivedKey[i] = (saltSum + i) % 256;
+						return Promise.resolve(derivedKey.buffer);
+					}),
+				},
+			},
+			configurable: true,
+		});
+
+		vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		global.window = originalWindow;
+		vi.restoreAllMocks();
+	});
+
+	describe('generateEncryptionKey', () => {
+		it('generates a base64 key of the correct length', () => {
+			const key = generateEncryptionKey();
+			expect(typeof key).toBe('string');
+			expect(key.length).toBeGreaterThanOrEqual(42);
+			expect(key.length).toBeLessThanOrEqual(46);
+		});
+
+		it('generates unique keys each time', () => {
+			expect(generateEncryptionKey()).not.toEqual(generateEncryptionKey());
+		});
+	});
+
+	describe('encryptData / decryptData (version 4)', () => {
+		it('round-trips with a random key', async () => {
+			const original = 'This is a test message to be encrypted';
+			const key = generateEncryptionKey();
+			const encrypted = await encryptData(original, key);
+			expect(typeof encrypted).toBe('string');
+			const decrypted = await decryptData(encrypted, key, false, V4);
+			expect(decrypted).toBe(original);
+		});
+
+		it('round-trips with an Argon2id password-derived key', async () => {
+			const original = 'This is a test message encrypted with a password';
+			const password = 'test-password-123';
+			const { key, salt } = await deriveKeyFromPassword(password);
+			const encrypted = await encryptData(original, key, true, salt);
+			const decrypted = await decryptData(encrypted, password, true, V4);
+			expect(decrypted).toBe(original);
+		});
+
+		it('fails to decrypt with the wrong key', async () => {
+			const encrypted = await encryptData('secret', generateEncryptionKey());
+			await expect(decryptData(encrypted, generateEncryptionKey(), false, V4)).rejects.toThrow();
+		});
+
+		it('fails to decrypt password data with the wrong password', async () => {
+			const { key, salt } = await deriveKeyFromPassword('correct-horse');
+			const encrypted = await encryptData('secret', key, true, salt);
+			await expect(decryptData(encrypted, 'wrong-password', true, V4)).rejects.toThrow();
+		});
+
+		it('round-trips large data', async () => {
+			const large = 'A'.repeat(20000);
+			const key = generateEncryptionKey();
+			const encrypted = await encryptData(large, key);
+			expect(await decryptData(encrypted, key, false, V4)).toBe(large);
+		});
+
+		it('round-trips empty and unicode content', async () => {
+			const key = generateEncryptionKey();
+			for (const s of ['', 'a', '🔒🗝️ émojî and ünïcode', 'x'.repeat(PAD_BLOCK)]) {
+				const enc = await encryptData(s, key);
+				expect(await decryptData(enc, key, false, V4)).toBe(s);
+			}
+		});
+	});
+
+	describe('length-padding hides plaintext length', () => {
+		it('produces identical ciphertext length for differently-sized short secrets', async () => {
+			const key = generateEncryptionKey();
+			// Both well under one PAD_BLOCK (minus the 4-byte length prefix).
+			const a = await encryptData('hi', key);
+			const b = await encryptData('a much longer but still sub-block secret value', key);
+			expect(a.length).toBe(b.length);
+		});
+
+		it('grows by one bucket when crossing a block boundary', async () => {
+			const key = generateEncryptionKey();
+			const small = await encryptData('x'.repeat(10), key);
+			const big = await encryptData('x'.repeat(PAD_BLOCK + 10), key);
+			expect(big.length).toBeGreaterThan(small.length);
+		});
+	});
+
+	describe('backward compatibility (legacy version 2, PBKDF2, unpadded)', () => {
+		it('decrypts a legacy password blob with version 2', async () => {
+			// Build a pre-v4 blob by hand: PBKDF2 key, NO padding, [salt|nonce|ct].
+			const password = 'legacy-password';
+			const salt = new Uint8Array(SALT_LENGTH).fill(3);
+			const legacyKey = await deriveKeyPBKDF2(password, salt);
+			const message = new TextEncoder().encode('legacy plaintext content');
+			const nonce = new Uint8Array(nacl.secretbox.nonceLength).fill(9);
+			const ct = nacl.secretbox(message, nonce, legacyKey);
+
+			const blob = new Uint8Array(salt.length + nonce.length + ct.length);
+			blob.set(salt);
+			blob.set(nonce, salt.length);
+			blob.set(ct, salt.length + nonce.length);
+
+			// version 2 -> PBKDF2 (no Argon2), no unpadding.
+			const out = await decryptData(encodeBase64(blob), password, true, 2);
+			expect(out).toBe('legacy plaintext content');
+		});
+
+		it('decrypts a legacy key-mode blob with version 0', async () => {
+			const key = new Uint8Array(32).fill(5);
+			const message = new TextEncoder().encode('legacy key-mode content');
+			const nonce = new Uint8Array(nacl.secretbox.nonceLength).fill(2);
+			const ct = nacl.secretbox(message, nonce, key);
+			const blob = new Uint8Array(nonce.length + ct.length);
+			blob.set(nonce);
+			blob.set(ct, nonce.length);
+
+			const out = await decryptData(encodeBase64(blob), encodeBase64(key), false, 0);
+			expect(out).toBe('legacy key-mode content');
+		});
+	});
+
+	describe('deriveKeyFromPassword (Argon2id)', () => {
+		const saltA = encodeBase64(new Uint8Array(SALT_LENGTH).fill(1));
+		const saltB = encodeBase64(new Uint8Array(SALT_LENGTH).fill(2));
+
+		it('derives identical keys from the same password and salt', async () => {
+			const { key: k1 } = await deriveKeyFromPassword('pw', saltA);
+			const { key: k2 } = await deriveKeyFromPassword('pw', saltA);
+			expect(k1).toBe(k2);
+		});
+
+		it('derives different keys from the same password with different salts', async () => {
+			const { key: k1 } = await deriveKeyFromPassword('pw', saltA);
+			const { key: k2 } = await deriveKeyFromPassword('pw', saltB);
+			expect(k1).not.toBe(k2);
+		});
+
+		it('derives different keys from different passwords with the same salt', async () => {
+			const { key: k1 } = await deriveKeyFromPassword('password-one', saltA);
+			const { key: k2 } = await deriveKeyFromPassword('password-two', saltA);
+			expect(k1).not.toBe(k2);
+		});
+
+		it('falls back gracefully when the worker fails', async () => {
+			const result = await deriveKeyFromPassword('test-password');
+			expect(typeof result.key).toBe('string');
+			expect(typeof result.salt).toBe('string');
+		});
+	});
+
+	describe('server-side rendering compatibility', () => {
+		beforeEach(() => {
+			global.window = undefined as any;
+		});
+
+		it('derives a key in SSR', async () => {
+			const result = await deriveKeyFromPassword('ssr-test-password');
+			expect(result).toHaveProperty('key');
+			expect(result).toHaveProperty('salt');
+		});
+
+		it('round-trips encryption in SSR', async () => {
+			const data = 'SSR encryption round-trip';
+			const key = generateEncryptionKey();
+			const encrypted = await encryptData(data, key);
+			expect(await decryptData(encrypted, key, false, V4)).toBe(data);
+		});
+	});
 });

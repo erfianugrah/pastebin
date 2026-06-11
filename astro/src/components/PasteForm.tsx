@@ -184,10 +184,11 @@ export default function PasteForm() {
 			const needsEncryption = e2eEncryption || (vis === 'private' && isE2EEncrypted) || !!password;
 
 			// ── Encrypt ──────────────────────────────────────────────────
-			// version 3 = content AND title encrypted (title is metadata that
-			// would otherwise leak via the DB / public listing). The title is
-			// encrypted under the same key/salt as the content, as an independent
-			// blob (own nonce). Empty titles are left as-is.
+			// version 4 = content AND title encrypted, Argon2id password mode,
+			// length-padded. Title is metadata that would otherwise leak via the
+			// DB / public listing; it's encrypted under the same key/salt as the
+			// content, as an independent blob (own nonce). Empty titles are left
+			// as-is. (version 3 was the PBKDF2/unpadded predecessor.)
 			if (needsEncryption) {
 				try {
 					setEncryptionProgress(0);
@@ -237,7 +238,7 @@ export default function PasteForm() {
 						burnAfterReading,
 						isEncrypted: needsEncryption,
 						viewLimit,
-						version: needsEncryption ? 3 : 0,
+						version: needsEncryption ? 4 : 0,
 						...(slug.trim() ? { slug: slug.trim().toLowerCase() } : {}),
 					}),
 			}).catch((fetchError) => {

@@ -273,17 +273,17 @@ export default function CodeViewer({ paste, sessionInfo, onDecrypted, onTitleDec
 		}, 50);
 
 		try {
-			const decryptedContent = await decryptData(paste.content, keyOrPassword, isPassword);
+			const decryptedContent = await decryptData(paste.content, keyOrPassword, isPassword, Number(paste.version) || 0);
 			setDecryptionProgress(100);
 			setContent(decryptedContent);
 			setDecrypted(true);
 			notifyDecrypted(decryptedContent);
 
-			// version 3 also encrypts the title under the same key/password.
+			// version 3+ also encrypts the title under the same key/password.
 			// Decrypt it best-effort; a failure just leaves the lock placeholder.
 			if (Number(paste.version) >= 3 && paste.title) {
 				try {
-					const t = await decryptData(paste.title, keyOrPassword, isPassword);
+					const t = await decryptData(paste.title, keyOrPassword, isPassword, Number(paste.version) || 0);
 					setDecryptedTitle(t);
 					onTitleDecrypted?.(t);
 				} catch {

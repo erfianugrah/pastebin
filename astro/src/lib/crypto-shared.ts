@@ -7,15 +7,38 @@
  */
 import nacl from 'tweetnacl';
 import util from 'tweetnacl-util';
+import { argon2id } from 'hash-wasm';
 
 // Re-export the encode helper as-is
 export const { encodeBase64 } = util;
 
 // ---- Constants ----
 
-export const PBKDF2_ITERATIONS = 300000; // High iteration count for better security
+export const PBKDF2_ITERATIONS = 300000; // High iteration count for better security (legacy v<=3 password mode)
 export const SALT_LENGTH = 16; // 16 bytes salt
 export const KEY_LENGTH = nacl.secretbox.keyLength; // 32 bytes for NaCl secretbox
+
+// ---- Argon2id parameters (version 4+ password mode) ----
+// OWASP first-choice baseline for interactive use: m=19 MiB, t=2, p=1.
+// Memory-hard → GPU/ASIC-resistant, unlike PBKDF2-SHA-256. ~100-150ms in
+// browser/worker/node. The salt + KDF are selected by the paste `version`
+// column on decrypt, so legacy PBKDF2 pastes keep decrypting forever.
+export const ARGON2_MEMORY_KIB = 19456; // 19 MiB
+export const ARGON2_ITERATIONS = 2;
+export const ARGON2_PARALLELISM = 1;
+
+// Encryption format versions (mirror of the DB `version` column):
+//   0 = plaintext
+//   2 = legacy E2EE (content only, plaintext title, PBKDF2, unpadded)
+//   3 = E2EE content + title (PBKDF2, unpadded)
+//   4 = E2EE content + title, Argon2id password mode, length-padded
+export const CRYPTO_VERSION_ARGON2_PADDED = 4;
+
+// Length-padding block size. Plaintext is padded to a multiple of this so the
+// stored ciphertext length only reveals the bucket, not the exact secret
+// length. 256 bytes bounds overhead while coarsening the sensitive
+// short-secret case to 256-byte granularity.
+export const PAD_BLOCK = 256;
 export const LARGE_FILE_THRESHOLD = 1000000; // 1 MB threshold for large file optimizations
 
 /**
@@ -113,4 +136,81 @@ export async function incrementalBase64Decode(
 
 	// Trim to the actual decoded length (padding may cause over-allocation)
 	return result.slice(0, resultOffset);
+}
+
+// ---- Key derivation (single source of truth for main thread + worker) ----
+
+/**
+ * Derive a 32-byte key from a password using Argon2id (version 4+).
+ * Memory-hard; resists offline GPU brute force on publicly-fetchable
+ * ciphertext far better than PBKDF2-SHA-256.
+ */
+export async function deriveKeyArgon2id(password: string, salt: Uint8Array): Promise<Uint8Array> {
+	const key = await argon2id({
+		password,
+		salt,
+		parallelism: ARGON2_PARALLELISM,
+		iterations: ARGON2_ITERATIONS,
+		memorySize: ARGON2_MEMORY_KIB,
+		hashLength: KEY_LENGTH,
+		outputType: 'binary',
+	});
+	return key as Uint8Array;
+}
+
+/**
+ * Derive a 32-byte key from a password using PBKDF2-SHA-256 (legacy, v<=3).
+ * Kept forever so existing password-protected pastes keep decrypting.
+ */
+export async function deriveKeyPBKDF2(password: string, salt: Uint8Array): Promise<Uint8Array> {
+	const passwordBuffer = new TextEncoder().encode(password);
+	const passwordKey = await crypto.subtle.importKey('raw', passwordBuffer, { name: 'PBKDF2' }, false, ['deriveBits']);
+	const derivedBits = await crypto.subtle.deriveBits(
+		{ name: 'PBKDF2', salt: salt as unknown as BufferSource, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+		passwordKey,
+		KEY_LENGTH * 8,
+	);
+	return new Uint8Array(derivedBits);
+}
+
+/**
+ * Select the KDF by paste version: version >= 4 uses Argon2id, older uses
+ * PBKDF2. This is the only place the KDF dispatch lives — main thread and
+ * worker both route through it so they cannot diverge.
+ */
+export async function deriveKeyForVersion(password: string, salt: Uint8Array, version: number): Promise<Uint8Array> {
+	return version >= CRYPTO_VERSION_ARGON2_PADDED ? deriveKeyArgon2id(password, salt) : deriveKeyPBKDF2(password, salt);
+}
+
+// ---- Length-padding (version 4+) ----
+
+/**
+ * Pad a plaintext message to a multiple of PAD_BLOCK. Layout:
+ *   [uint32 BE original-length][plaintext][zero padding]
+ * secretbox authenticates the whole thing, so the zero padding can't be
+ * tampered undetectably. Applied to BOTH key-mode and password-mode blobs.
+ */
+export function padMessage(message: Uint8Array): Uint8Array {
+	const len = message.length;
+	const bodyLen = 4 + len;
+	const total = Math.ceil(bodyLen / PAD_BLOCK) * PAD_BLOCK;
+	const out = new Uint8Array(total);
+	out[0] = (len >>> 24) & 0xff;
+	out[1] = (len >>> 16) & 0xff;
+	out[2] = (len >>> 8) & 0xff;
+	out[3] = len & 0xff;
+	out.set(message, 4);
+	return out;
+}
+
+/** Reverse padMessage: read the length prefix and slice off the original bytes. */
+export function unpadMessage(padded: Uint8Array): Uint8Array {
+	if (padded.length < 4) {
+		throw new Error('Invalid padded message: too short');
+	}
+	const len = ((padded[0] << 24) | (padded[1] << 16) | (padded[2] << 8) | padded[3]) >>> 0;
+	if (4 + len > padded.length) {
+		throw new Error('Invalid padding: declared length exceeds buffer');
+	}
+	return padded.slice(4, 4 + len);
 }

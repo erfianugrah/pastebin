@@ -1,5 +1,53 @@
 # Changelog
 
+## [3.11.0] - 2026-06-11
+
+Crypto hardening: Argon2id password KDF + length-padding (encryption
+format version 4). Builds on 3.10.0's privacy-by-default work. 316 root
+unit tests (+57 component). CSP nonce/SRI remains the separate deferred
+initiative.
+
+### Security
+
+- **Argon2id for password-mode key derivation (version 4).** New
+  password-protected pastes derive the key with Argon2id (19 MiB, t=2,
+  p=1) instead of PBKDF2-SHA-256. Password-mode pastes can be publicly
+  listed, so an attacker can fetch the ciphertext and brute-force the
+  password offline on GPUs — exactly where PBKDF2-SHA-256 is weakest.
+  Argon2id is memory-hard (OWASP first choice). Runs in browser / worker
+  / node via `hash-wasm` (WASM base64-inlined into both the worker and
+  main-thread chunks — no separate fetch).
+- **Length-padding (version 4).** Plaintext is padded to 256-byte
+  buckets (`[u32 BE length][plaintext][zero pad]`) before `secretbox`,
+  so stored ciphertext length only reveals the bucket, not the exact
+  secret size. Applied to both key-mode and password-mode blobs,
+  including the encrypted title.
+- **Single source of truth.** KDF dispatch (`deriveKeyForVersion`) and
+  `padMessage`/`unpadMessage` moved into `crypto-shared.ts`, shared by
+  `crypto.ts` (main thread) and `crypto-worker.ts` (Web Worker) so the
+  two can't diverge. The legacy PBKDF2 + unpadded path is kept forever
+  and selected on decrypt by the paste `version`, so all existing
+  pastes keep decrypting.
+- **`decryptData` gains a `version` parameter** (`(blob, keyOrPw,
+  isPassword, version, onProgress)`). `secureStorage` decrypts as v4
+  (its values are always freshly encrypted in the current format;
+  pre-upgrade unpadded cache entries self-evict via the existing
+  decrypt-failure catch).
+
+### Tests
+
+- crypto.test.ts rewritten for the v4 format: key + Argon2id password
+  round-trips, padding-hides-length assertions, and explicit
+  backward-compat fixtures that decrypt hand-built legacy v0 (key-mode)
+  and v2 (PBKDF2 password) blobs.
+
+### Known limitation
+
+- The Web Worker crypto path is not exercised by vitest (node has no
+  real `Worker`). The main-thread fallback — which shares the same
+  `crypto-shared.ts` primitives — is fully tested; the worker wrapper
+  itself needs manual browser verification before relying on it.
+
 ## [3.10.0] - 2026-06-11
 
 Privacy-by-default release. Title-metadata encryption (version 3),

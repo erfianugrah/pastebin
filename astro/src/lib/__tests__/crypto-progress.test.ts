@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { encryptData, decryptData, deriveKeyFromPassword, generateEncryptionKey } from '../crypto';
+import { CRYPTO_VERSION_ARGON2_PADDED as V4 } from '../crypto-shared';
 
 describe('Crypto Operations with Progress Support', () => {
   const testData = 'This is some test data to encrypt and decrypt';
@@ -64,6 +65,7 @@ describe('Crypto Operations with Progress Support', () => {
       encrypted,
       key,
       false,
+      V4,
       progressCallback
     );
     
@@ -97,6 +99,7 @@ describe('Crypto Operations with Progress Support', () => {
       encrypted,
       testPassword,
       true,
+      V4,
       decryptProgressCallback
     );
     
@@ -125,6 +128,7 @@ describe('Crypto Operations with Progress Support', () => {
       encrypted,
       key,
       false,
+      V4,
       progressCallback
     );
     
