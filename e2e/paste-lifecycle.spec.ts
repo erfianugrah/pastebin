@@ -46,16 +46,18 @@ test.describe('Paste Lifecycle', () => {
 		await expect(themeButton).toBeVisible();
 	});
 
-	test('Security & Privacy section toggles', async ({ page }) => {
+	test('encryption + visibility controls present; encryption on by default', async ({ page }) => {
 		await page.goto('/');
 		await expect(page.locator('textarea[name="content"]')).toBeVisible({ timeout: 10000 });
 
-		// Click Security & Privacy toggle
-		await page.click('text=Security & Privacy');
+		// The form shows the Visibility + Encryption controls directly (no
+		// collapsible "Security & Privacy" disclosure — that was removed in an
+		// earlier redesign).
+		await expect(page.getByText('Visibility', { exact: true })).toBeVisible();
+		await expect(page.getByText('Encryption', { exact: true })).toBeVisible();
 
-		// Should reveal visibility and encryption dropdowns
-		await expect(page.locator('text=Visibility')).toBeVisible();
-		await expect(page.locator('text=Encryption')).toBeVisible();
+		// Privacy-by-default regression guard: new pastes default to E2EE on.
+		await expect(page.locator('input[name="e2eEncryption"]')).toHaveValue('on');
 	});
 
 	test('recent pastes page loads', async ({ page }) => {
@@ -131,19 +133,26 @@ test.describe('API Endpoints', () => {
 		});
 	});
 
-	test('PUT /pastes/:id requires token', async ({ request }) => {
+	test('PUT /pastes/:id requires the correct token', async ({ request }) => {
 		const create = await request.post('/pastes', {
 			data: { content: 'original', expiration: 3600 },
 		});
 		const { id, deleteToken } = await create.json();
 
-		// Without token -> 403
-		const badRes = await request.put(`/pastes/${id}`, {
+		// No token at all -> 400: `token` is a required UUID in UpdatePasteSchema,
+		// so a missing token is a Zod `bad_request`, not an auth failure.
+		const noTokenRes = await request.put(`/pastes/${id}`, {
 			data: { content: 'hacked' },
 		});
-		expect(badRes.status()).toBe(403);
+		expect(noTokenRes.status()).toBe(400);
 
-		// With token -> 200
+		// Well-formed but wrong token -> 403 forbidden (paste found, token mismatch).
+		const wrongTokenRes = await request.put(`/pastes/${id}`, {
+			data: { token: '00000000-0000-0000-0000-000000000000', content: 'hacked' },
+		});
+		expect(wrongTokenRes.status()).toBe(403);
+
+		// Correct token -> 200
 		const goodRes = await request.put(`/pastes/${id}`, {
 			data: { token: deleteToken, content: 'updated' },
 		});
