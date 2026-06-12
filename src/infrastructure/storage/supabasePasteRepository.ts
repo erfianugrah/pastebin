@@ -317,24 +317,26 @@ export class SupabasePasteRepository implements PasteRepository {
 		return data.paste_id;
 	}
 
-	async saveSlug(slug: string, pasteId: string, expiresAt: Date): Promise<void> {
-		const { error } = await this.client.from('slugs').insert({
-			slug,
-			paste_id: pasteId,
-			expires_at: expiresAt.toISOString(),
+	async claimSlug(slug: string, pasteId: string, expiresAt: Date): Promise<boolean> {
+		// Atomic, dead-row-tolerant claim via the claim_slug RPC. Returns true
+		// when the slug was inserted (or upserted over an expired row), false
+		// when a LIVE row already holds it (race-loser or precheck miss). The
+		// RPC absorbs the expired-but-unreaped-row case that used to surface as
+		// a spurious 23505 — see the migration for the full rationale.
+		const { data, error } = await this.client.rpc('claim_slug', {
+			slug_text: slug,
+			paste_uuid: pasteId,
+			slug_expires_at: expiresAt.toISOString(),
 		});
 
 		if (error) {
-			// Postgres unique_violation when another request inserted the same
-			// slug between our resolveSlug() check and this insert (TOCTOU).
-			// Surface as a typed conflict so the API layer can return 409
-			// without leaking the raw Postgres error message.
-			if (error.code === '23505') {
-				throw new SlugTakenError(slug);
-			}
-			this.logger.error('Supabase: saveSlug failed', { slug, pasteId, error });
-			throw new Error(`Failed to save slug: ${error.message}`);
+			this.logger.error('Supabase: claimSlug failed', { slug, pasteId, error });
+			throw new Error(`Failed to claim slug: ${error.message}`);
 		}
+
+		// RPC returns a single-row table: [{ claimed: boolean }].
+		const row = Array.isArray(data) ? data[0] : data;
+		return row?.claimed === true;
 	}
 
 	// Maps Postgres snake_case columns to PasteData camelCase fields.
@@ -367,20 +369,5 @@ export class SupabasePasteRepository implements PasteRepository {
 			deleteToken: r.delete_token ?? undefined,
 			userId: r.user_id ?? undefined,
 		};
-	}
-}
-
-/**
- * Thrown by saveSlug() when the unique constraint on `slugs.slug` is hit —
- * either because two concurrent createPaste requests passed the resolveSlug
- * precheck (TOCTOU) or because resolveSlug missed for any reason. Translated
- * to HTTP 409 at the API boundary.
- */
-export class SlugTakenError extends Error {
-	readonly code = 'slug_taken';
-	constructor(public readonly slug: string) {
-		super(`Slug '${slug}' is already taken`);
-		this.name = 'SlugTakenError';
-		Object.setPrototypeOf(this, SlugTakenError.prototype);
 	}
 }

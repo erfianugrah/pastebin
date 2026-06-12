@@ -4,7 +4,6 @@ import { PasteRepository } from '../../domain/repositories/pasteRepository';
 import { ExpirationService } from '../../domain/services/expirationService';
 import { UniqueIdService } from '../../domain/services/uniqueIdService';
 import { AppError } from '../../infrastructure/errors/AppError';
-import { SlugTakenError } from '../../infrastructure/storage/supabasePasteRepository';
 
 // Using Zod 4 schema definition
 //
@@ -103,26 +102,30 @@ export class CreatePasteCommand {
 			opts.userId,
 		);
 
-		// Save to repository
-		await this.repository.save(paste);
-
-		// Register vanity slug if provided. Two concurrent creates with the
-		// same slug can both pass the resolveSlug precheck — saveSlug catches
-		// the 23505 unique-violation race-loser case and throws SlugTakenError,
-		// which we translate to AppError(409, 'slug_taken') here so the API
-		// boundary gets a structured error instead of a raw 500.
+		// Slug precheck BEFORE save: kills the common "already taken" case for
+		// free, so we never persist an orphan paste when the slug is plainly
+		// unavailable. resolveSlug only matches LIVE (non-expired) rows.
 		if (validParams.slug) {
 			const slugTaken = await this.repository.resolveSlug(validParams.slug);
 			if (slugTaken) {
 				throw new AppError('slug_taken', 'This custom URL is already taken', 409);
 			}
-			try {
-				await this.repository.saveSlug(validParams.slug, id.toString(), paste.getExpiresAt());
-			} catch (err) {
-				if (err instanceof SlugTakenError) {
-					throw new AppError('slug_taken', 'This custom URL is already taken', 409);
-				}
-				throw err;
+		}
+
+		// Save to repository
+		await this.repository.save(paste);
+
+		// Claim the vanity slug AFTER save (the row must exist for the FK).
+		// claimSlug is atomic + expired-row-tolerant: it returns false only when
+		// a LIVE row already holds the slug — i.e. a concurrent create slipped
+		// past the precheck (TOCTOU). In that race-loser case we compensate by
+		// deleting the just-saved paste so we don't accumulate orphans with no
+		// reachable URL, then surface a structured 409.
+		if (validParams.slug) {
+			const claimed = await this.repository.claimSlug(validParams.slug, id.toString(), paste.getExpiresAt());
+			if (!claimed) {
+				await this.repository.delete(id).catch(() => undefined);
+				throw new AppError('slug_taken', 'This custom URL is already taken', 409);
 			}
 		}
 

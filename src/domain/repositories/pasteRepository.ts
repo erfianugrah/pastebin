@@ -150,7 +150,14 @@ export interface PasteRepository {
   resolveSlug(slug: string): Promise<string | null>;
 
   /**
-   * Save a vanity slug -> paste ID mapping
+   * Atomically claim a vanity slug for a paste.
+   *
+   * Tolerant of expired-but-unreaped slug rows: claiming a slug whose
+   * existing row has already expired succeeds (the row is repointed). A
+   * LIVE row already holding the slug yields `false` rather than throwing.
+   *
+   * @returns true if claimed (inserted or upserted over an expired row),
+   *          false if a non-expired row already holds the slug.
    */
-  saveSlug(slug: string, pasteId: string, expiresAt: Date): Promise<void>;
+  claimSlug(slug: string, pasteId: string, expiresAt: Date): Promise<boolean>;
 }

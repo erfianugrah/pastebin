@@ -13,7 +13,7 @@ const mockRepo = {
 	searchPublic: vi.fn(),
 	getPublicStats: vi.fn(),
 	resolveSlug: vi.fn(),
-	saveSlug: vi.fn(),
+	claimSlug: vi.fn(),
 } as unknown as PasteRepository;
 
 // RFC 4122 v4 UUID — Zod 4's `.uuid()` enforces the version+variant nibbles.

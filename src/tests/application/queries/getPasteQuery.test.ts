@@ -14,7 +14,7 @@ const mockRepository: PasteRepository = {
 	searchPublic: vi.fn(),
 	getPublicStats: vi.fn(),
 	resolveSlug: vi.fn(),
-	saveSlug: vi.fn(),
+	claimSlug: vi.fn(),
 };
 
 function makePaste(

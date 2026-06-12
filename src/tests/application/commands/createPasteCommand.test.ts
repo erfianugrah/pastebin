@@ -5,7 +5,6 @@ import { UniqueIdService } from '../../../domain/services/uniqueIdService';
 import { ExpirationService } from '../../../domain/services/expirationService';
 import { Paste, PasteId, ExpirationPolicy } from '../../../domain/models/paste';
 import { AppError } from '../../../infrastructure/errors/AppError';
-import { SlugTakenError } from '../../../infrastructure/storage/supabasePasteRepository';
 
 // Mock dependencies
 const mockRepository: PasteRepository = {
@@ -19,7 +18,7 @@ const mockRepository: PasteRepository = {
   searchPublic: vi.fn(),
   getPublicStats: vi.fn(),
 	resolveSlug: vi.fn(),
-	saveSlug: vi.fn(),
+	claimSlug: vi.fn(),
 };
 
 const mockIdService: UniqueIdService = {
@@ -243,11 +242,13 @@ describe('CreatePasteCommand', () => {
     });
   });
 
-  it('translates SlugTakenError from saveSlug into AppError(409) [M6]', async () => {
+  it('compensating-deletes the orphan + 409s when claimSlug loses the race [M2/M6]', async () => {
     vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('m6'));
     vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(86400));
     vi.mocked(mockRepository.resolveSlug).mockResolvedValue(null); // precheck passes
-    vi.mocked(mockRepository.saveSlug).mockRejectedValue(new SlugTakenError('race-loser'));
+    vi.mocked(mockRepository.save).mockResolvedValue(undefined);
+    vi.mocked(mockRepository.claimSlug).mockResolvedValue(false); // live conflict / race-loser
+    vi.mocked(mockRepository.delete).mockResolvedValue(true);
 
     const params: CreatePasteParams = {
       content: 'racing content',
@@ -263,6 +264,9 @@ describe('CreatePasteCommand', () => {
       code: 'slug_taken',
       statusCode: 409,
     });
+    // the just-saved paste must be compensating-deleted so it isn't orphaned
+    const saved = vi.mocked(mockRepository.save).mock.calls[0][0];
+    expect(mockRepository.delete).toHaveBeenCalledWith(saved.getId());
   });
 
   it('translates resolveSlug precheck hit into AppError(409) [M6]', async () => {
@@ -281,7 +285,9 @@ describe('CreatePasteCommand', () => {
     };
 
     await expect(command.execute(params)).rejects.toBeInstanceOf(AppError);
-    expect(mockRepository.saveSlug).not.toHaveBeenCalled();
+    // precheck rejects BEFORE save — no orphan paste, no claim attempt
+    expect(mockRepository.save).not.toHaveBeenCalled();
+    expect(mockRepository.claimSlug).not.toHaveBeenCalled();
   });
 
   describe('slug validation [M7]', () => {
@@ -311,10 +317,33 @@ describe('CreatePasteCommand', () => {
 
     it('accepts slugs with single internal hyphens', async () => {
       vi.mocked(mockRepository.resolveSlug).mockResolvedValue(null);
-      vi.mocked(mockRepository.saveSlug).mockResolvedValue(undefined);
+      vi.mocked(mockRepository.claimSlug).mockResolvedValue(true);
       vi.mocked(mockRepository.save).mockResolvedValue(undefined);
       vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('id'));
       await expect(command.execute({ ...baseParams, slug: 'my-cool-snippet' })).resolves.toBeDefined();
     });
+  });
+
+  it('claims a slug whose stale row was reaped, returning the vanity URL [M3]', async () => {
+    // resolveSlug returns null (no LIVE row) but a dead row may still exist;
+    // claimSlug upserts over it and reports true — no spurious 409.
+    vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('m3'));
+    vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(86400));
+    vi.mocked(mockRepository.resolveSlug).mockResolvedValue(null);
+    vi.mocked(mockRepository.save).mockResolvedValue(undefined);
+    vi.mocked(mockRepository.claimSlug).mockResolvedValue(true);
+
+    const result = await command.execute({
+      content: 'content',
+      expiration: 86400,
+      visibility: 'public',
+      burnAfterReading: false,
+      isEncrypted: false,
+      version: 0,
+      slug: 'recycled',
+    });
+
+    expect(result.url).toBe('https://pastebin.example.com/p/recycled');
+    expect(mockRepository.delete).not.toHaveBeenCalled();
   });
 });
