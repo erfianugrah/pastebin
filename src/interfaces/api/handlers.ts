@@ -107,8 +107,13 @@ export class ApiHandlers {
 
 		const version = summary.paste.getVersion();
 
-		// E2E encrypted paste — return encrypted content directly
-		if (summary.isE2EEncrypted || version === 2) {
+		// E2E encrypted paste — return encrypted content directly.
+		// `isE2EEncrypted` already means `isEncrypted && version >= 2`, so the
+		// old `|| version === 2` was redundant: it only added the
+		// impossible-via-Paste.create case of a *plaintext* v2 row (rehydration
+		// doesn't enforce the invariant), which would have wrongly taken the
+		// E2E branch. Dropped.
+		if (summary.isE2EEncrypted) {
 			this.logger.debug('Returning E2E encrypted paste', { pasteId, version });
 			return json(summary.paste.toJSON());
 		}

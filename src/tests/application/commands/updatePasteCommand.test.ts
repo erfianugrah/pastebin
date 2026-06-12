@@ -93,6 +93,19 @@ describe('UpdatePasteCommand', () => {
 			expect(result.success).toBe(false);
 		});
 
+		// Byte-vs-code-unit: a 3-byte CJK char is 1 UTF-16 code unit, so this
+		// string is UNDER the code-unit `.max()` but OVER the 25 MiB UTF-8
+		// byte cap — the old char-counting `.max()` accepted it; the refine
+		// must reject it.
+		it('rejects multibyte content over the byte cap but under the code-unit count', () => {
+			const MAX = 25 * 1024 * 1024;
+			const overByBytes = '\u4e2d'.repeat(Math.floor(MAX / 3) + 1); // 3 bytes each
+			expect(overByBytes.length).toBeLessThanOrEqual(MAX); // passes .max()
+			expect(new TextEncoder().encode(overByBytes).length).toBeGreaterThan(MAX); // fails refine
+			const result = UpdatePasteSchema.safeParse({ token: VALID_TOKEN, content: overByBytes });
+			expect(result.success).toBe(false);
+		});
+
 		it('rejects title longer than 100 chars', () => {
 			const result = UpdatePasteSchema.safeParse({
 				token: VALID_TOKEN,

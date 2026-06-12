@@ -2,10 +2,12 @@ import { z } from 'zod';
 import { PasteId } from '../../domain/models/paste';
 import { PasteRepository } from '../../domain/repositories/pasteRepository';
 
-// 25 MiB — same cap as CreatePasteSchema.content. The Worker's runtime
-// memory budget (~128 MiB on Cloudflare Workers) makes this the
+// 25 MiB UTF-8 — same cap as CreatePasteSchema.content. The Worker's
+// runtime memory budget (~128 MiB on Cloudflare Workers) makes this the
 // effective ceiling; without it a token-holding attacker could DoS the
-// isolate with a single multi-hundred-MB payload through PUT.
+// isolate with a single multi-hundred-MB payload through PUT. Enforced as
+// real bytes (not UTF-16 code units) via the same refine as the create
+// path — see createPasteCommand.ts for the rationale.
 const MAX_CONTENT_BYTES = 25 * 1024 * 1024;
 
 /**
@@ -31,7 +33,15 @@ const MAX_CONTENT_BYTES = 25 * 1024 * 1024;
  */
 export const UpdatePasteSchema = z.object({
 	token: z.string().uuid({ message: 'token must be a UUID' }),
-	content: z.string().min(1).max(MAX_CONTENT_BYTES).optional(),
+	content: z
+		.string()
+		.min(1)
+		.max(MAX_CONTENT_BYTES)
+		.refine(
+			(s) => s.length * 3 <= MAX_CONTENT_BYTES || new TextEncoder().encode(s).length <= MAX_CONTENT_BYTES,
+			{ message: `content exceeds ${MAX_CONTENT_BYTES} bytes (UTF-8)` },
+		)
+		.optional(),
 	title: z.string().max(100).optional(),
 	language: z.string().max(50).optional(),
 });

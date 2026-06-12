@@ -19,11 +19,25 @@ const SlugSchema = z
 	.max(64)
 	.regex(/^[a-z0-9](?:-?[a-z0-9])*$/, 'Slug must be lowercase alphanumeric with single hyphens between characters');
 
+// 25 MiB UTF-8 ceiling. The Worker isolate has a ~128 MiB memory budget,
+// so this is a real DoS bound, not a storage limit (the old KV 25 MiB
+// value cap is gone post-Supabase-migration). z.string().max() counts
+// UTF-16 code units, NOT bytes — a CJK/emoji paste is up to 3× its
+// code-unit count in UTF-8 — so we enforce real bytes via refine. The
+// `.max()` stays as a cheap upper guard (bytes >= code units always, so
+// it never rejects a valid ≤cap-byte payload) and a fast `length * 3`
+// check skips the encode pass except in the narrow 1–3× boundary zone.
+const MAX_CONTENT_BYTES = 25 * 1024 * 1024;
+
 export const CreatePasteSchema = z.object({
 	content: z
 		.string()
 		.min(1)
-		.max(25 * 1024 * 1024), // Max 25MiB (Cloudflare KV value limit)
+		.max(MAX_CONTENT_BYTES)
+		.refine(
+			(s) => s.length * 3 <= MAX_CONTENT_BYTES || new TextEncoder().encode(s).length <= MAX_CONTENT_BYTES,
+			{ message: `content exceeds ${MAX_CONTENT_BYTES} bytes (UTF-8)` },
+		),
 	title: z.string().max(100).optional(),
 	// Concatenated into the `search_vector` generated tsvector + GIN-indexed.
 	// Cap to avoid index bloat from arbitrary user input.
