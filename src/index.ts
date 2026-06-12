@@ -335,13 +335,19 @@ app.get('/pastes/raw/:id', async (c) => {
 
 	if (response.status === 200) {
 		const responseData = (await response.json()) as { content: string };
-		return new Response(responseData.content, {
-			status: 200,
-			headers: {
-				'Content-Type': 'text/plain; charset=utf-8',
-				'Cache-Control': 'public, max-age=3600',
-			},
-		});
+		// ALWAYS uncacheable — same rationale as the JSON `/pastes/:id` route
+		// below. `handleGetPaste` runs through `view_paste()`, which bumps
+		// read_count and may burn the row (burn-after-reading / view_limit).
+		// A `public` cache directive here would let shared caches (corporate
+		// proxy, ISP) serve burned content to later viewers, and let a browser
+		// refresh re-read burned content without a server round-trip (also
+		// skewing read_count, since cache hits never reach view_paste()).
+		return preventCaching(
+			new Response(responseData.content, {
+				status: 200,
+				headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+			}),
+		);
 	}
 	return response;
 });

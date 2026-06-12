@@ -211,6 +211,38 @@ describe('CreatePasteCommand', () => {
     expect(savedPaste.getVersion()).toBe(0);
   });
 
+  describe('expiration bounds [M1]', () => {
+    const baseParams = {
+      content: 'content',
+      visibility: 'public' as const,
+      burnAfterReading: false,
+      isEncrypted: false,
+      version: 0,
+    };
+
+    it('rejects an out-of-range expiration before it can 500 the create path', async () => {
+      // 1e300 passes the old `.positive()` but overflows the JS Date range
+      // (Date.setSeconds(now + 1e300) → Invalid Date → toISOString() throws
+      // RangeError → unhandled 500). The `.int().max()` bound rejects it at
+      // the schema boundary instead.
+      vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('m1'));
+      await expect(command.execute({ ...baseParams, expiration: 1e300 })).rejects.toBeDefined();
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-integer expiration', async () => {
+      await expect(command.execute({ ...baseParams, expiration: 1.5 })).rejects.toBeDefined();
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('accepts the 10-year cap exactly', async () => {
+      vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('m1cap'));
+      vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(315360000));
+      vi.mocked(mockRepository.save).mockResolvedValue(undefined);
+      await expect(command.execute({ ...baseParams, expiration: 315360000 })).resolves.toBeDefined();
+    });
+  });
+
   it('translates SlugTakenError from saveSlug into AppError(409) [M6]', async () => {
     vi.mocked(mockIdService.generateId).mockResolvedValue(PasteId.create('m6'));
     vi.mocked(mockExpirationService.createFromSeconds).mockReturnValue(ExpirationPolicy.create(86400));

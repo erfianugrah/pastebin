@@ -17,7 +17,7 @@ describe('cookies', () => {
 			for (const cookie of [access, refresh]) {
 				expect(cookie).toContain('HttpOnly');
 				expect(cookie).toContain('Secure');
-				expect(cookie).toContain('SameSite=Strict');
+				expect(cookie).toContain('SameSite=Lax');
 				expect(cookie).toContain('Path=/');
 			}
 		});

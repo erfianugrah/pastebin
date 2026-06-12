@@ -8,9 +8,22 @@
  *     used to mint a new access_token when the current one expires
  *
  * Both are HttpOnly so JS can't read them. Secure so they only ride
- * over TLS. SameSite=Strict so they're not sent on cross-site requests
- * (defense against CSRF; browser doesn't include them in form posts
- * from other origins).
+ * over TLS. SameSite=Lax so they ARE delivered on top-level cross-site
+ * GET navigations but withheld on cross-site subresources and POSTs.
+ *
+ * Lax (not Strict) is load-bearing for the auth landing flows: the
+ * confirmation-email click and the OAuth callback are both cross-site-
+ * initiated navigation chains. Browsers evaluate SameSite against the
+ * initiator of the whole redirect chain, so under Strict the final
+ * same-site hop to `/my` would still drop the cookie — `/api/my`
+ * returns 401 and the user appears signed out seconds after confirming
+ * (a manual reload, being same-site-initiated, would then "fix" it).
+ * The PKCE-verifier cookie already uses Lax for the identical reason.
+ *
+ * CSRF posture is unchanged: every state-changing endpoint is
+ * POST/PUT/DELETE, and Lax still withholds the cookie on cross-site
+ * requests of those methods. We only gain delivery on top-level GET
+ * navigations, which is exactly what confirm/OAuth need.
  */
 
 export const ACCESS_TOKEN_COOKIE = 'sb-access-token';
@@ -29,7 +42,7 @@ interface CookieOpts {
 }
 
 /**
- * Build a Set-Cookie header value. Always HttpOnly + Secure + SameSite=Strict.
+ * Build a Set-Cookie header value. Always HttpOnly + Secure + SameSite=Lax.
  */
 function buildCookie(name: string, value: string, opts: CookieOpts = {}): string {
 	const maxAge = opts.maxAge ?? ACCESS_MAX_AGE;
@@ -40,7 +53,7 @@ function buildCookie(name: string, value: string, opts: CookieOpts = {}): string
 		`Max-Age=${maxAge}`,
 		'HttpOnly',
 		'Secure',
-		'SameSite=Strict',
+		'SameSite=Lax',
 	].join('; ');
 }
 

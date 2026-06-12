@@ -117,10 +117,14 @@ export class ApiHandlers {
 		if (version < 2 && summary.paste.getIsEncrypted()) {
 			this.logger.warn('Legacy paste access attempted', { pasteId, version });
 
+			// NOTE: deliberately omit title/language. This is an encrypted paste
+			// (is_encrypted = true), and we null those fields out for encrypted
+			// pastes everywhere else they could leak (/api/recent, search). Putting
+			// them in the error details would expose exactly the metadata we've
+			// decided not to surface. id + timestamps + legacyVersion are enough
+			// for the client to render the upgrade prompt.
 			throw new AppError('encryption_upgrade_required', 'This paste uses a legacy security method that is no longer supported.', 400, {
 				id: pasteId,
-				title: summary.paste.getTitle(),
-				language: summary.paste.getLanguage(),
 				createdAt: summary.paste.getCreatedAt().toISOString(),
 				expiresAt: summary.paste.getExpiresAt().toISOString(),
 				securityUpgradeRequired: true,

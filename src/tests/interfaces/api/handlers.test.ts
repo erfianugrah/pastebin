@@ -252,6 +252,38 @@ describe('ApiHandlers', () => {
 			expect(body.id).toBe('abc123');
 			expect(body.content).toBe('hello world');
 		});
+
+		it('does not leak title/language in the legacy encryption_upgrade_required error [M4]', async () => {
+			// version 1 + isEncrypted = legacy (server-side) encrypted paste, no
+			// longer supported. The error details must NOT carry title/language
+			// — those are nulled out for encrypted pastes everywhere else.
+			const legacy = new Paste(
+				PasteId.create('legacy'),
+				'cipher',
+				new Date(),
+				ExpirationPolicy.create(3600),
+				'Secret Title',
+				'json',
+				'public',
+				false, // burnAfterReading
+				0, // readCount
+				true, // isEncrypted
+				undefined, // viewLimit
+				1, // version (legacy, < 2)
+			);
+			vi.mocked(mockGetQuery.executeSummary).mockResolvedValue({
+				paste: legacy,
+				isE2EEncrypted: false,
+			});
+
+			const req = getRequest('https://example.com/pastes/legacy');
+			const err = await handlers.handleGetPaste(req, 'legacy').catch((e) => e);
+			expect(err.code).toBe('encryption_upgrade_required');
+			expect(err.statusCode).toBe(400);
+			expect(err.details).toMatchObject({ id: 'legacy', legacyVersion: 1, securityUpgradeRequired: true });
+			expect(err.details).not.toHaveProperty('title');
+			expect(err.details).not.toHaveProperty('language');
+		});
 	});
 
 	describe('handleDeletePaste', () => {

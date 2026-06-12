@@ -29,7 +29,13 @@ export const CreatePasteSchema = z.object({
 	// Concatenated into the `search_vector` generated tsvector + GIN-indexed.
 	// Cap to avoid index bloat from arbitrary user input.
 	language: z.string().max(50).optional(),
-	expiration: z.number().positive().default(86400), // Default 1 day
+	// Seconds-to-live. Must be a positive integer, capped at 10 years
+	// (matches ExpirationService.createNever()). Without the `.int().max()`
+	// an attacker-supplied value like 1e300 overflows the JS Date range:
+	// `Date.setSeconds(now + 1e300)` yields an Invalid Date and
+	// `getExpiresAt().toISOString()` throws RangeError → unhandled 500 on a
+	// single request field.
+	expiration: z.number().int().positive().max(315360000).default(86400), // Default 1 day, cap 10y
 	visibility: VisibilityEnum.default('public'),
 	// `password` is intentionally NOT accepted here. Client-side encryption
 	// uses the password only in the browser to derive a key; the server
