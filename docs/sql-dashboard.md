@@ -3,7 +3,7 @@
 All queries verified against live DB (`dewddkcmwrzbpynylyhg`). Studio runs as
 `service_role` so RLS is bypassed — these see everything.
 
-Jump to: [Monitoring](#monitoring) · [Performance](#performance) · [Maintenance](#maintenance)
+Jump to: [Monitoring](#monitoring) · [Performance](#performance) · [Maintenance](#maintenance) · [Extensions](#extensions)
 
 ---
 
@@ -695,6 +695,107 @@ counters.
 ```sql
 select extensions.pg_stat_statements_reset();
 ```
+
+---
+
+## Extensions
+
+Queries against `pg_available_extensions`, `pg_extension`, and `pg_depend` to audit
+what's installed on the Supabase Postgres instance, what's active, where each lives,
+how many objects each extension owns, and which extensions depend on others.
+
+---
+
+### 32. Available extensions (all — installed and not yet enabled)
+
+Shows every extension Supabase has compiled into the server, whether it is currently
+enabled, and its current vs default version. `installed_version IS NOT NULL` means
+it has been `CREATE EXTENSION`-d in this database.
+
+```sql
+select
+  name,
+  default_version,
+  installed_version,
+  installed_version is not null as is_enabled,
+  comment
+from pg_available_extensions
+order by is_enabled desc, name;
+```
+
+---
+
+### 33. Enabled extensions — schema mapping
+
+Joins `pg_extension` (runtime catalogue) with `pg_namespace` to show which schema each
+enabled extension was installed into. Supabase installs most extensions into the
+`extensions` schema to keep `public` clean; some (e.g. `pg_cron`) go into `pg_catalog`.
+
+```sql
+select
+  e.extname                          as extension,
+  e.extversion                       as version,
+  n.nspname                          as schema,
+  e.extrelocatable                   as relocatable,
+  obj_description(e.oid, 'pg_extension') as description
+from pg_extension e
+join pg_namespace n on n.oid = e.extnamespace
+order by e.extname;
+```
+
+---
+
+### 34. Object counts owned by each extension
+
+Uses `pg_depend` to count how many database objects (tables, functions, types, operators,
+etc.) each extension owns. High numbers indicate extensions that modify the catalogue
+heavily — relevant when planning upgrades or drops.
+
+```sql
+select
+  e.extname                 as extension,
+  d.classid::regclass       as object_class,
+  count(*)                  as owned_objects
+from pg_depend d
+join pg_extension e on e.oid = d.refobjid
+where d.deptype = 'e'
+group by e.extname, d.classid
+order by e.extname, owned_objects desc;
+```
+
+For a single total-per-extension rollup:
+
+```sql
+select
+  e.extname   as extension,
+  count(*)    as total_owned_objects
+from pg_depend d
+join pg_extension e on e.oid = d.refobjid
+where d.deptype = 'e'
+group by e.extname
+order by total_owned_objects desc;
+```
+
+---
+
+### 35. Extension dependency chain
+
+Shows which enabled extensions depend on other enabled extensions (`pg_depend` rows
+where both `objid` and `refobjid` are `pg_extension` OIDs). Relevant before dropping
+an extension — if anything depends on it, the drop will fail.
+
+```sql
+select
+  e_dep.extname  as extension,
+  e_req.extname  as requires
+from pg_depend d
+join pg_extension e_dep on e_dep.oid = d.objid
+join pg_extension e_req on e_req.oid = d.refobjid
+where d.deptype = 'n'  -- 'n' = normal dependency between catalogue objects
+order by e_dep.extname;
+```
+
+If the result is empty there are no cross-extension dependencies currently active.
 
 ---
 
