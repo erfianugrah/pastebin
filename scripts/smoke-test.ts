@@ -636,7 +636,10 @@ async function run(): Promise<void> {
 				assert(!!refresh, 'sb-refresh-token cookie set');
 				assert(access!.includes('HttpOnly'), 'access cookie is HttpOnly');
 				assert(access!.includes('Secure'), 'access cookie is Secure');
-				assert(access!.includes('SameSite=Strict'), 'access cookie is SameSite=Strict');
+				// Lax (not Strict): the confirm-email and OAuth landing flows are
+				// cross-site-initiated navigations — Strict would drop the session
+				// cookie on the final hop to /my. See src/interfaces/api/cookies.ts.
+				assert(access!.includes('SameSite=Lax'), 'access cookie is SameSite=Lax');
 
 				rememberSetCookies(res);
 

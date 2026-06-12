@@ -1044,8 +1044,8 @@ grep -iE "^(http|location:|set-cookie:)" /tmp/confirm.txt
 # Expected:
 #   HTTP/2 302
 #   location: https://paste.erfi.io/my
-#   set-cookie: sb-access-token=<JWT>; HttpOnly; Secure; SameSite=Strict; Max-Age=3600
-#   set-cookie: sb-refresh-token=<token>; HttpOnly; Secure; SameSite=Strict; Max-Age=604800
+#   set-cookie: sb-access-token=<JWT>; HttpOnly; Secure; SameSite=Lax; Max-Age=3600
+#   set-cookie: sb-refresh-token=<token>; HttpOnly; Secure; SameSite=Lax; Max-Age=604800
 ```
 
 Decode the JWT and confirm `sub` matches the user, `role=authenticated`,
