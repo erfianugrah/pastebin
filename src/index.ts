@@ -216,7 +216,7 @@ app.get('/api/search', rateLimit('RL_SEARCH', 'search'), async (c) => {
 // GET /api/stats — aggregate stats over non-expired public pastes
 //
 // SAFETY: Aggregates only. Public-only data. Same rule as above.
-app.get('/api/stats', async (c) => {
+app.get('/api/stats', rateLimit('RL_VIEW', 'stats'), async (c) => {
 	return addCacheHeaders(await c.get('handlers').handlePasteStats(c.req.raw), {
 		maxAge: 300,
 		staleWhileRevalidate: 900,
@@ -281,8 +281,10 @@ app.get('/auth/confirm', rateLimit('RL_AUTH_WRITE', 'auth-confirm'), async (c) =
 	preventCaching(await c.get('authHandlers').handleConfirm(c.req.raw)),
 );
 
-// GET /api/my — current user's pastes (browser via Worker, RLS-bypass + filter)
-app.get('/api/my', async (c) => preventCaching(await c.get('authHandlers').handleMyPastes(c.req.raw)));
+// GET /api/my — current user's pastes (browser via Worker, RLS-bypass + filter).
+// Loose RL_VIEW backstop: each call is a DB round-trip PLUS a getUser()
+// network hop to Supabase, so it's worth bounding even though it's cheap.
+app.get('/api/my', rateLimit('RL_VIEW', 'my'), async (c) => preventCaching(await c.get('authHandlers').handleMyPastes(c.req.raw)));
 
 // DELETE|POST /pastes/:id/delete — delete paste (API). Token-gated
 // (delete_token UUID is the only authorisation), but still rate-limited
@@ -329,7 +331,7 @@ app.get('/pastes', async (c) => {
 });
 
 // GET /pastes/raw/:id — raw content
-app.get('/pastes/raw/:id', async (c) => {
+app.get('/pastes/raw/:id', rateLimit('RL_VIEW', 'view-raw'), async (c) => {
 	const pasteId = c.req.param('id');
 	const response = await c.get('handlers').handleGetPaste(c.req.raw, pasteId);
 
@@ -365,7 +367,7 @@ app.get('/pastes/raw/:id', async (c) => {
 //     public response.
 // The HTML viewer shell stays cacheable — it's a generic Astro page
 // that fetches the JSON itself with appropriate cache semantics.
-app.on(['GET', 'POST'], '/pastes/:id', async (c) => {
+app.on(['GET', 'POST'], '/pastes/:id', rateLimit('RL_VIEW', 'view'), async (c) => {
 	const pasteId = c.req.param('id');
 	const accept = c.req.header('accept') || '';
 	const wantsJson = accept.includes('application/json');
@@ -383,7 +385,7 @@ app.on(['GET', 'POST'], '/pastes/:id', async (c) => {
 
 // ---- Vanity URL: /p/:slug ----
 
-app.get('/p/:slug', async (c) => {
+app.get('/p/:slug', rateLimit('RL_VIEW', 'view-slug'), async (c) => {
 	const slug = c.req.param('slug');
 
 	// Resolve slug using the same repository instantiated by middleware

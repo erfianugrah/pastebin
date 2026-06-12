@@ -26,6 +26,15 @@ export interface Env {
 	RL_SEARCH?: RateLimit;
 	/** GET /api/recent — public-feed scrape resistance. 60/60s (frontend polls ~4/min). */
 	RL_RECENT?: RateLimit;
+	/**
+	 * Generous backstop on the unauthenticated read paths: GET /pastes/:id
+	 * (JSON), GET /pastes/raw/:id, GET /api/my, GET /api/stats. Each is a DB
+	 * round-trip per request and the view paths additionally mutate state
+	 * (view_paste burns + bumps read_count), so an uncapped scraper is the
+	 * most expensive abuse vector. Loose by design — 240/60s — so normal
+	 * browsing never trips it; it only bounds amplification.
+	 */
+	RL_VIEW?: RateLimit;
 }
 
 // Custom fetch response extending the Response interface

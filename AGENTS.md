@@ -55,6 +55,7 @@ Two separate packages with **independent `node_modules`**:
   - `RL_PASTE_CREATE` 30/60s — `POST /pastes`, `PUT /pastes/:id` (paste-update scope), `DELETE|POST /pastes/:id/delete` (paste-delete scope)
   - `RL_SEARCH` 30/60s — `GET /api/search`
   - `RL_RECENT` 60/60s — `GET /api/recent` (public-feed scrape resistance; the frontend polls ~4/min and cache-busts each poll, so legit traffic stays well under the cap)
+  - `RL_VIEW` 240/60s — `GET /pastes/:id` (`view` scope), `GET /pastes/raw/:id` (`view-raw`), `GET /p/:slug` (`view-slug`), `GET /api/my` (`my`), `GET /api/stats` (`stats`). Deliberately loose backstop on the expensive unauthenticated read paths: each is a DB round-trip per request, the `view`/`view-raw`/`view-slug` paths additionally mutate state via `view_paste` (burn + read_count bump), and `/api/my` adds a `getUser()` network hop. 240/60s is well above any human browsing rate, so it only bounds scraper amplification. namespace_id 1006 (dev) / 2006 (prod).
   - `GET /auth/callback` intentionally NOT rate-limited — PKCE code is single-use and bound to verifier cookie; no amplification possible.
 - Over-limit returns 429 + `Retry-After: 60` + `{ error: { code: "rate_limited", message: "..." } }`. Middleware **fails open** on binding error (logs warn) and **no-ops** when binding is undefined (logs debug) — never blocks real traffic on infrastructure issues.
 - 7 unit tests in `src/tests/interfaces/api/rateLimit.test.ts`. `__test__.clientKey` is the only exported test seam.

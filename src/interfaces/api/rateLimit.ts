@@ -19,7 +19,7 @@ import type { MiddlewareHandler } from 'hono';
 import type { Env } from '../../types';
 import type { Logger } from '../../infrastructure/logging/logger';
 
-type RateLimitBindingName = 'RL_AUTH_WRITE' | 'RL_SESSION_READ' | 'RL_PASTE_CREATE' | 'RL_SEARCH' | 'RL_RECENT';
+type RateLimitBindingName = 'RL_AUTH_WRITE' | 'RL_SESSION_READ' | 'RL_PASTE_CREATE' | 'RL_SEARCH' | 'RL_RECENT' | 'RL_VIEW';
 
 type RateLimitEnv = {
 	Bindings: Env;
