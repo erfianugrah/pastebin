@@ -423,6 +423,53 @@ describe('SupabasePasteRepository', () => {
 		});
 	});
 
+	describe('claimSlug (atomic RPC slug claim) [M2/M3]', () => {
+		const EXP = new Date('2030-01-01T00:00:00.000Z');
+
+		it('calls claim_slug with snake_case args and returns true when claimed', async () => {
+			mockClient = makeSupabaseMock({ rpcResult: { data: [{ claimed: true }], error: null } });
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			const result = await repository.claimSlug('my-slug', 'paste-uuid', EXP);
+			expect(result).toBe(true);
+			expect(mockClient.rpc).toHaveBeenCalledWith('claim_slug', {
+				slug_text: 'my-slug',
+				paste_uuid: 'paste-uuid',
+				slug_expires_at: EXP.toISOString(),
+			});
+		});
+
+		it('returns false when a LIVE row already holds the slug (claimed=false)', async () => {
+			mockClient = makeSupabaseMock({ rpcResult: { data: [{ claimed: false }], error: null } });
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			expect(await repository.claimSlug('taken', 'p', EXP)).toBe(false);
+		});
+
+		it('returns false (not undefined) when the RPC returns an empty result set', async () => {
+			mockClient = makeSupabaseMock({ rpcResult: { data: [], error: null } });
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			expect(await repository.claimSlug('s', 'p', EXP)).toBe(false);
+		});
+
+		it('throws and logs on RPC error', async () => {
+			mockClient = makeSupabaseMock({ rpcResult: { data: null, error: { message: 'connection lost' } } });
+			__resetSupabaseClientCache();
+			vi.mocked(createClient).mockReturnValue(mockClient as any);
+			repository = new SupabasePasteRepository('https://test.supabase.co', 'sb_secret_test', mockLogger);
+
+			await expect(repository.claimSlug('s', 'p', EXP)).rejects.toThrow(/Failed to claim slug/);
+			expect(mockLogger.error).toHaveBeenCalled();
+		});
+	});
+
 	describe('view (RPC-based atomic view)', () => {
 		it('calls the view_paste RPC with the correct paste_uuid', async () => {
 			mockClient = makeSupabaseMock({

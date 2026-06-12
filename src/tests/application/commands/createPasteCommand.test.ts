@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { CreatePasteCommand, CreatePasteParams } from '../../../application/commands/createPasteCommand';
+import { CreatePasteCommand, CreatePasteParams, CreatePasteSchema } from '../../../application/commands/createPasteCommand';
 import { PasteRepository } from '../../../domain/repositories/pasteRepository';
 import { UniqueIdService } from '../../../domain/services/uniqueIdService';
 import { ExpirationService } from '../../../domain/services/expirationService';
@@ -208,6 +208,33 @@ describe('CreatePasteCommand', () => {
     const savedPaste = vi.mocked(mockRepository.save).mock.calls[0][0];
     expect(savedPaste.getIsEncrypted()).toBe(false);
     expect(savedPaste.getVersion()).toBe(0);
+  });
+
+  describe('content byte cap [Low/consistency]', () => {
+    const baseParams = {
+      expiration: 86400,
+      visibility: 'public' as const,
+      burnAfterReading: false,
+      isEncrypted: false,
+      version: 0,
+    };
+
+    it('accepts a normal multibyte payload well under the byte cap', () => {
+      const result = CreatePasteSchema.safeParse({ ...baseParams, content: '\u4e2d\u6587 \ud83d\ude00 hello' });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects multibyte content over the byte cap but under the code-unit count', () => {
+      const MAX = 25 * 1024 * 1024;
+      // 3-byte CJK char: 1 UTF-16 code unit, 3 UTF-8 bytes. This string is
+      // UNDER the code-unit .max() but OVER the 25 MiB UTF-8 byte cap, so the
+      // old char-counting .max() accepted it — the refine must reject it.
+      const overByBytes = '\u4e2d'.repeat(Math.floor(MAX / 3) + 1);
+      expect(overByBytes.length).toBeLessThanOrEqual(MAX);
+      expect(new TextEncoder().encode(overByBytes).length).toBeGreaterThan(MAX);
+      const result = CreatePasteSchema.safeParse({ ...baseParams, content: overByBytes });
+      expect(result.success).toBe(false);
+    });
   });
 
   describe('expiration bounds [M1]', () => {

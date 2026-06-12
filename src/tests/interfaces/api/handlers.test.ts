@@ -284,6 +284,39 @@ describe('ApiHandlers', () => {
 			expect(err.details).not.toHaveProperty('title');
 			expect(err.details).not.toHaveProperty('language');
 		});
+
+		it('does not treat a plaintext version-2 row as E2E encrypted [dropped || version===2]', async () => {
+			// version 2 but is_encrypted = false is impossible via Paste.create
+			// (it forces version 0 when not encrypted) but the rehydration path
+			// doesn't enforce the invariant. The old `|| version === 2` clause
+			// would have wrongly routed such a row to the E2E branch; with it
+			// dropped, isE2EEncrypted=false means it returns as a normal paste.
+			const plaintextV2 = new Paste(
+				PasteId.create('pv2'),
+				'plain content',
+				new Date(),
+				ExpirationPolicy.create(3600),
+				'Title',
+				'text',
+				'public',
+				false, // burnAfterReading
+				0, // readCount
+				false, // isEncrypted
+				undefined, // viewLimit
+				2, // version (but plaintext)
+			);
+			vi.mocked(mockGetQuery.executeSummary).mockResolvedValue({
+				paste: plaintextV2,
+				isE2EEncrypted: false, // executeSummary: isEncrypted && version >= 2 → false
+			});
+
+			const req = getRequest('https://example.com/pastes/pv2');
+			const res = await handlers.handleGetPaste(req, 'pv2');
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as { id: string; content: string };
+			expect(body.id).toBe('pv2');
+			expect(body.content).toBe('plain content');
+		});
 	});
 
 	describe('handleDeletePaste', () => {
