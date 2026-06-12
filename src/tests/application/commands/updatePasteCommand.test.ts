@@ -106,12 +106,21 @@ describe('UpdatePasteCommand', () => {
 			expect(result.success).toBe(false);
 		});
 
-		it('rejects title longer than 100 chars', () => {
+		it('rejects title larger than the 25 MiB cap', () => {
+			const oversized = 'a'.repeat(25 * 1024 * 1024 + 1);
 			const result = UpdatePasteSchema.safeParse({
 				token: VALID_TOKEN,
-				title: 'x'.repeat(101),
+				title: oversized,
 			});
 			expect(result.success).toBe(false);
+		});
+
+		it('accepts title of 255 chars', () => {
+			const result = UpdatePasteSchema.safeParse({
+				token: VALID_TOKEN,
+				title: 'x'.repeat(255),
+			});
+			expect(result.success).toBe(true);
 		});
 
 		it('rejects language longer than 50 chars', () => {

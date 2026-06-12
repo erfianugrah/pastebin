@@ -42,7 +42,10 @@ export const UpdatePasteSchema = z.object({
 			{ message: `content exceeds ${MAX_CONTENT_BYTES} bytes (UTF-8)` },
 		)
 		.optional(),
-	title: z.string().max(100).optional(),
+	title: z.string().max(MAX_CONTENT_BYTES).refine(
+		(s) => s.length * 3 <= MAX_CONTENT_BYTES || new TextEncoder().encode(s).length <= MAX_CONTENT_BYTES,
+		{ message: `title exceeds ${MAX_CONTENT_BYTES} bytes (UTF-8)` },
+	).optional(),
 	language: z.string().max(50).optional(),
 });
 

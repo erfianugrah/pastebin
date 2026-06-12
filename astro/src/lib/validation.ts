@@ -156,7 +156,7 @@ export function validatePasteForm(formData: Record<string, string>): ValidationE
 			VALIDATION_RULES.required('Content is required'),
 			...createContentSizeRules(25 * 1024 * 1024), // 25MB limit
 		],
-		title: [VALIDATION_RULES.maxLength(100, 'Title must be less than 100 characters')],
+		title: [...createContentSizeRules(25 * 1024 * 1024)],
 		password: [
 			// Only validate password if it's provided
 			{

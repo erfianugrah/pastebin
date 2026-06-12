@@ -38,7 +38,10 @@ export const CreatePasteSchema = z.object({
 			(s) => s.length * 3 <= MAX_CONTENT_BYTES || new TextEncoder().encode(s).length <= MAX_CONTENT_BYTES,
 			{ message: `content exceeds ${MAX_CONTENT_BYTES} bytes (UTF-8)` },
 		),
-	title: z.string().max(100).optional(),
+	title: z.string().max(MAX_CONTENT_BYTES).refine(
+		(s) => s.length * 3 <= MAX_CONTENT_BYTES || new TextEncoder().encode(s).length <= MAX_CONTENT_BYTES,
+		{ message: `title exceeds ${MAX_CONTENT_BYTES} bytes (UTF-8)` },
+	).optional(),
 	// Concatenated into the `search_vector` generated tsvector + GIN-indexed.
 	// Cap to avoid index bloat from arbitrary user input.
 	language: z.string().max(50).optional(),
