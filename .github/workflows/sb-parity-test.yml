@@ -39,15 +39,19 @@ jobs:
             supabase branches create "$BRANCH_NAME" --project-ref "$PROJECT_ID" --size small --yes
           fi
 
-      - name: 2. Fetch branch credentials
+      - name: 2. Fetch branch credentials (IPv4 session pooler - GH runners have no IPv6)
         run: |
           set -euo pipefail
           supabase branches get "$BRANCH_NAME" --project-ref "$PROJECT_ID" -o env > creds.env
           REF=$(grep -oP 'https://\K[a-z0-9]+(?=\.supabase\.co)' creds.env | head -1)
           echo "REF=$REF" >> "$GITHUB_ENV"
-          # extract non-pooling URL for psql / db push
-          echo "PGURL=$(grep '^POSTGRES_URL_NON_POOLING=' creds.env | cut -d= -f2- | tr -d '\"')" >> "$GITHUB_ENV"
-          echo "branch ref: $REF"
+          # POSTGRES_URL is the transaction pooler (:6543, IPv4). Migrations need
+          # session mode (:5432 on the same pooler host) for advisory locks etc.
+          POOLER=$(grep '^POSTGRES_URL=' creds.env | cut -d= -f2- | tr -d '\"')
+          SESSION="${POOLER/:6543/:5432}"
+          echo "::add-mask::$SESSION"
+          echo "PGURL=$SESSION" >> "$GITHUB_ENV"
+          echo "branch ref: $REF (using IPv4 session pooler for DB ops)"
 
       - name: 3. Initial migration state (before db push)
         run: |
