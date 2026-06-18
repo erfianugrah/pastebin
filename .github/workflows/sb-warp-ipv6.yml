@@ -25,7 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v2
-        with: { version: latest, github-token: ${{ github.token }} }
+        with:
+          version: latest
+          github-token: ${{ github.token }}
 
       - name: Baseline - no IPv6 before WARP
         run: |
@@ -78,5 +80,7 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
       - uses: supabase/setup-cli@v2
-        with: { version: latest, github-token: ${{ github.token }} }
+        with:
+          version: latest
+          github-token: ${{ github.token }}
       - run: supabase branches delete "ci-warp-test-${{ github.event.pull_request.number }}" --project-ref "dewddkcmwrzbpynylyhg" --yes || true
