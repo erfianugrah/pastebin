@@ -1,0 +1,96 @@
+name: sb-parity-test
+
+# SAFETY: only ever touches a uniquely-named PREVIEW branch. Never production,
+# never merge, never db push to prod. Branch always deleted (if: always() + closed job).
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sb-parity-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  PROJECT_ID: dewddkcmwrzbpynylyhg
+  BRANCH_NAME: ci-parity-test-${{ github.event.pull_request.number }}
+
+jobs:
+  parity:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+          github-token: ${{ github.token }}
+
+      - name: 1. Create preview branch at Small (idempotent)
+        run: |
+          set -euo pipefail
+          if supabase branches get "$BRANCH_NAME" --project-ref "$PROJECT_ID" >/dev/null 2>&1; then
+            echo "exists, skip create"
+          else
+            supabase branches create "$BRANCH_NAME" --project-ref "$PROJECT_ID" --size small --yes
+          fi
+
+      - name: 2. Fetch branch credentials
+        run: |
+          set -euo pipefail
+          supabase branches get "$BRANCH_NAME" --project-ref "$PROJECT_ID" -o env > creds.env
+          REF=$(grep -oP 'https://\K[a-z0-9]+(?=\.supabase\.co)' creds.env | head -1)
+          echo "REF=$REF" >> "$GITHUB_ENV"
+          # extract non-pooling URL for psql / db push
+          echo "PGURL=$(grep '^POSTGRES_URL_NON_POOLING=' creds.env | cut -d= -f2- | tr -d '\"')" >> "$GITHUB_ENV"
+          echo "branch ref: $REF"
+
+      - name: 3. Initial migration state (before db push)
+        run: |
+          set -euo pipefail
+          BEFORE=$(psql "$PGURL" -tAc "select to_regclass('public.pastes') is not null") || BEFORE="error"
+          echo "pastes table present before db push: $BEFORE"
+
+      - name: 4. Apply migrations (db push) - DIY parity for auto-branching 'migrate'
+        run: |
+          set -euo pipefail
+          supabase db push --db-url "$PGURL" --include-all --yes
+
+      - name: 5. Assert schema applied
+        run: |
+          set -euo pipefail
+          for t in pastes slugs; do
+            OK=$(psql "$PGURL" -tAc "select to_regclass('public.$t') is not null")
+            echo "table public.$t present: $OK"
+            [ "$OK" = "t" ] || { echo "FAIL: public.$t missing after db push"; exit 1; }
+          done
+          echo "PASS: migrations applied, schema present"
+
+      - name: 6. Assert compute size = Small
+        run: |
+          set -euo pipefail
+          SIZE=$(curl -s "https://api.supabase.com/v1/projects/$REF/billing/addons" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);a=[x for x in d.get("selected_addons",[]) if x.get("type")=="compute_instance"];print(a[0]["variant"]["id"] if a else "none")')
+          echo "COMPUTE SIZE = $SIZE"
+          [ "$SIZE" = "ci_small" ] && echo "PASS: Small" || { echo "FAIL: got $SIZE"; exit 1; }
+
+      - name: 7. Always delete the test branch
+        if: always()
+        run: supabase branches delete "$BRANCH_NAME" --project-ref "$PROJECT_ID" --yes || true
+
+  cleanup-on-close:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+          github-token: ${{ github.token }}
+      - run: supabase branches delete "ci-parity-test-${{ github.event.pull_request.number }}" --project-ref "dewddkcmwrzbpynylyhg" --yes || true
