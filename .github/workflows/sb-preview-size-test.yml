@@ -1,0 +1,74 @@
+name: sb-preview-size-test
+
+# SAFETY: this workflow only ever creates / inspects / deletes a uniquely-named
+# PREVIEW branch. It never touches production (main), never merges, never pushes
+# migrations to prod. The branch is always deleted (if: always() + closed job).
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sb-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  PROJECT_ID: dewddkcmwrzbpynylyhg
+  BRANCH_NAME: ci-preview-test-${{ github.event.pull_request.number }}
+
+jobs:
+  preview:
+    # same-repo only (forks carry no secrets); skip on close (handled below)
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+          github-token: ${{ github.token }}
+
+      - name: Create Small preview branch (idempotent)
+        run: |
+          set -euo pipefail
+          if supabase branches get "$BRANCH_NAME" --project-ref "$PROJECT_ID" >/dev/null 2>&1; then
+            echo "branch already exists, skipping create"
+          else
+            supabase branches create "$BRANCH_NAME" --project-ref "$PROJECT_ID" --size small --yes
+          fi
+
+      - name: Verify compute size via billing API
+        run: |
+          set -euo pipefail
+          supabase branches get "$BRANCH_NAME" --project-ref "$PROJECT_ID" -o env > /tmp/creds.env
+          REF=$(grep -oP 'https://\K[a-z0-9]+(?=\.supabase\.co)' /tmp/creds.env | head -1)
+          echo "branch project ref: $REF"
+          SIZE=$(curl -s "https://api.supabase.com/v1/projects/$REF/billing/addons" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            | python3 -c 'import sys,json;d=json.load(sys.stdin);a=[x for x in d.get("selected_addons",[]) if x.get("type")=="compute_instance"];print(a[0]["variant"]["id"] if a else "none")')
+          echo "COMPUTE SIZE = $SIZE"
+          if [ "$SIZE" = "ci_small" ]; then
+            echo "PASS: preview branch provisioned at Small"
+          else
+            echo "FAIL: expected ci_small, got $SIZE"; exit 1
+          fi
+
+      - name: Always delete the test branch
+        if: always()
+        run: |
+          supabase branches delete "$BRANCH_NAME" --project-ref "$PROJECT_ID" --yes || true
+
+  cleanup-on-close:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+          github-token: ${{ github.token }}
+      - run: supabase branches delete "ci-preview-test-${{ github.event.pull_request.number }}" --project-ref "dewddkcmwrzbpynylyhg" --yes || true
