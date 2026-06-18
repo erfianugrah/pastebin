@@ -44,12 +44,29 @@ jobs:
           # keep IPv4 OUT of the tunnel so the runner's IPv4 link to GitHub is untouched
           sudo warp-cli --accept-tos tunnel ip add-range 0.0.0.0/0 || echo "split-tunnel set failed; falling back to full tunnel"
           sudo warp-cli --accept-tos connect
-          for i in $(seq 1 20); do
-            curl -s6 --max-time 5 https://api6.ip.sb >/dev/null && break || sleep 2
+          # connect is async - gate on the daemon actually reporting Connected
+          for i in $(seq 1 30); do
+            ST=$(sudo warp-cli --accept-tos status 2>/dev/null || true)
+            echo "[poll $i] $ST"
+            echo "$ST" | grep -qi "Connected" && break
+            sleep 2
           done
-          V6=$(curl -s6 --max-time 8 https://api6.ip.sb || echo FAILED)
-          echo "IPv6 egress after WARP: $V6"
-          [ "$V6" != FAILED ] || { echo "WARP did not provide IPv6"; exit 1; }
+          echo "=== warp-cli status ==="; sudo warp-cli --accept-tos status || true
+          echo "=== warp-cli settings (tail) ==="; sudo warp-cli --accept-tos settings 2>/dev/null | tail -25 || true
+          echo "=== ip -6 addr ==="; ip -6 addr || true
+          echo "=== ip -6 route ==="; ip -6 route || true
+          # IPv6 egress to Cloudflare anycast - no DNS dependency
+          echo "=== Cloudflare anycast over IPv6 (no DNS) ==="
+          curl -6 --max-time 10 "https://[2606:4700:4700::1111]/cdn-cgi/trace" || echo "cf-anycast-v6 FAILED"
+          # IPv6 egress to a NON-Cloudflare public host (the real test)
+          V6=FAILED
+          for i in $(seq 1 5); do
+            V6=$(curl -s6 --max-time 10 https://api6.ipify.org || curl -s6 --max-time 10 https://api6.ip.sb || echo FAILED)
+            [ "$V6" != FAILED ] && [ -n "$V6" ] && break
+            sleep 3
+          done
+          echo "IPv6 egress (public, non-CF) after WARP: $V6"
+          [ "$V6" != FAILED ] && [ -n "$V6" ] || { echo "WARP did not provide working IPv6 egress"; exit 1; }
 
       - name: Create Small branch
         run: supabase branches create "$BRANCH_NAME" --project-ref "$PROJECT_ID" --size small --yes
