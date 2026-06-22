@@ -111,7 +111,7 @@ const kbdExtension: TokenizerAndRendererExtension = {
 		return undefined;
 	},
 	renderer(token) {
-		return `<kbd>${escapeHtml((token as { text: string }).text)}</kbd>`;
+		return `<kbd>${escapeHtml((token as unknown as { text: string }).text)}</kbd>`;
 	},
 };
 
@@ -212,7 +212,9 @@ const PURIFY_CONFIG = {
 	ADD_ATTR: ['id', 'class', 'target', 'rel', 'disabled', 'checked', 'data-language', 'data-slug'],
 	ADD_TAGS: ['kbd'],
 	// SANITIZE_NAMED_PROPS + SANITIZE_DOM left at their defaults (both true).
-} as const;
+	// NB: not `as const` — DOMPurify's Config types expect mutable `string[]`,
+	// and a readonly tuple fails to match the string-returning sanitize overload.
+};
 
 // ── Heading-id hook ───────────────────────────────────────────────────
 // Marked emits `<h1 data-slug="hello">Hello</h1>` (data-slug is allow-listed
@@ -247,7 +249,7 @@ export function renderMarkdown(src: string): string {
 	const m = buildMarked();
 	// marked.parse is sync when async option is off (default).
 	const raw = m.parse(src, { async: false }) as string;
-	return DOMPurify.sanitize(raw, PURIFY_CONFIG) as unknown as string;
+	return DOMPurify.sanitize(raw, PURIFY_CONFIG);
 }
 
 // Exposed only for unit tests.

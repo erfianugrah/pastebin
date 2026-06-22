@@ -84,7 +84,7 @@ describe('Numeric separators in JS/TS', () => {
 					'type' in t &&
 					(t as { type: string }).type === 'number'
 				) {
-					const content = (t as { content: unknown }).content;
+					const content = (t as unknown as { content: unknown }).content;
 					if (typeof content === 'string') out.push(content);
 				}
 				if (t && typeof t === 'object' && 'content' in t) {

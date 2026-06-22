@@ -30,26 +30,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            astro/package-lock.json
+          bun-version: latest
 
       - name: Install Worker deps (root)
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Install frontend deps (astro/)
         working-directory: astro
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       # deploy:prod = build:ui (astro → astro/dist) + wrangler deploy --env production.
       # The Worker's SUPABASE_* secrets already live in Cloudflare (set via
       # `wrangler secret put`), so only the deploy credential is needed here.
       - name: Deploy to production
-        run: npm run deploy:prod
+        run: bun run deploy:prod
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -70,7 +66,7 @@ jobs:
       # A failure here turns the run red — rollback with
       # `wrangler rollback --env production <version-id>`.
       - name: Smoke test (live API)
-        run: npm run test:smoke
+        run: bun run test:smoke
 
       - name: RLS end-to-end (live Supabase)
-        run: npm run test:rls
+        run: bun run test:rls

@@ -9,7 +9,7 @@ import CodeViewer from '../CodeViewer';
 // Prism.highlightElement is called inside the effect; jsdom has the DOM
 // but Prism may attach plugin features we don't care about here.
 vi.mock('prismjs', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('prismjs')>();
+	const actual = await importOriginal<{ default: typeof import('prismjs') }>();
 	return {
 		default: {
 			...actual.default,
