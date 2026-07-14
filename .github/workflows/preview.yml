@@ -1,13 +1,21 @@
 name: Preview (PR branch)
 
-# Per-PR preview: Supabase's GitHub integration auto-creates a preview BRANCH
-# database from the PR (isolated Postgres, its own ref + keys). Cloudflare has
-# no equivalent auto-wiring, so this workflow reads the branch's connection
-# details and uploads a Worker *preview version* bound to that branch DB -
-# without touching the deployed paste.erfi.io.
+# Per-PR preview: provision an isolated Supabase preview BRANCH database
+# (its own ref + keys), then `wrangler versions upload` a Worker *preview
+# version* bound to that branch DB - without touching deployed paste.erfi.io.
+#
+# We provision the branch OURSELVES via the Management API instead of relying
+# on the GitHub integration's auto-branching. Reason: config.toml pushes custom
+# auth config (SMTP sender_name + email rate limit + GitHub OAuth) that resolves
+# `env()` secrets. Those secrets do not exist on a preview branch, so the deploy
+# 401s ("Custom SMTP required ... Missing SMTP_PASS fields") and Supabase reports
+# the whole deploy as MIGRATIONS_FAILED - even though no migration is at fault.
+# Creating the branch with an explicit `secrets` payload fixes it deterministically.
 #
 # Requires repo secrets: SUPABASE_ACCESS_TOKEN, CLOUDFLARE_API_TOKEN,
-# CLOUDFLARE_ACCOUNT_ID; and repo variable SUPABASE_PROJECT_REF.
+# CLOUDFLARE_ACCOUNT_ID, RESEND_API_KEY, GH_OAUTH_CLIENT_ID,
+# GH_OAUTH_CLIENT_SECRET; and repo variable SUPABASE_PROJECT_REF.
+# Branch teardown on PR close lives in preview-teardown.yml.
 
 on:
   pull_request:
@@ -39,42 +47,82 @@ jobs:
         with:
           version: latest
 
-      - name: Resolve the auto-created Supabase preview branch
+      - name: Provision (or reuse) the Supabase preview branch
         id: branch
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           GIT_BRANCH: ${{ github.head_ref }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
         run: |
-          # The Supabase GitHub integration creates the branch on PR open.
-          # Resolve it by ID from `branches list` (name-based `branches get`
-          # is version-fragile and returned empty in CI), poll until the
-          # branch reaches a healthy status, then read its connection creds.
-          BID=""
+          set -euo pipefail
+          API="https://api.supabase.com/v1"
+
+          find_row() {
+            curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              "$API/projects/$PROJECT_REF/branches" \
+              | jq -r --arg b "$GIT_BRANCH" '.[]|select(.git_branch==$b)|.id+" "+.status'
+          }
+
+          row="$(find_row || true)"
+          BID="$(echo "$row" | awk '{print $1}')"
+          STATUS="$(echo "$row" | awk '{print $2}')"
+
+          # A failed/stale branch can't be cleanly re-migrated - delete + recreate.
+          if [ -n "$BID" ] && { [ "$STATUS" = "MIGRATIONS_FAILED" ] || [ "$STATUS" = "FUNCTIONS_FAILED" ]; }; then
+            echo "existing branch $BID is $STATUS - deleting"
+            curl -fsSL -X DELETE -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$API/branches/$BID" >/dev/null || true
+            BID=""; sleep 5
+          fi
+
+          if [ -z "$BID" ]; then
+            body="$(jq -n \
+              --arg gb "$GIT_BRANCH" \
+              --arg r "$RESEND_API_KEY" \
+              --arg ci "$GH_OAUTH_CLIENT_ID" \
+              --arg cs "$GH_OAUTH_CLIENT_SECRET" \
+              '{branch_name:$gb, git_branch:$gb, secrets:{RESEND_API_KEY:$r, GH_OAUTH_CLIENT_ID:$ci, GH_OAUTH_CLIENT_SECRET:$cs}}')"
+            resp="$(curl -sS -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" -d "$body" "$API/projects/$PROJECT_REF/branches")"
+            BID="$(echo "$resp" | jq -r '.id // empty')"
+            if [ -z "$BID" ]; then
+              # Possible race with a concurrent create - re-look-up before failing.
+              echo "create returned no id: $resp"
+              BID="$(find_row | awk '{print $1}')"
+            fi
+            [ -n "$BID" ] || { echo "::error::could not create preview branch for $GIT_BRANCH"; exit 1; }
+            echo "created branch $BID"
+          else
+            echo "reusing branch $BID ($STATUS)"
+          fi
+
+          # Poll to a terminal state; fail fast on failure. (~90s typical.)
+          STATUS=""
           for i in $(seq 1 40); do
-            LIST=$(supabase branches list --project-ref "$PROJECT_REF" --output json 2>/dev/null || echo '[]')
-            ROW=$(echo "$LIST" | jq -c --arg b "$GIT_BRANCH" '.[]|select(.git_branch==$b)' 2>/dev/null)
-            BID=$(echo "$ROW" | jq -r '.id // empty')
-            STATUS=$(echo "$ROW" | jq -r '.status // empty')
+            STATUS="$(curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              "$API/projects/$PROJECT_REF/branches" | jq -r --arg b "$BID" '.[]|select(.id==$b)|.status')"
             case "$STATUS" in
-              ACTIVE_HEALTHY|MIGRATIONS_PASSED|FUNCTIONS_DEPLOYED)
-                echo "branch $BID healthy ($STATUS) after ${i} poll(s)"
-                break ;;
-              MIGRATIONS_FAILED|FUNCTIONS_FAILED)
-                echo "::error::preview branch $BID failed provisioning: $STATUS"
-                exit 1 ;;
-              *)
-                echo "waiting for preview branch (${i}) status=${STATUS:-not-created-yet}"
-                BID=""; sleep 15 ;;
+              MIGRATIONS_PASSED|FUNCTIONS_DEPLOYED) echo "branch healthy ($STATUS) after $i poll(s)"; break ;;
+              MIGRATIONS_FAILED|FUNCTIONS_FAILED) echo "::error::preview branch $BID failed: $STATUS"; exit 1 ;;
+              *) echo "waiting ($i) status=${STATUS:-not-created-yet}"; sleep 15 ;;
             esac
           done
-          if [ -z "$BID" ]; then
-            echo "::error::preview branch never became healthy for $GIT_BRANCH"
-            exit 1
-          fi
-          JSON=$(supabase branches get "$BID" --output json)
-          echo "url=$(echo "$JSON" | jq -r '.SUPABASE_URL')" >> "$GITHUB_OUTPUT"
-          echo "key=$(echo "$JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY')" >> "$GITHUB_OUTPUT"
+          case "$STATUS" in
+            MIGRATIONS_PASSED|FUNCTIONS_DEPLOYED) : ;;
+            *) echo "::error::preview branch $BID never became healthy (last=$STATUS)"; exit 1 ;;
+          esac
+
+          JSON="$(supabase branches get "$BID" --output json)"
+          URL="$(echo "$JSON" | jq -r '.SUPABASE_URL')"
+          KEY="$(echo "$JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY')"
+          echo "::add-mask::$KEY"
+          {
+            echo "url=$URL"
+            echo "key=$KEY"
+            echo "bid=$BID"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install deps (root + astro)
         run: |

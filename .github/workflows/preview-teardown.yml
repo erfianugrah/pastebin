@@ -1,0 +1,34 @@
+name: Preview teardown
+
+# Deletes the per-PR Supabase preview branch when the PR is closed (merged or
+# not). Pairs with preview.yml, which provisions it. Idempotent - no-op if the
+# branch is already gone.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  delete-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the Supabase preview branch
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          GIT_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          API="https://api.supabase.com/v1"
+          BID="$(curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "$API/projects/$PROJECT_REF/branches" \
+            | jq -r --arg b "$GIT_BRANCH" '.[]|select(.git_branch==$b)|.id')"
+          if [ -n "$BID" ]; then
+            echo "deleting preview branch $BID for $GIT_BRANCH"
+            curl -fsSL -X DELETE -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$API/branches/$BID"
+          else
+            echo "no preview branch for $GIT_BRANCH - nothing to delete"
+          fi
