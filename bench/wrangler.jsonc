@@ -1,0 +1,15 @@
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "pasteriser-hyperdrive-bench",
+	"main": "worker.ts",
+	"account_id": "25f21f141824546aa72c74451a11b419",
+	"compatibility_date": "2026-07-12",
+	"compatibility_flags": ["nodejs_compat"],
+	"vars": {
+		"SUPABASE_URL": "https://dewddkcmwrzbpynylyhg.supabase.co"
+	},
+	// SUPABASE_ANON_KEY comes from bench/.dev.vars (gitignored) for `wrangler dev`.
+	"hyperdrive": [
+		{ "binding": "HYPERDRIVE", "id": "977d7826add048b594ddd9c394db943c" }
+	]
+}

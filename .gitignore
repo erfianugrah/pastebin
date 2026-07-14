@@ -182,3 +182,4 @@ playwright-report/
 # Claude Design reference material — design-system extraction + Iosevka
 # font dump (1.1 GB). Not part of the production artefact; consult locally.
 ui-overhaul/
+bench/.dev.vars
