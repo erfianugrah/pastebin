@@ -10,6 +10,6 @@
 	},
 	// SUPABASE_ANON_KEY comes from bench/.dev.vars (gitignored) for `wrangler dev`.
 	"hyperdrive": [
-		{ "binding": "HYPERDRIVE", "id": "977d7826add048b594ddd9c394db943c" }
+		{ "binding": "HYPERDRIVE", "id": "<hyperdrive-config-id>" }
 	]
 }

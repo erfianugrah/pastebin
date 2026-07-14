@@ -36,7 +36,9 @@
 		"@astrojs/check": "^0.9.2",
 		"@supabase/supabase-js": "^2.103.0",
 		"hono": "^4.12.8",
+		"jose": "^6.2.3",
 		"pg": ">=8.16.3",
+		"postgres": "^3.4.9",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
