@@ -43,10 +43,6 @@ jobs:
         with:
           bun-version: latest
 
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
       - name: Provision (or reuse) the Supabase preview branch
         id: branch
         env:
@@ -114,9 +110,15 @@ jobs:
             *) echo "::error::preview branch $BID never became healthy (last=$STATUS)"; exit 1 ;;
           esac
 
-          JSON="$(supabase branches get "$BID" --output json)"
-          URL="$(echo "$JSON" | jq -r '.SUPABASE_URL')"
-          KEY="$(echo "$JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY')"
+          # Read the branch's creds via the Management API (no `supabase link`
+          # needed - the runner checkout is not a linked project). URL is
+          # derived from the branch ref; prefer the new sb_secret key, fall
+          # back to the legacy service_role JWT.
+          BREF="$(curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$API/branches/$BID" | jq -r '.ref')"
+          URL="https://$BREF.supabase.co"
+          KEYS="$(curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$API/projects/$BREF/api-keys?reveal=true")"
+          KEY="$(echo "$KEYS" | jq -r '[.[]|select(.type=="secret")|.api_key][0] // [.[]|select(.name=="service_role")|.api_key][0]')"
+          [ -n "$URL" ] && [ "$KEY" != "null" ] && [ -n "$KEY" ] || { echo "::error::could not read branch creds (ref=$BREF)"; exit 1; }
           echo "::add-mask::$KEY"
           {
             echo "url=$URL"
