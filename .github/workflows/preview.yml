@@ -46,22 +46,35 @@ jobs:
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           GIT_BRANCH: ${{ github.head_ref }}
         run: |
-          # The Supabase GitHub integration creates the branch on PR open; it
-          # may still be provisioning, so poll until ACTIVE_HEALTHY.
+          # The Supabase GitHub integration creates the branch on PR open.
+          # Resolve it by ID from `branches list` (name-based `branches get`
+          # is version-fragile and returned empty in CI), poll until the
+          # branch reaches a healthy status, then read its connection creds.
+          BID=""
           for i in $(seq 1 40); do
-            JSON=$(supabase branches get "$GIT_BRANCH" --project-ref "$PROJECT_REF" --output json 2>/dev/null || true)
-            STATUS=$(echo "$JSON" | jq -r '.status // empty')
-            if [ -n "$JSON" ] && [ "$JSON" != "null" ] && echo "$JSON" | jq -e '.SUPABASE_URL' >/dev/null 2>&1; then
-              echo "url=$(echo "$JSON" | jq -r '.SUPABASE_URL')" >> "$GITHUB_OUTPUT"
-              echo "key=$(echo "$JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY')" >> "$GITHUB_OUTPUT"
-              echo "resolved branch after ${i} poll(s)"
-              exit 0
-            fi
-            echo "waiting for preview branch (${i}) status=${STATUS:-none}"
-            sleep 15
+            LIST=$(supabase branches list --project-ref "$PROJECT_REF" --output json 2>/dev/null || echo '[]')
+            ROW=$(echo "$LIST" | jq -c --arg b "$GIT_BRANCH" '.[]|select(.git_branch==$b)' 2>/dev/null)
+            BID=$(echo "$ROW" | jq -r '.id // empty')
+            STATUS=$(echo "$ROW" | jq -r '.status // empty')
+            case "$STATUS" in
+              ACTIVE_HEALTHY|MIGRATIONS_PASSED|FUNCTIONS_DEPLOYED)
+                echo "branch $BID healthy ($STATUS) after ${i} poll(s)"
+                break ;;
+              MIGRATIONS_FAILED|FUNCTIONS_FAILED)
+                echo "::error::preview branch $BID failed provisioning: $STATUS"
+                exit 1 ;;
+              *)
+                echo "waiting for preview branch (${i}) status=${STATUS:-not-created-yet}"
+                BID=""; sleep 15 ;;
+            esac
           done
-          echo "::error::preview branch never became available for $GIT_BRANCH"
-          exit 1
+          if [ -z "$BID" ]; then
+            echo "::error::preview branch never became healthy for $GIT_BRANCH"
+            exit 1
+          fi
+          JSON=$(supabase branches get "$BID" --output json)
+          echo "url=$(echo "$JSON" | jq -r '.SUPABASE_URL')" >> "$GITHUB_OUTPUT"
+          echo "key=$(echo "$JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY')" >> "$GITHUB_OUTPUT"
 
       - name: Install deps (root + astro)
         run: |
