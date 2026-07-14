@@ -1,0 +1,85 @@
+name: Preview (PR branch)
+
+# Per-PR preview: Supabase's GitHub integration auto-creates a preview BRANCH
+# database from the PR (isolated Postgres, its own ref + keys). Cloudflare has
+# no equivalent auto-wiring, so this workflow reads the branch's connection
+# details and uploads a Worker *preview version* bound to that branch DB -
+# without touching the deployed paste.erfi.io.
+#
+# Requires repo secrets: SUPABASE_ACCESS_TOKEN, CLOUDFLARE_API_TOKEN,
+# CLOUDFLARE_ACCOUNT_ID; and repo variable SUPABASE_PROJECT_REF.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: preview-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Reuse the secret-free gate (typecheck, lint, tests, build) before deploying.
+  gate:
+    uses: ./.github/workflows/ci.yml
+
+  preview:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Resolve the auto-created Supabase preview branch
+        id: branch
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          GIT_BRANCH: ${{ github.head_ref }}
+        run: |
+          # The Supabase GitHub integration creates the branch on PR open; it
+          # may still be provisioning, so poll until ACTIVE_HEALTHY.
+          for i in $(seq 1 40); do
+            JSON=$(supabase branches get "$GIT_BRANCH" --project-ref "$PROJECT_REF" --output json 2>/dev/null || true)
+            STATUS=$(echo "$JSON" | jq -r '.status // empty')
+            if [ -n "$JSON" ] && [ "$JSON" != "null" ] && echo "$JSON" | jq -e '.SUPABASE_URL' >/dev/null 2>&1; then
+              echo "url=$(echo "$JSON" | jq -r '.SUPABASE_URL')" >> "$GITHUB_OUTPUT"
+              echo "key=$(echo "$JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY')" >> "$GITHUB_OUTPUT"
+              echo "resolved branch after ${i} poll(s)"
+              exit 0
+            fi
+            echo "waiting for preview branch (${i}) status=${STATUS:-none}"
+            sleep 15
+          done
+          echo "::error::preview branch never became available for $GIT_BRANCH"
+          exit 1
+
+      - name: Install deps (root + astro)
+        run: |
+          bun install --frozen-lockfile
+          (cd astro && bun install --frozen-lockfile)
+
+      - name: Build frontend (astro -> astro/dist)
+        run: bun run build:ui
+
+      # `versions upload` publishes a preview version with its own preview URL
+      # and does NOT roll out to the production route. --var overrides the
+      # branch connection for this version only (plaintext, ephemeral branch).
+      - name: Upload Worker preview bound to the branch DB
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            versions upload
+            --var SUPABASE_URL:${{ steps.branch.outputs.url }}
+            --var SUPABASE_SECRET_KEY:${{ steps.branch.outputs.key }}
