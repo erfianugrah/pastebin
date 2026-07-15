@@ -155,6 +155,7 @@ export class RecentFeedDO {
 				connect: (url) => new OutboundWs(url),
 				setTimeout: (handler, ms) => setTimeout(handler, ms) as unknown as number,
 				clearTimeout: (id) => clearTimeout(id),
+				now: () => Date.now(),
 			},
 		);
 		this.phoenix.start();

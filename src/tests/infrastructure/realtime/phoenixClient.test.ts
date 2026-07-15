@@ -65,6 +65,7 @@ function harness() {
 		clearTimeout: (id: number) => {
 			timers.delete(id);
 		},
+		now: () => clock,
 	};
 	const advance = (ms: number) => {
 		clock += ms;
@@ -177,6 +178,24 @@ describe('phoenixClient', () => {
 		expect(deps.connect).toHaveBeenCalledTimes(1); // not immediate
 		advance(10_000); // within the backoff ladder
 		expect(deps.connect.mock.calls.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it('requests broadcast replay on rejoin but not on the first join', () => {
+		const { sockets, deps, advance } = harness();
+		createPhoenixClient(baseConfig(), deps).start();
+		sockets[0].emit('open');
+		const first = sockets[0].sentFrames().find((f) => f.event === 'phx_join');
+		expect(first.payload.config.broadcast.replay).toBeUndefined();
+		// join ok sets the replay cursor
+		sockets[0].recv({ topic: 'realtime:recent:public', event: 'phx_reply', payload: { status: 'ok' }, ref: first.ref });
+		// force a reconnect
+		sockets[0].recv({ topic: 'realtime:recent:public', event: 'phx_error', payload: {}, ref: '1' });
+		advance(10_000);
+		sockets[1].emit('open');
+		const rejoin = sockets[1].sentFrames().find((f) => f.event === 'phx_join');
+		expect(rejoin.payload.config.broadcast.replay).toBeDefined();
+		expect(typeof rejoin.payload.config.broadcast.replay.since).toBe('number');
+		expect(rejoin.payload.config.broadcast.replay.limit).toBeGreaterThan(0);
 	});
 
 	it('does not reconnect after stop()', () => {

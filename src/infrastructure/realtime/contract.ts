@@ -54,6 +54,8 @@ export interface PhoenixClientDeps {
 	connect(url: string): WsLike;
 	setTimeout(handler: () => void, ms: number): number;
 	clearTimeout(id: number): void;
+	/** Current epoch ms - used as the `broadcast.replay.since` cursor. */
+	now(): number;
 }
 
 export type PhoenixStatus = 'connecting' | 'joined' | 'closed' | 'error';
@@ -71,6 +73,8 @@ export interface PhoenixClientConfig {
 	onPaste(meta: PasteCreatedMeta): void;
 	/** optional lifecycle observer. */
 	onStatusChange?(status: PhoenixStatus): void;
+	/** max messages to replay on rejoin (default 50). */
+	replayLimit?: number;
 }
 
 /** The upstream Supabase Realtime client the DO holds. */

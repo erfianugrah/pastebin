@@ -25,6 +25,10 @@ export function createPhoenixClient(config: PhoenixClientConfig, deps: PhoenixCl
 	let heartbeatTimer: number | null = null;
 	let reconnectTimer: number | null = null;
 	let reconnectAttempt = 0;
+	// Epoch-ms cursor of the last time we were connected/saw a message. null on
+	// the first-ever connect; set thereafter so a REJOIN can request replay of
+	// anything broadcast during the disconnect gap.
+	let lastSeenAt: number | null = null;
 
 	function buildUrl(): string {
 		const base = config.supabaseUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:').replace(/\/$/, '');
@@ -78,6 +82,7 @@ export function createPhoenixClient(config: PhoenixClientConfig, deps: PhoenixCl
 
 		if (frame.event === 'phx_reply') {
 			if (frame.payload?.status === 'ok') {
+				lastSeenAt = deps.now();
 				config.onStatusChange?.('joined');
 			} else {
 				config.onStatusChange?.('error');
@@ -93,6 +98,7 @@ export function createPhoenixClient(config: PhoenixClientConfig, deps: PhoenixCl
 		}
 
 		if (frame.event === 'broadcast' && frame.payload?.event === config.event) {
+			lastSeenAt = deps.now();
 			config.onPaste(frame.payload.payload as PasteCreatedMeta);
 		}
 	}
@@ -105,13 +111,19 @@ export function createPhoenixClient(config: PhoenixClientConfig, deps: PhoenixCl
 		ws.addEventListener('open', () => {
 			if (stopped || !ws) return;
 			joinRef = nextRef();
+			const broadcast: { ack: boolean; self: boolean; replay?: { since: number; limit: number } } = { ack: false, self: false };
+			// On a REJOIN (we have a cursor), ask the server to replay anything
+			// broadcast while we were disconnected. First join sends no replay.
+			if (lastSeenAt !== null) {
+				broadcast.replay = { since: lastSeenAt, limit: config.replayLimit ?? 50 };
+			}
 			ws.send(
 				JSON.stringify({
 					topic: `realtime:${config.topic}`,
 					event: 'phx_join',
 					payload: {
 						config: {
-							broadcast: { ack: false, self: false },
+							broadcast,
 							presence: { enabled: false },
 							private: true,
 						},
