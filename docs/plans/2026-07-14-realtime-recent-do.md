@@ -116,3 +116,16 @@ browser socket on `/api/recent/live`, through the full chain
 INSERT -> trigger -> realtime.send -> Supabase Realtime -> RecentFeedDO
 upstream -> feedHub fan-out -> browser. DO lifecycle log confirmed
 `connecting -> upstream socket open -> joined -> paste_created -> fanout`.
+
+## Completeness pass (2026-07-15)
+
+- **CI deploy pipeline fixed & fully green.** The 3 missing GitHub Actions
+  secrets (SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_PUBLISHABLE_KEY) were
+  set; `deploy.yml` now passes build -> deploy -> live smoke -> live RLS.
+- **Broadcast replay on rejoin** shipped. phx_join now carries
+  broadcast.replay { since, limit } on a REJOIN (never the first join), so a
+  paste broadcast during a transient disconnect is replayed on reconnect;
+  the frontend dedups by id. Conformance-tested. Closes the last known gap.
+
+Status: COMPLETE. Feature live on paste.erfi.io, deployed via the gated CI
+pipeline, 352 tests green, full round-trip empirically verified in prod.
