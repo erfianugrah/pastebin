@@ -31,9 +31,13 @@ class OutboundWs implements WsLike {
 
 	private async dial(url: string): Promise<void> {
 		try {
-			const resp = await fetch(url, { headers: { Upgrade: 'websocket' } });
+			// Cloudflare's fetch() upgrade requires an http(s) URL, not ws(s):
+			// the phoenixClient builds a wss:// URL (correct for a browser
+			// WebSocket, wrong for fetch). Translate the scheme.
+			const httpUrl = url.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:');
+			const resp = await fetch(httpUrl, { headers: { Upgrade: 'websocket' } });
 			const ws = resp.webSocket;
-			if (!ws) throw new Error('upstream response did not include a webSocket');
+			if (!ws) throw new Error(`upstream response had no webSocket (status ${resp.status})`);
 			ws.accept();
 			this.socket = ws;
 			this.ready = true;
@@ -50,7 +54,8 @@ class OutboundWs implements WsLike {
 			// Accepted sockets are already open; synthesise the event the
 			// PhoenixClient waits on before sending phx_join.
 			this.emit('open', {});
-		} catch {
+		} catch (e) {
+			console.error('[RecentFeedDO] upstream dial failed:', (e as Error)?.message ?? String(e));
 			this.readyState = 3;
 			this.emit('error', {});
 			this.emit('close', { code: 1006 });
@@ -144,6 +149,7 @@ export class RecentFeedDO {
 				topic: 'recent:public',
 				event: 'paste_created',
 				onPaste: (meta) => this.hub.broadcast(meta),
+				onStatusChange: (s) => { if (s === 'error' || s === 'closed') console.warn('[RecentFeedDO] upstream', s); },
 			},
 			{
 				connect: (url) => new OutboundWs(url),
