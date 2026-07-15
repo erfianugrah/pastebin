@@ -23,6 +23,10 @@ Backend-For-Frontend invariant (the browser never talks to Supabase directly).
 - `securityHeaders` no longer re-wraps WebSocket `101` responses, which had
   dropped the non-standard `webSocket` property and broke the upgrade with a
   `1002` protocol error.
+- `RecentFeedDO` dials Supabase Realtime over `https://` for its outbound
+  subscription: Cloudflare's `fetch()` rejects a `wss://` URL for the WebSocket
+  upgrade, so `OutboundWs.dial` translates the scheme. Without it the DO's
+  upstream never connected in production (it worked against a local WS).
 
 ## [3.11.0] - 2026-06-11
 

@@ -518,7 +518,7 @@ Anonymous use is unchanged: pastes created without a JWT get `user_id = NULL` an
 
 5 RLS policies cover the authenticated role: SELECT public, SELECT own, INSERT own (WITH CHECK enforces self-assignment), UPDATE own (USING + WITH CHECK), DELETE own. **These are not on the production hot path** — the Worker uses `service_role` (which bypasses RLS), so the actual runtime authorization is the app-level `user_id` filter on the verified JWT plus the token-gated `delete_paste`/`update_paste` RPCs. RLS is a **tested defense-in-depth backstop**: it would scope a breach if the `service_role` key ever leaked or a future direct-query path were added. The policies activate the moment anything queries Supabase with a user JWT instead of `service_role`.
 
-The backstop is not hypothetical — `npm run test:rls` verifies it end-to-end against the live project (creates 2 real test users, signs them in with the publishable key, runs 9 scenarios / 14 assertions covering own-vs-cross-user SELECT/DELETE and `WITH CHECK` user_id spoofing, then cleans up). It is currently a **manual pre-deploy script, not a CI gate** (the repo has no CI workflows yet).
+The backstop is not hypothetical — `npm run test:rls` verifies it end-to-end against the live project (creates 2 real test users, signs them in with the publishable key, runs 9 scenarios / 14 assertions covering own-vs-cross-user SELECT/DELETE and `WITH CHECK` user_id spoofing, then cleans up). It runs both as a **manual pre-deploy script** and as a **CI gate**: `deploy.yml` runs the RLS suite end-to-end (against a per-PR Supabase preview branch, then production) after build.
 
 #### Delete a Paste
 
@@ -885,7 +885,7 @@ For more detailed security information, configuration guides, and security check
 
 **Domain**: https://paste.erfi.io
 **Storage**: Supabase Postgres (Frankfurt, `eu-central-1`, project `dewddkcmwrzbpynylyhg`)
-**Migrations**: 19 applied — see `supabase/migrations/`
+**Migrations**: 23 applied - see `supabase/migrations/`
 
 ### Storage Backend
 
@@ -909,7 +909,7 @@ For day-to-day operations (when to use the Dashboard vs CLI vs Management API, h
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full release history. The most recent release, **3.9.0** (May 19, 2026), is a verification-driven fix pass on top of 3.8.0: CSP rewrite (the two-layer hash design was incompatible with Radix UI inline `style=""` attrs and Cloudflare Bot Fight Mode); race-free atomic update via new `update_paste(uuid, uuid, text, text, text)` Postgres RPC (closes burn-resurrection); `UpdatePasteSchema` Zod validation at the API boundary; rate limits added to `/auth/confirm`, `/api/auth/oauth/:provider`, `PUT /pastes/:id`, `DELETE|POST /pastes/:id/delete`; per-request Supabase auth client (the shared client carrying any user's session through `_saveSession` was actively breaking subsequent `service_role` writes — discovered by smoke-test verification post-deploy); `getCookie` URIError fix (malformed cookies no longer 500); Zod row validation in `SupabasePasteRepository.mapRow`. 287 unit tests + smoke/RLS/race suites all green against production. The 3.8.0 release that preceded this was a code-review hardening pass: burn-after-reading cache bypass, E2EE-key leak through third-party QR generator, DOM-clobbering in markdown, plaintext delete tokens, and SyntaxError-as-500 bugs fixed.
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history. The most recent release, **3.12.0** (July 15, 2026), ships the live `/recent` feed over a Durable Object Realtime relay: a single `RecentFeedDO` holds one server-side Supabase Realtime subscription and fans `paste_created` frames out to browsers over a same-origin `/api/recent/live` WebSocket - reinstating the broadcast pipeline dropped in 3.7.0 the BFF-safe way (the browser never talks to Supabase; CSP stays `connect-src 'self'`). Earlier, **3.9.0** (May 19, 2026) was a verification-driven fix pass on top of 3.8.0: CSP rewrite (the two-layer hash design was incompatible with Radix UI inline `style=""` attrs and Cloudflare Bot Fight Mode); race-free atomic update via new `update_paste(uuid, uuid, text, text, text)` Postgres RPC (closes burn-resurrection); `UpdatePasteSchema` Zod validation at the API boundary; rate limits added to `/auth/confirm`, `/api/auth/oauth/:provider`, `PUT /pastes/:id`, `DELETE|POST /pastes/:id/delete`; per-request Supabase auth client (the shared client carrying any user's session through `_saveSession` was actively breaking subsequent `service_role` writes — discovered by smoke-test verification post-deploy); `getCookie` URIError fix (malformed cookies no longer 500); Zod row validation in `SupabasePasteRepository.mapRow`. 287 unit tests + smoke/RLS/race suites all green against production. The 3.8.0 release that preceded this was a code-review hardening pass: burn-after-reading cache bypass, E2EE-key leak through third-party QR generator, DOM-clobbering in markdown, plaintext delete tokens, and SyntaxError-as-500 bugs fixed.
 
 ### Quick verification
 

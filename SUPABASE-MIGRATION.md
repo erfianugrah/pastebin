@@ -760,15 +760,18 @@ exercised the pipeline that no longer exists. `package.json` lost
 no longer includes the realtime suite. The remaining live suites are
 smoke, race, rls.
 
-**Recent-paste UX** is now polling-only. The Astro `RecentPastes`
-component fetches `GET /api/recent` once on mount with no setInterval
-(no client-side polling either, despite the research claim — see PLAN
-verification §M4). If a push feed is wanted in the future, both
-prerequisites need to be met first:
+**Recent-paste UX** was polling-only between 3.7.0 and 3.11.x -
+superseded by the 3.12.0 Durable Object relay documented in 4.3 above.
+In that window the Astro `RecentPastes` component fetched
+`GET /api/recent` once on mount. The 3.12.0 relay delivered a live push
+feed WITHOUT either downgrade this section originally said it would need:
 
-1. Add `wss://<ref>.supabase.co` to the CSP `connect-src` directive.
-2. Add a supabase-js client to the frontend with the publishable
-   (anon) key, then `client.channel('recent:public').on('broadcast', …)`.
+1. It did NOT add `wss://<ref>.supabase.co` to the CSP - the DO relay
+   fans out over a same-origin `/api/recent/live` socket, so
+   `connect-src 'self'` is unchanged.
+2. It did NOT add a browser supabase-js client - the anon key stays
+   server-side in `RecentFeedDO`, which holds the single upstream
+   `client.channel('recent:public')` subscription.
 
 **Defense-in-depth context for the original design** (kept here as
 historical reference): the three-layer model — trigger filter,
@@ -1304,7 +1307,7 @@ pattern against Supabase projects. Citations:
 | `/auth/v1/signup` (browser → Supabase direct) | N/A | ✓ Browser never speaks to Supabase since BFF; all auth flows through Worker |
 | `/auth/v1/token` refresh | N/A | ✓ Worker BFF — refresh happens in Worker code, not browser |
 | Email confirmation | Custom SMTP via Resend, 30/hr | ✓ Inbuilt 2/hr bottleneck removed in 3.5.0 |
-| Realtime subscriptions | None — pipeline dropped 3.7.0 | ✓ No exposure |
+| Realtime subscriptions | One server-side subscription inside `RecentFeedDO` (re-shipped 3.12.0); browser never connects to Supabase | ✓ No key/CSP exposure - relay keeps `connect-src 'self'` |
 | Paste size | 25 MiB max for all roles | ✗ Multi-IP attacker fills 500 MB DB in 20 requests — anonymous-cap still on Phase 4.7 todo |
 | CAPTCHA / Turnstile | None | ⚠ Signup floor still depends on rate-limit + email-rate; CAPTCHA would harden further |
 
@@ -1710,12 +1713,12 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Infrastructure/auth** | `AuthService.getUserIdFromRequest()` validates JWTs via `supabase.auth.getUser()`. | Phase 4.4b. |
 | **Entry point** (`index.ts`) | DI of all services in Hono context. Routes for paste CRUD, `/api/recent`, `/api/search`, `/api/stats`, `/login`, `/signup`, `/my`. | `STORAGE_BACKEND` branching removed in Phase 5. |
 | **Types** (`types.ts`) | `Env`: `ASSETS`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`. | `PASTES`/`STORAGE_BACKEND` removed in Phase 5. |
-| **Frontend** (Astro/React) | `UserMenu`, `AuthForm`, `MyPastes` (cursor-paginated since 3.7.0), `RecentPastes` (polling-based; Realtime push reverted in 3.7.0), `PasteForm` (sends JWT when signed in), `useAuth` hook. No browser-side supabase-js client. | Phases 4.3-4.4. |
+| **Frontend** (Astro/React) | `UserMenu`, `AuthForm`, `MyPastes` (cursor-paginated since 3.7.0), `RecentPastes` (live WS push via `useRecentLive` over `/api/recent/live`, re-shipped 3.12.0; 15s poll fallback), `PasteForm` (sends JWT when signed in), `useAuth` hook. No browser-side supabase-js client. | Phases 4.3-4.4. |
 | **wrangler.jsonc** | No `vars` block. Both `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are Wrangler secrets; required pair documented in a JSONC comment at the top of the file. | KV bindings + `STORAGE_BACKEND` var removed in Phase 5. `SUPABASE_URL` promoted from var to secret in 3.4.0. |
 | **astro/.env** | `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`. | Phases 4.3-4.4. |
 | **Unit tests** | 172 passing (+ 22 Astro). | 0 baseline → 113 through Phase 1 → 135 through 4.3 → 151 through 4.4 → 109 after Phase 5 → 142 after BFF (+33) → 147 after 4.4d Path C (+5 `handleConfirm`) → 150 after 3.5.0 (+1 duplicate-email, +2 delete-paste regression) → 172 after 3.6.0 (+22 across recovery, magic-link, OAuth handlers). |
 | **Live test scripts** | `test:smoke` (52 cases now), `test:race`, `test:rls`, `test:all-live`, plus each one wrapped with `:tail` (e.g. `test:smoke:tail`) via `scripts/with-wrangler-tail.ts`. | Phases 3.5-4.4. Tail wrappers added in 3.4.0. Smoke +17 auth cases in 3.6.0. `test:realtime` removed in 3.7.0 alongside the Realtime trigger. |
-| **Migrations** | 19 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3, dropped in 3.7.0) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix) + drop-realtime (3.7.0) + batch-cron (3.7.0) + `delete_paste()` RPC (3.8.0) + `update_paste()` RPC (3.9.0) + SECURITY DEFINER grant hardening (`20260608155754`). |
+| **Migrations** | 23 files. | 7 baseline + trigger fix (3.5) + `view_paste()` (4.1) + FTS (4.2) + Realtime (4.3, dropped 3.7.0, **reinstated 3.12.0**) + authenticated RLS (4.4a) + `paste_stats()` (4.5) + title-nullable (3.4.0 bug fix) + drop-realtime (3.7.0) + batch-cron (3.7.0) + `delete_paste()` RPC (3.8.0) + `update_paste()` RPC (3.9.0) + SECURITY DEFINER grant hardening (`20260608155754`) + preview-branch smoke no-op (`20260714090000`) + Realtime recent-feed reinstate (`20260714120000`, 3.12.0). |
 | **Config IaC** | `supabase/config.toml` + `supabase/templates/*.html`. Push via `supabase config push`. Secrets via `env(VAR)` from `.env`. | New in 3.6.0. Reading live state still needs the Management API (no `config pull`). |
 
 ---
@@ -1727,7 +1730,7 @@ This table tracks cumulative impact across all phases (0 through 5):
 | Feature | How it's used | Phase |
 |---|---|---|
 | **Postgres** | Paste storage, FTS, aggregations, PL/pgSQL functions, row locks, jsonb | 0-4 |
-| **RLS** | 1 anon policy + 5 authenticated policies on `pastes`; 1 anon on `slugs`. Realtime RLS policies on `realtime.messages` were added in 4.3 and dropped in 3.7.0 alongside the trigger. | 0, 4.4a |
+| **RLS** | 1 anon policy + 5 authenticated policies on `pastes`; 1 anon on `slugs`. Realtime RLS policies on `realtime.messages` were added in 4.3, dropped in 3.7.0, and reinstated in 3.12.0 (`20260714120000`) for the private `recent:public` channel. | 0, 4.4a |
 | **Auth: email + password** | Signup, login, session refresh, server-side email confirmation (Path C) | 4.4, 4.4d |
 | **Auth: password recovery** | `resetPasswordForEmail` → `/auth/confirm?type=recovery&next=/auth/reset-password` → `updateUser({password})` | 4.4e (3.6.0) |
 | **Auth: magic link** | `signInWithOtp({ shouldCreateUser: false })` — re-entry path; not new signups | 4.4e (3.6.0) |
@@ -1737,9 +1740,9 @@ This table tracks cumulative impact across all phases (0 through 5):
 | **Leaked-password protection (HIBP)** | HaveIBeenPwned check enabled via Management API (`password_hibp_enabled: true`); not a `config.toml`-managed field. Rejects signups/password-changes using known-breached passwords. | 2026-06 |
 | **Custom SMTP** | Resend (`smtp.resend.com:465`, sender `noreply@erfi.io`, `rate_limit_email_sent` 30/hr) | 3.5.0 |
 | **Custom email templates** | 5 templates (confirmation/recovery/magic_link/invite/email_change) — hardcoded `type=` per template; 2 notification templates (linked/unlinked) | 3.4.0 + 3.6.0 |
-| **Realtime** | Trigger + RLS shipped in 4.3, **reverted in 3.7.0** (migration `20260512102410_drop_realtime_broadcast.sql`). Frontend never subscribed; CSP blocked WebSocket. Quota burn for zero consumers. | 4.3 → reverted 3.7.0 |
+| **Realtime** | Trigger + RLS shipped in 4.3, reverted in 3.7.0, **re-shipped 3.12.0** the BFF-safe way (`20260714120000`): a `RecentFeedDO` holds the single server-side subscription and relays to browsers over same-origin `/api/recent/live`, so the CSP stays `connect-src 'self'` and there is a real consumer. | 4.3 → 3.7.0 → 3.12.0 |
 | **pg_cron** | Both jobs batched at `LIMIT 1000` (3.7.0). `cleanup-expired-pastes` every 5min, `cleanup-expired-slugs` every 15min (was daily 03:00 pre-batch). | 0; rewritten in 3.7.0 |
-| **PL/pgSQL functions** | `view_paste()` (FOR UPDATE row lock for burn-after-reading), `delete_paste(uuid, uuid)` (atomic delete-with-token, 3.8.0), `update_paste(uuid, uuid, text, text, text)` (atomic update-with-token, 3.9.0), `paste_stats()` (jsonb aggregation). All `SECURITY DEFINER` + `SET search_path = ''`, EXECUTE granted to `service_role` only (anon/authenticated revoked in `20260608155754`). `broadcast_public_paste_insert()` was here in 4.3, dropped in 3.7.0. | 4.1, 4.5, 3.8.0, 3.9.0 |
+| **PL/pgSQL functions** | `view_paste()` (FOR UPDATE row lock for burn-after-reading), `delete_paste(uuid, uuid)` (atomic delete-with-token, 3.8.0), `update_paste(uuid, uuid, text, text, text)` (atomic update-with-token, 3.9.0), `paste_stats()` (jsonb aggregation). All `SECURITY DEFINER` + `SET search_path = ''`, EXECUTE granted to `service_role` only (anon/authenticated revoked in `20260608155754`). `broadcast_public_paste_insert()` (shipped 4.3, dropped 3.7.0, reinstated 3.12.0) fires `realtime.send()` on public-paste insert. | 4.1, 4.5, 3.8.0, 3.9.0 |
 | **Workers Rate Limiting binding** | `RL_AUTH_WRITE` 10/60s, `RL_SESSION_READ` 60/60s, `RL_PASTE_CREATE` 30/60s, `RL_SEARCH` 30/60s. Counters propagate across the edge; middleware fails open on binding error. | 3.7.0 |
 | **Supabase client caching** | Three `createClient(...)` call sites consolidated through `getServiceRoleClient(url, key)` memoiser. The cached client is stateless given `persistSession: false` + `autoRefreshToken: false`. PKCE-flow clients in `handleOAuthStart`/`handleOAuthCallback` still allocate per-request (custom storage shim). | 3.7.0 |
 | **Aggregations** | `paste_stats()` SQL function returning jsonb `{totalPublic, byLanguage, byHour, encryption, generatedAt}`. Edge-cached + SWR via Worker. | 4.5 |

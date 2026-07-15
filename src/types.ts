@@ -11,7 +11,9 @@ export interface Env {
 	/** sb_secret_... (or legacy service_role JWT). Wrangler secret, never in source. */
 	SUPABASE_SECRET_KEY: string;
 	/**
-	 * Publishable / anon key (JWT with role=anon, or `sb_publishable_...`).
+	 * Anon key as a JWT with role=anon. NOTE: an `sb_publishable_...` key does
+	 * NOT work for the RecentFeedDO Realtime subscription - Supabase Realtime
+	 * silently ignores `sb_*` tokens as the private-channel access_token.
 	 * Used ONLY inside the RecentFeedDO to authenticate the server-side
 	 * upstream WebSocket to Supabase Realtime. Wrangler secret - SERVER-SIDE
 	 * ONLY. It is never shipped to `astro/dist` and the browser never sees it:
