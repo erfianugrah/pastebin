@@ -175,6 +175,22 @@ export default {
 		const n = Math.min(100, Math.max(2, Number(u.searchParams.get("n") ?? 30)));
 		try {
 			switch (u.pathname) {
+				case "/branch": {
+					// Proves CF Worker -> Hyperdrive -> the PREVIEW BRANCH database:
+					// branch_marker exists ONLY on the branch, not on prod.
+					const r = await pgOnce(env.HYPERDRIVE.connectionString, "select note from branch_marker", []);
+					const c = new Client({ connectionString: env.HYPERDRIVE.connectionString });
+					await c.connect();
+					const marker = await c.query("select note from branch_marker");
+					const pastes = await c.query("select count(*)::int as n from pastes");
+					c.end().catch(() => {});
+					return Response.json({
+						readFrom: "preview branch via Hyperdrive",
+						branchMarker: marker.rows[0]?.note ?? null,
+						branchPastesCount: pastes.rows[0]?.n,
+						connectMs: +r.dt.toFixed(1),
+					});
+				}
 				case "/reads":
 					return Response.json({ region: "eu-central-1", n, reads: await reads(env, n) });
 				case "/writes":
