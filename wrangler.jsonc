@@ -39,6 +39,17 @@
 			"invocation_logs": true,
 		},
 	},
+	// Live /recent feed relay. The DO holds ONE server-side Supabase Realtime
+	// subscription and fans out to browser clients over a same-origin WebSocket,
+	// so the browser never talks to Supabase directly (BFF preserved).
+	"durable_objects": {
+		"bindings": [
+			{ "name": "RECENT_FEED", "class_name": "RecentFeedDO" },
+		],
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["RecentFeedDO"] },
+	],
 	"ratelimits": [
 		{ "name": "RL_AUTH_WRITE",   "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
 		{ "name": "RL_SESSION_READ", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
@@ -69,6 +80,14 @@
 				{ "name": "RL_SEARCH",       "namespace_id": "2004", "simple": { "limit": 30, "period": 60 } },
 				{ "name": "RL_RECENT",       "namespace_id": "2005", "simple": { "limit": 60,  "period": 60 } },
 				{ "name": "RL_VIEW",         "namespace_id": "2006", "simple": { "limit": 240, "period": 60 } },
+			],
+			"durable_objects": {
+				"bindings": [
+					{ "name": "RECENT_FEED", "class_name": "RecentFeedDO" },
+				],
+			},
+			"migrations": [
+				{ "tag": "v1", "new_sqlite_classes": ["RecentFeedDO"] },
 			],
 		},
 	},
