@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Button } from './ui/button';
 import { T } from '../lib/typography';
 import { cn } from '../lib/utils';
+import { useRecentLive, type LivePaste } from '../hooks/useRecentLive';
 
 interface Paste {
 	id: string;
@@ -14,6 +15,9 @@ interface Paste {
 
 const PAGE_SIZE = 25;
 const POLL_INTERVAL_MS = 15_000;
+// Cap the in-memory list so a long-lived tab receiving live inserts can't grow
+// unbounded. Matches the /api/recent fetch limit.
+const MAX_ITEMS = 200;
 
 type SortField = 'title' | 'language' | 'reads' | 'created';
 type SortDir = 'asc' | 'desc';
@@ -43,54 +47,86 @@ export default function RecentPastes() {
 	const [sortField, setSortField] = useState<SortField>('created');
 	const [sortDir, setSortDir] = useState<SortDir>('desc');
 
+	const [liveConnected, setLiveConnected] = useState(false);
+	const mountedRef = useRef(true);
 	useEffect(() => {
-		let cancelled = false;
-		let pollHandle: ReturnType<typeof setInterval> | null = null;
-
-		async function load() {
-			try {
-				const response = await fetch(`/api/recent?limit=200&_=${Date.now()}`);
-				if (cancelled) return;
-				if (!response.ok) throw new Error('Failed to fetch recent pastes');
-				const data = (await response.json()) as { pastes?: Paste[] };
-				setPastes(data.pastes || []);
-				setError(null);
-			} catch {
-				if (cancelled) return;
-				setError('Failed to load recent pastes.');
-			} finally {
-				if (!cancelled) setLoading(false);
-			}
-		}
-
-		function startPolling() {
-			if (pollHandle != null) return;
-			pollHandle = setInterval(load, POLL_INTERVAL_MS);
-		}
-		function stopPolling() {
-			if (pollHandle == null) return;
-			clearInterval(pollHandle);
-			pollHandle = null;
-		}
-		function onVisibility() {
-			if (document.visibilityState === 'visible') {
-				void load();
-				startPolling();
-			} else {
-				stopPolling();
-			}
-		}
-
-		void load();
-		if (document.visibilityState === 'visible') startPolling();
-		document.addEventListener('visibilitychange', onVisibility);
-
+		mountedRef.current = true;
 		return () => {
-			cancelled = true;
-			stopPolling();
-			document.removeEventListener('visibilitychange', onVisibility);
+			mountedRef.current = false;
 		};
 	}, []);
+
+	const refresh = useCallback(async () => {
+		try {
+			const response = await fetch(`/api/recent?limit=${MAX_ITEMS}&_=${Date.now()}`);
+			if (!response.ok) throw new Error('Failed to fetch recent pastes');
+			const data = (await response.json()) as { pastes?: Paste[] };
+			if (!mountedRef.current) return;
+			setPastes(data.pastes || []);
+			setError(null);
+		} catch {
+			if (!mountedRef.current) return;
+			setError('Failed to load recent pastes.');
+		} finally {
+			if (mountedRef.current) setLoading(false);
+		}
+	}, []);
+
+	// Initial load + reload whenever the tab regains focus.
+	useEffect(() => {
+		void refresh();
+		const onVisibility = () => {
+			if (document.visibilityState === 'visible') void refresh();
+		};
+		document.addEventListener('visibilitychange', onVisibility);
+		return () => document.removeEventListener('visibilitychange', onVisibility);
+	}, [refresh]);
+
+	// Poll fallback: active ONLY while the live socket is disconnected. When the
+	// socket is up it delivers inserts directly, so we pause polling to avoid
+	// redundant fetches; if it drops, this effect re-runs and resumes the poll.
+	useEffect(() => {
+		if (liveConnected) return;
+		let handle: ReturnType<typeof setInterval> | null = null;
+		const start = () => {
+			if (handle == null && document.visibilityState === 'visible') {
+				handle = setInterval(() => void refresh(), POLL_INTERVAL_MS);
+			}
+		};
+		const stop = () => {
+			if (handle != null) {
+				clearInterval(handle);
+				handle = null;
+			}
+		};
+		const onVisibility = () => {
+			if (document.visibilityState === 'visible') start();
+			else stop();
+		};
+		start();
+		document.addEventListener('visibilitychange', onVisibility);
+		return () => {
+			stop();
+			document.removeEventListener('visibilitychange', onVisibility);
+		};
+	}, [liveConnected, refresh]);
+
+	// Live feed: prepend new public pastes as they arrive, deduped by id + capped.
+	const handleLivePaste = useCallback((paste: LivePaste) => {
+		setPastes((prev) => {
+			if (prev.some((p) => p.id === paste.id)) return prev;
+			const incoming: Paste = {
+				id: paste.id,
+				title: paste.title ?? null,
+				language: paste.language ?? null,
+				createdAt: paste.createdAt,
+				readCount: paste.readCount ?? 0,
+				isEncrypted: paste.isEncrypted,
+			};
+			return [incoming, ...prev].slice(0, MAX_ITEMS);
+		});
+	}, []);
+	useRecentLive({ onPaste: handleLivePaste, onConnectionChange: setLiveConnected });
 
 	const sorted = useMemo(() => {
 		const arr = [...pastes];

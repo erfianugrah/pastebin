@@ -195,6 +195,21 @@ app.post('/pastes', rateLimit('RL_PASTE_CREATE', 'paste-create'), async (c) => {
 // add user-scoped or auth-derived data to this endpoint, switch to
 // `preventCaching` (or `private` + `Vary: Cookie`) FIRST or the cache
 // becomes a leak vector.
+// GET /api/recent/live - same-origin WebSocket relay for live /recent updates.
+//
+// BFF invariant: the browser opens ONLY this same-origin socket. The upstream
+// Supabase Realtime subscription (anon key + Supabase URL) lives entirely
+// inside the RecentFeedDO, never in the frontend or CSP. A non-WebSocket
+// request gets 426 so callers can't accidentally treat it as a JSON endpoint.
+app.get('/api/recent/live', async (c) => {
+	const upgrade = c.req.header('Upgrade');
+	if (!upgrade || upgrade.toLowerCase() !== 'websocket') {
+		return c.text('Upgrade Required', 426);
+	}
+	const id = c.env.RECENT_FEED.idFromName('global');
+	return c.env.RECENT_FEED.get(id).fetch(c.req.raw);
+});
+
 app.get('/api/recent', rateLimit('RL_RECENT', 'recent'), async (c) => {
 	return addCacheHeaders(await c.get('handlers').handleGetRecentPastes(c.req.raw), {
 		maxAge: 60,
@@ -471,5 +486,7 @@ app.all('*', async (c) => {
 
 	return c.json({ error: { code: 'not_found', message: 'The requested resource was not found' } }, 404);
 });
+
+export { RecentFeedDO } from './infrastructure/realtime/recentFeedDurableObject';
 
 export default app;

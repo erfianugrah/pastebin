@@ -10,6 +10,26 @@ export interface Env {
 	SUPABASE_URL: string;
 	/** sb_secret_... (or legacy service_role JWT). Wrangler secret, never in source. */
 	SUPABASE_SECRET_KEY: string;
+	/**
+	 * Publishable / anon key (JWT with role=anon, or `sb_publishable_...`).
+	 * Used ONLY inside the RecentFeedDO to authenticate the server-side
+	 * upstream WebSocket to Supabase Realtime. Wrangler secret - SERVER-SIDE
+	 * ONLY. It is never shipped to `astro/dist` and the browser never sees it:
+	 * the BFF invariant means clients only ever open the same-origin
+	 * `/api/recent/live` socket. Keep it out of any frontend bundle or CSP.
+	 */
+	SUPABASE_ANON_KEY: string;
+
+	// ---- Realtime relay (Durable Object) ----
+
+	/**
+	 * Singleton Durable Object that holds ONE upstream Supabase Realtime
+	 * subscription and fans `paste_created` events out to browser clients over
+	 * a same-origin WebSocket (`GET /api/recent/live`). Bound in wrangler.jsonc
+	 * (`durable_objects` + a `migrations` block with
+	 * `new_sqlite_classes: ["RecentFeedDO"]`).
+	 */
+	RECENT_FEED: DurableObjectNamespace;
 
 	// ---- Rate limiting (CF Workers Rate Limiting binding) ----
 	// All four are declared in wrangler.jsonc `ratelimits[]`. They may be

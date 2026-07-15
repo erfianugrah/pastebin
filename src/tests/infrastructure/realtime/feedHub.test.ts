@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import { createFeedHub } from '../../../infrastructure/realtime/feedHub';
 import type { PasteCreatedMeta, WsLike, RecentLiveMessage } from '../../../infrastructure/realtime/contract';
 
@@ -17,9 +17,9 @@ const META: PasteCreatedMeta = {
 	version: 0,
 };
 
-function fakeSocket(readyState = 1): WsLike & { send: ReturnType<typeof vi.fn> } {
+function fakeSocket(readyState = 1): WsLike & { send: Mock<(data: string) => void> } {
 	return {
-		send: vi.fn(),
+		send: vi.fn<(data: string) => void>(),
 		close: vi.fn(),
 		readyState,
 		addEventListener: vi.fn(),
