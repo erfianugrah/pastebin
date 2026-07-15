@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.12.1] - 2026-07-15
+
+### Changed
+
+- **Data residency: `RecentFeedDO` is pinned to the `eu` jurisdiction**
+  (`RECENT_FEED.jurisdiction('eu').idFromName('global')` in `src/index.ts`), so
+  the relay Durable Object runs and stores state in `eu-central-1` alongside the
+  Supabase project - keeping even the transient broadcast payload in-EU. A
+  Cloudflare location hint would be latency-only; `jurisdiction` is the residency
+  guarantee. The relay is stateless, so re-deriving the DO id is a no-op.
+
 ## [3.12.0] - 2026-07-15
 
 Live `/recent` feed via a Durable Object Realtime relay, reinstating the

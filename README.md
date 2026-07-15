@@ -467,7 +467,7 @@ The UI polls this as a fallback and layers live push on top (below).
 
 **Endpoint:** `GET /api/recent/live` (WebSocket upgrade; non-WebSocket requests get `426`)
 
-Same-origin WebSocket that pushes a `{ "type": "paste_created", "paste": { ... } }` frame whenever a public paste is created. A single `RecentFeedDO` Durable Object holds ONE server-side Supabase Realtime subscription to the `recent:public` broadcast channel (fired by an `AFTER INSERT` trigger via `realtime.send`) and fans out to every connected browser. The browser never talks to Supabase directly, so the anon key stays server-side and the CSP remains `connect-src 'self'` (the BFF invariant). On reconnect the DO requests Broadcast `replay` to backfill the gap; the client dedups by id.
+Same-origin WebSocket that pushes a `{ "type": "paste_created", "paste": { ... } }` frame whenever a public paste is created. A single `RecentFeedDO` Durable Object holds ONE server-side Supabase Realtime subscription to the `recent:public` broadcast channel (fired by an `AFTER INSERT` trigger via `realtime.send`) and fans out to every connected browser. The browser never talks to Supabase directly, so the anon key stays server-side and the CSP remains `connect-src 'self'` (the BFF invariant). On reconnect the DO requests Broadcast `replay` to backfill the gap; the client dedups by id. The DO is pinned to the `eu` jurisdiction (`RECENT_FEED.jurisdiction('eu')`) so it runs and stores state in the same region as the database (`eu-central-1`), keeping the transient broadcast payload in-EU.
 
 #### Full-Text Search
 

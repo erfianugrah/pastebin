@@ -206,8 +206,14 @@ app.get('/api/recent/live', async (c) => {
 	if (!upgrade || upgrade.toLowerCase() !== 'websocket') {
 		return c.text('Upgrade Required', 426);
 	}
-	const id = c.env.RECENT_FEED.idFromName('global');
-	return c.env.RECENT_FEED.get(id).fetch(c.req.raw);
+	// Pin the relay to the EU jurisdiction so the DO runs and stores state in the
+	// same region as the Supabase project (eu-central-1). This keeps even the
+	// transient broadcast payload in-EU. A location hint would be latency-only;
+	// jurisdiction is the residency guarantee (docs: durable-objects/reference/
+	// data-location). The relay is stateless, so re-deriving the id is a no-op.
+	const eu = c.env.RECENT_FEED.jurisdiction('eu');
+	const id = eu.idFromName('global');
+	return eu.get(id).fetch(c.req.raw);
 });
 
 app.get('/api/recent', rateLimit('RL_RECENT', 'recent'), async (c) => {

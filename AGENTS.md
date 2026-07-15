@@ -47,7 +47,7 @@ Two separate packages with **independent `node_modules`**:
   - `SUPABASE_URL: string` — project URL (Wrangler secret, never in source)
   - `SUPABASE_SECRET_KEY: string` — `sb_secret_...` (Wrangler secret, never in source)
   - `SUPABASE_ANON_KEY: string` - the anon **JWT** (Wrangler secret). Used ONLY server-side by `RecentFeedDO` to subscribe to Supabase Realtime; never shipped to the browser. The `sb_publishable_` key does NOT work here (Realtime silently ignores `sb_*` tokens as the private-channel `access_token`).
-  - `RECENT_FEED: DurableObjectNamespace` - the `RecentFeedDO` live-recent-feed relay (`[[durable_objects]]` + `[[migrations]]` blocks in `wrangler.jsonc`, per env)
+  - `RECENT_FEED: DurableObjectNamespace` - the `RecentFeedDO` live-recent-feed relay (`[[durable_objects]]` + `[[migrations]]` blocks in `wrangler.jsonc`, per env). Pinned to the `eu` jurisdiction at the call site (`src/index.ts`: `RECENT_FEED.jurisdiction('eu').idFromName('global')`) so the DO runs/stores in `eu-central-1` alongside the DB - a location hint would be latency-only; jurisdiction is the residency guarantee. Stateless relay, so re-deriving the id is a no-op.
   - `wrangler.jsonc` has no `vars` block; the three required secrets are listed only in the JSONC comment at the top of the file
   - `RL_AUTH_WRITE: RateLimit?`, `RL_SESSION_READ: RateLimit?`, `RL_PASTE_CREATE: RateLimit?`, `RL_SEARCH: RateLimit?` — Cloudflare Workers Rate Limiting bindings declared in `[[ratelimits]]`. Optional in the type so vitest + local astro dev keep working (middleware no-ops with a debug log when missing).
 
