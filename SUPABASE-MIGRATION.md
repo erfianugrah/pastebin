@@ -723,7 +723,11 @@ side needs the same stemmer to align.
 - "My Pastes" page using RLS (user only sees their own)
 - Authenticated users don't need `deleteToken` -- RLS handles it
 
-#### 4.3: Live recent feed via Realtime broadcast ✓ SHIPPED 3.1.0 ✗ REVERTED 3.7.0
+#### 4.3: Live recent feed via Realtime broadcast ✓ SHIPPED 3.1.0 ✗ REVERTED 3.7.0 ✓ RE-SHIPPED 3.12.0
+
+> **Re-shipped in 3.12.0** the BFF-safe way (`20260714120000_reinstate_realtime_recent_feed.sql`): a `RecentFeedDO` Durable Object holds the single server-side Supabase Realtime subscription and relays to browsers over a same-origin `/api/recent/live` WebSocket, so the browser never opens a socket to `*.supabase.co` and the CSP stays `connect-src 'self'`. This resolves all three reasons below (a real subscriber exists server-side, the CSP is untouched, and messages only fan out when a viewer is connected). See `docs/plans/2026-07-14-realtime-recent-do.md`.
+
+**Original history (kept for context):**
 
 Migration `20260511132703_realtime_public_paste_feed.sql` installed an
 `AFTER INSERT` trigger on `public.pastes` that called `realtime.send(...)`

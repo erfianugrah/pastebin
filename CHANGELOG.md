@@ -1,5 +1,29 @@
 # Changelog
 
+## [3.12.0] - 2026-07-15
+
+Live `/recent` feed via a Durable Object Realtime relay, reinstating the
+broadcast pipeline dropped in 3.7.0 - this time preserving the
+Backend-For-Frontend invariant (the browser never talks to Supabase directly).
+
+### Added
+
+- **Live recent-pastes feed** (`GET /api/recent/live`, WebSocket). A single
+  `RecentFeedDO` Durable Object holds one server-side Supabase Realtime
+  subscription to the `recent:public` broadcast channel and fans out
+  `paste_created` frames to browsers over a **same-origin** socket, so the
+  anon key stays server-side and the CSP remains `connect-src 'self'`
+  (migration `20260714120000_reinstate_realtime_recent_feed.sql`). The Phoenix
+  v1.0.0 protocol is hand-rolled (no `realtime-js`); Broadcast `replay` on
+  rejoin backfills any disconnect gap and the frontend dedups by id. The 15s
+  poll remains as a fallback. Verified end to end in production.
+
+### Fixed
+
+- `securityHeaders` no longer re-wraps WebSocket `101` responses, which had
+  dropped the non-standard `webSocket` property and broke the upgrade with a
+  `1002` protocol error.
+
 ## [3.11.0] - 2026-06-11
 
 Crypto hardening: Argon2id password KDF + length-padding (encryption

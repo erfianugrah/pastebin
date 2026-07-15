@@ -30,7 +30,7 @@ Live at [paste.erfi.io](https://paste.erfi.io).
   - Anonymous use unchanged — `user_id = NULL`, `deleteToken` flow
 
 - **Discovery**
-  - Recent public pastes feed (polling-based; the Realtime broadcast pipeline was dropped — see `SUPABASE-MIGRATION.md`)
+  - Recent public pastes feed with **live push** (`GET /api/recent/live` WebSocket, relayed server-side by a `RecentFeedDO` Durable Object) plus a 15s polling fallback
   - Full-text search (Postgres tsvector + GIN, websearch syntax)
 
 - **Hardening**
@@ -461,7 +461,13 @@ Returns the most recently created public, non-expired pastes. Limit clamped to `
 }
 ```
 
-For polling, re-fetch this endpoint on a schedule (default UI behaviour). The Realtime broadcast pipeline that previously powered a push feed was dropped in `20260512102410_drop_realtime_broadcast.sql` — the frontend never subscribed and the CSP `connect-src 'self'` directive blocked WebSocket to `*.supabase.co` anyway.
+The UI polls this as a fallback and layers live push on top (below).
+
+#### Live Recent Feed (WebSocket)
+
+**Endpoint:** `GET /api/recent/live` (WebSocket upgrade; non-WebSocket requests get `426`)
+
+Same-origin WebSocket that pushes a `{ "type": "paste_created", "paste": { ... } }` frame whenever a public paste is created. A single `RecentFeedDO` Durable Object holds ONE server-side Supabase Realtime subscription to the `recent:public` broadcast channel (fired by an `AFTER INSERT` trigger via `realtime.send`) and fans out to every connected browser. The browser never talks to Supabase directly, so the anon key stays server-side and the CSP remains `connect-src 'self'` (the BFF invariant). On reconnect the DO requests Broadcast `replay` to backfill the gap; the client dedups by id.
 
 #### Full-Text Search
 
