@@ -88,3 +88,31 @@ active outbound WS keep it in memory (CF docs: outbound WS + scheduled callbacks
 prevent hibernation). Real tradeoffs are only: continuous duration billing while
 serving, and a rare 1-10s transient-reconnect window (closable with Broadcast
 `replay`, deferred as a minor robustness nicety).
+
+## Production deployment (2026-07-15)
+
+Shipped to paste.erfi.io. Sequence: set the `SUPABASE_ANON_KEY` Worker secret
+(the anon JWT - the `sb_publishable_` key is silently ignored as a Realtime
+`access_token`); merge to main (the Supabase GitHub integration auto-applied
+the reinstate migration to prod); deploy the Worker (`bun run deploy:prod`,
+binding `RECENT_FEED` -> `RecentFeedDO`).
+
+Two integration bugs surfaced ONLY by the live prod test (offline sensors are
+structurally blind to both):
+
+1. **`securityHeaders` re-wrapped the 101 upgrade response** via
+   `new Response(original.body, ...)`, dropping the non-standard `webSocket`
+   property CF needs -> browser socket failed with `1002`. Fix: skip re-wrap
+   for 101 / `webSocket` responses. Regression test in
+   `src/tests/interfaces/api/middleware.test.ts`.
+2. **The DO's `OutboundWs` passed a `wss://` URL to `fetch()`**, which CF only
+   accepts as `http(s)://` -> the upstream never connected. Fix: translate the
+   scheme in `OutboundWs.dial`. (The branch test used Bun's `new WebSocket`,
+   which accepts `wss://`, so it never hit this.)
+
+Empirically verified in prod via `wrangler tail` + a live round-trip: a public
+paste created on paste.erfi.io is delivered as a `paste_created` frame to a
+browser socket on `/api/recent/live`, through the full chain
+INSERT -> trigger -> realtime.send -> Supabase Realtime -> RecentFeedDO
+upstream -> feedHub fan-out -> browser. DO lifecycle log confirmed
+`connecting -> upstream socket open -> joined -> paste_created -> fanout`.
