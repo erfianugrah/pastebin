@@ -71,6 +71,11 @@ const CSP_DIRECTIVES = [
 export const securityHeaders = createMiddleware(async (c, next) => {
 	await next();
 
+	// A WebSocket upgrade (status 101) carries a non-standard `webSocket`
+	// property that `new Response()` would silently drop, breaking the handshake
+	// (the client sees a 1002 protocol error). Never re-wrap or header-mutate it.
+	if (c.res.status === 101 || (c.res as unknown as { webSocket?: unknown }).webSocket) return;
+
 	// Clone the response so we can safely mutate headers
 	const original = c.res;
 	const headers = new Headers(original.headers);
