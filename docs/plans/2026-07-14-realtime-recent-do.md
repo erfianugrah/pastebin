@@ -60,3 +60,31 @@ public paste INSERT
 ## Loop sensors (see .pi/harness.json)
 - build (tsc/wrangler dry), typecheck, unit test (phoenixClient + DO conformance), astro build, e2e (browser-assert: a second tab created a public paste appears in /recent live -- against a dev server).
 - writeScope fences the four component paths + tests; config files stay parent-owned.
+
+## Verification (2026-07-15)
+
+Offline sensors green (typecheck, 349 tests incl. 11 conformance, lint, astro
+build). BFF verified: no Supabase host/key in `astro/dist`; browser opens only
+the same-origin `/api/recent/live`.
+
+**Live wire proven end to end** against a Supabase preview branch
+(`pwhpidokrvvgrcuymejh`, schema-only, isolated from prod): applied the reinstate
+migration, ran the real `phoenixClient` against the branch Realtime, inserted a
+`visibility='public'` paste via PostgREST, and the client received the
+`paste_created` broadcast for the exact inserted id. Path proven: INSERT ->
+`broadcast_public_paste_insert()` trigger -> `realtime.send` -> Realtime ->
+private channel (anon key, RLS on `realtime.messages`) -> `phoenixClient.onPaste`.
+Branch test state reverted afterward.
+
+Scope note: the live test exercised the DO's UPSTREAM half (phoenixClient <->
+Supabase), which was the real unknown. The DOWNSTREAM half (DO <-> browser via
+`WebSocketPair` + `feedHub` fan-out + hibernation restore) is standard CF glue
+covered by the `feedHub` unit tests + code review; a full `wrangler dev` browser
+round-trip is the only remaining belt-and-suspenders check.
+
+**Hibernation claim corrected**: the DO does NOT go idle-stale while clients are
+connected -- the phoenixClient's recurring 25s heartbeat `setTimeout` plus the
+active outbound WS keep it in memory (CF docs: outbound WS + scheduled callbacks
+prevent hibernation). Real tradeoffs are only: continuous duration billing while
+serving, and a rare 1-10s transient-reconnect window (closable with Broadcast
+`replay`, deferred as a minor robustness nicety).
