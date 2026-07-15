@@ -185,3 +185,6 @@ ui-overhaul/
 
 # pi agent local working state (loop harness/report)
 .pi/
+
+# bench harness local secrets
+bench/.dev.vars

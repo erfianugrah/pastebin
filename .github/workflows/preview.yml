@@ -1,0 +1,148 @@
+name: Preview (PR branch)
+
+# Per-PR preview: provision an isolated Supabase preview BRANCH database
+# (its own ref + keys), then `wrangler versions upload` a Worker *preview
+# version* bound to that branch DB - without touching deployed paste.erfi.io.
+#
+# We provision the branch OURSELVES via the Management API instead of relying
+# on the GitHub integration's auto-branching. Reason: config.toml pushes custom
+# auth config (SMTP sender_name + email rate limit + GitHub OAuth) that resolves
+# `env()` secrets. Those secrets do not exist on a preview branch, so the deploy
+# 401s ("Custom SMTP required ... Missing SMTP_PASS fields") and Supabase reports
+# the whole deploy as MIGRATIONS_FAILED - even though no migration is at fault.
+# Creating the branch with an explicit `secrets` payload fixes it deterministically.
+#
+# Requires repo secrets: SUPABASE_ACCESS_TOKEN, CLOUDFLARE_API_TOKEN,
+# CLOUDFLARE_ACCOUNT_ID, RESEND_API_KEY, GH_OAUTH_CLIENT_ID,
+# GH_OAUTH_CLIENT_SECRET; and repo variable SUPABASE_PROJECT_REF.
+# Branch teardown on PR close lives in preview-teardown.yml.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: preview-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Reuse the secret-free gate (typecheck, lint, tests, build) before deploying.
+  gate:
+    uses: ./.github/workflows/ci.yml
+
+  preview:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Provision (or reuse) the Supabase preview branch
+        id: branch
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          GIT_BRANCH: ${{ github.head_ref }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          API="https://api.supabase.com/v1"
+
+          find_row() {
+            curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              "$API/projects/$PROJECT_REF/branches" \
+              | jq -r --arg b "$GIT_BRANCH" '.[]|select(.git_branch==$b)|.id+" "+.status'
+          }
+
+          row="$(find_row || true)"
+          BID="$(echo "$row" | awk '{print $1}')"
+          STATUS="$(echo "$row" | awk '{print $2}')"
+
+          # A failed/stale branch can't be cleanly re-migrated - delete + recreate.
+          if [ -n "$BID" ] && { [ "$STATUS" = "MIGRATIONS_FAILED" ] || [ "$STATUS" = "FUNCTIONS_FAILED" ]; }; then
+            echo "existing branch $BID is $STATUS - deleting"
+            curl -fsSL -X DELETE -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$API/branches/$BID" >/dev/null || true
+            BID=""; sleep 5
+          fi
+
+          if [ -z "$BID" ]; then
+            body="$(jq -n \
+              --arg gb "$GIT_BRANCH" \
+              --arg r "$RESEND_API_KEY" \
+              --arg ci "$GH_OAUTH_CLIENT_ID" \
+              --arg cs "$GH_OAUTH_CLIENT_SECRET" \
+              '{branch_name:$gb, git_branch:$gb, secrets:{RESEND_API_KEY:$r, GH_OAUTH_CLIENT_ID:$ci, GH_OAUTH_CLIENT_SECRET:$cs}}')"
+            resp="$(curl -sS -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" -d "$body" "$API/projects/$PROJECT_REF/branches")"
+            BID="$(echo "$resp" | jq -r '.id // empty')"
+            if [ -z "$BID" ]; then
+              # Possible race with a concurrent create - re-look-up before failing.
+              echo "create returned no id: $resp"
+              BID="$(find_row | awk '{print $1}')"
+            fi
+            [ -n "$BID" ] || { echo "::error::could not create preview branch for $GIT_BRANCH"; exit 1; }
+            echo "created branch $BID"
+          else
+            echo "reusing branch $BID ($STATUS)"
+          fi
+
+          # Poll to a terminal state; fail fast on failure. (~90s typical.)
+          STATUS=""
+          for i in $(seq 1 40); do
+            STATUS="$(curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              "$API/projects/$PROJECT_REF/branches" | jq -r --arg b "$BID" '.[]|select(.id==$b)|.status')"
+            case "$STATUS" in
+              MIGRATIONS_PASSED|FUNCTIONS_DEPLOYED) echo "branch healthy ($STATUS) after $i poll(s)"; break ;;
+              MIGRATIONS_FAILED|FUNCTIONS_FAILED) echo "::error::preview branch $BID failed: $STATUS"; exit 1 ;;
+              *) echo "waiting ($i) status=${STATUS:-not-created-yet}"; sleep 15 ;;
+            esac
+          done
+          case "$STATUS" in
+            MIGRATIONS_PASSED|FUNCTIONS_DEPLOYED) : ;;
+            *) echo "::error::preview branch $BID never became healthy (last=$STATUS)"; exit 1 ;;
+          esac
+
+          # Read the branch's creds via the Management API (no `supabase link`
+          # needed - the runner checkout is not a linked project). URL is
+          # derived from the branch ref; prefer the new sb_secret key, fall
+          # back to the legacy service_role JWT.
+          BREF="$(curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$API/branches/$BID" | jq -r '.ref')"
+          URL="https://$BREF.supabase.co"
+          KEYS="$(curl -fsSL -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "$API/projects/$BREF/api-keys?reveal=true")"
+          KEY="$(echo "$KEYS" | jq -r '[.[]|select(.type=="secret")|.api_key][0] // [.[]|select(.name=="service_role")|.api_key][0]')"
+          [ -n "$URL" ] && [ "$KEY" != "null" ] && [ -n "$KEY" ] || { echo "::error::could not read branch creds (ref=$BREF)"; exit 1; }
+          echo "::add-mask::$KEY"
+          {
+            echo "url=$URL"
+            echo "key=$KEY"
+            echo "bid=$BID"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install deps (root + astro)
+        run: |
+          bun install --frozen-lockfile
+          (cd astro && bun install --frozen-lockfile)
+
+      - name: Build frontend (astro -> astro/dist)
+        run: bun run build:ui
+
+      # `versions upload` publishes a preview version with its own preview URL
+      # and does NOT roll out to the production route. --var overrides the
+      # branch connection for this version only (plaintext, ephemeral branch).
+      - name: Upload Worker preview bound to the branch DB
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            versions upload
+            --var SUPABASE_URL:${{ steps.branch.outputs.url }}
+            --var SUPABASE_SECRET_KEY:${{ steps.branch.outputs.key }}
