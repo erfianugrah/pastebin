@@ -267,9 +267,12 @@ npx wrangler tail --env production --format pretty
 
 # 2. Supabase Auth logs (Dashboard → Logs → Auth Logs)
 #    Filter by `auth_event = 'verify'` for confirm-link issues.
-#    Or programmatically via the Management API:
+#    Or programmatically via the Management API. NOTE: `logs.all` was removed
+#    2026-09-23; the replacement `logs` endpoint is ClickHouse-only, GET-only,
+#    and filters by the `source` column - the official migration guide says
+#    `source_name`, which does not exist:
 curl -s -H "Authorization: Bearer $(cat ~/.supabase/access-token)" \
-  "https://api.supabase.com/v1/projects/dewddkcmwrzbpynylyhg/analytics/endpoints/logs.all?sql=$(jq -rn --arg q "SELECT timestamp, event_message FROM auth_logs WHERE timestamp >= datetime_sub(current_timestamp(), INTERVAL '15 MINUTE') ORDER BY timestamp DESC LIMIT 50" '$q|@uri')"
+  "https://api.supabase.com/v1/projects/dewddkcmwrzbpynylyhg/analytics/endpoints/logs?sql=$(jq -rn --arg q "SELECT timestamp, event_message FROM logs WHERE source = 'auth_logs' ORDER BY timestamp DESC LIMIT 50" '$q|@uri')&iso_timestamp_start=$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)&iso_timestamp_end=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # 3. Raw email content via Resend
 curl -s -H "Authorization: Bearer $RESEND_API_KEY" \
